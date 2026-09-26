@@ -1,6 +1,8 @@
 <script>
+  import { onMount } from 'svelte';
   import env from './config/env.js';
   import { socket } from './lib/socket.js';
+  import { authStore } from './stores/auth.store.js';
 
   let socketStatus = 'disconnected';
 
@@ -17,31 +19,57 @@
       socketStatus = 'error';
     });
   }
+
+  onMount(() => {
+    authStore.initialize();
+  });
 </script>
 
 <main>
-  <h1>GetTalk</h1>
+  {#if $authStore.loading}
+    <div class="loading-state">
+      <p>Loading session...</p>
+    </div>
+  {:else if $authStore.error}
+    <div class="error-state">
+      <p>Error initializing application: {$authStore.error}</p>
+      <button on:click={() => authStore.initialize()}>Retry</button>
+    </div>
+  {:else}
+    <h1>GetTalk</h1>
 
-  <section>
-    <h2>Frontend Bootstrap</h2>
+    <section>
+      <h2>Frontend Bootstrap</h2>
 
-    <p>
-      API URL:
-      <code>{env.apiUrl}</code>
-    </p>
+      <p>
+        Authentication Status: 
+        <strong>{$authStore.authenticated ? 'Authenticated' : 'Unauthenticated'}</strong>
+      </p>
+      
+      {#if $authStore.user}
+        <p>
+          User: <code>{JSON.stringify($authStore.user)}</code>
+        </p>
+      {/if}
 
-    <p>
-      Socket.IO URL:
-      <code>{env.socketUrl}</code>
-    </p>
+      <p>
+        API URL:
+        <code>{env.apiUrl}</code>
+      </p>
 
-    <p>
-      Socket status:
-      <strong>{socketStatus}</strong>
-    </p>
+      <p>
+        Socket.IO URL:
+        <code>{env.socketUrl}</code>
+      </p>
 
-    <button on:click={connectSocket}>
-      Connect Socket.IO
-    </button>
-  </section>
+      <p>
+        Socket status:
+        <strong>{socketStatus}</strong>
+      </p>
+
+      <button on:click={connectSocket}>
+        Connect Socket.IO
+      </button>
+    </section>
+  {/if}
 </main>
