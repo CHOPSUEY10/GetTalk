@@ -60,12 +60,16 @@ function validateEnvironment() {
   const host = requiredEnv('HOST');
   const port = positiveIntegerEnv('PORT', 3000);
   const corsOrigin = requiredEnv('CORS_ORIGIN');
+  const databaseUrl = requiredEnv('DATABASE_URL');
+  const sessionSecret = requiredEnv('SESSION_SECRET');
 
   return {
     nodeEnv,
     host,
     port,
-    corsOrigin
+    corsOrigin,
+    databaseUrl,
+    sessionSecret
   };
 }
 

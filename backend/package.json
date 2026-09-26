@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "test": "node --test",
+    "migrate": "node migrations/001_create_tables.js",
     "dev": "nodemon server.js",
     "start": "node --env-file=.env.production server.js"
   },
@@ -16,10 +17,15 @@
     "node": ">=20.6.0"
   },
   "dependencies": {
+    "bcrypt": "^6.0.0",
+    "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.6",
     "dotenv": "^18.0.3",
     "express": "^5.2.1",
-    "socket.io": "^4.8.3"
+    "express-session": "^1.19.0",
+    "pg": "^8.23.0",
+    "socket.io": "^4.8.3",
+    "uuid": "^14.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
