@@ -2,6 +2,7 @@ import * as friendsService from '../services/friends.service.js';
 
 export async function list(req, res, next) {
   try {
+
     const friends = await friendsService.list(req.user.id);
     return res.json({ friends });
   } catch (err) {
