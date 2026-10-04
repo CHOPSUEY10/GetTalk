@@ -2,6 +2,7 @@ import * as authService from '../services/auth.service.js';
 import AppError from '../errors/AppError.js';
 import { UNAUTHORIZED } from '../errors/error-codes.js';
 
+
 const DUMMY_USER = {
   id: 'test123',
   username: 'test',
@@ -22,9 +23,10 @@ export async function register(req, res, next) {
     //   },
     // });
 
+    const id = crypto.randomUUID()
     const user = {
-      id: DUMMY_USER.id,
-      username: username || DUMMY_USER.username,
+      id: id,
+      username: username || id,
     };
     if (req.session) {
       req.session.userId = user.id;
@@ -50,10 +52,16 @@ export async function login(req, res, next) {
     //   },
     // });
 
+    const id = crypto.randomUUID()
+    const user = {
+      id: id,
+      username: username || id,
+    };
+
     if (req.session) {
-      req.session.userId = DUMMY_USER.id;
+      req.session.userId = user.id;
     }
-    return res.json({ user: DUMMY_USER });
+    return res.json({ user: user });
   } catch (err) {
     return next(err);
   }
@@ -94,9 +102,12 @@ export async function session(req, res, next) {
     //     username: user.username,
     //   },
     // });
-
+    const dummy_user = {
+      id: crypto.randomUUID(),
+      username: "Asep",
+    }
     return res.json({
-      user: DUMMY_USER,
+      user: dummy_user
     });
   } catch (err) {
     return next(err);

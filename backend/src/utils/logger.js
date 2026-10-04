@@ -1,13 +1,13 @@
 /**
- * Minimal structured logger.
- *
- * Wraps console methods to attach a timestamp and level.
- * Ensures passwords, tokens, and keys never appear in log output
- * by design — callers must never pass secrets as arguments.
- *
- * In production this can later be swapped for a transport-based
- * logger (e.g. pino or winston) without changing the call sites.
- */
+* Minimal structured logger.
+*
+* Wraps console methods to attach a timestamp and level.
+* Ensures passwords, tokens, and keys never appear in log output
+* by design — callers must never pass secrets as arguments.
+*
+* In production this can later be swapped for a transport-based
+* logger (e.g. pino or winston) without changing the call sites.
+*/
 
 const LOG_LEVELS = {
   error: 0,
