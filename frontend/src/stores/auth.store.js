@@ -2,7 +2,25 @@ import { writable } from 'svelte/store';
 import { getSession, login as apiLogin, logout as apiLogout } from '../services/api/auth.api.js';
 import { userStore } from './user.store.js';
 
+/**
+ * @typedef {Object} User
+ * @property {string} [id]
+ * @property {string} [username]
+ * @property {string} [email]
+ * @property {string} [name]
+ * @property {Record<string, any>} [profile]
+ */
+
+/**
+ * @typedef {Object} AuthState
+ * @property {User | any} user
+ * @property {boolean} authenticated
+ * @property {boolean} loading
+ * @property {string | null} error
+ */
+
 function createAuthStore() {
+  /** @type {import('svelte/store').Writable<AuthState>} */
   const { subscribe, set, update } = writable({
     user: null,
     authenticated: false,

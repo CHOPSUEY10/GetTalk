@@ -65,6 +65,9 @@ async function fetchClient(endpoint, options = {}) {
 
   if (!response.ok) {
     const errorMessage = data?.message || data?.error || response.statusText || 'Unknown API Error';
+    if (response.status === 401) {
+      window.dispatchEvent(new CustomEvent('api:unauthorized'));
+    }
     throw new ApiError(response.status, errorMessage, data);
   }
 

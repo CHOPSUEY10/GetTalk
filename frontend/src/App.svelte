@@ -1,5 +1,7 @@
 <script>
   import { onMount } from 'svelte';
+  import Router from 'svelte-spa-router';
+  import { routes } from './router/index.js';
   import env from './config/env.js';
   import { socket } from './lib/socket.js';
   import { authStore } from './stores/auth.store.js';
@@ -36,40 +38,6 @@
       <button on:click={() => authStore.initialize()}>Retry</button>
     </div>
   {:else}
-    <h1>GetTalk</h1>
-
-    <section>
-      <h2>Frontend Bootstrap</h2>
-
-      <p>
-        Authentication Status: 
-        <strong>{$authStore.authenticated ? 'Authenticated' : 'Unauthenticated'}</strong>
-      </p>
-      
-      {#if $authStore.user}
-        <p>
-          User: <code>{JSON.stringify($authStore.user)}</code>
-        </p>
-      {/if}
-
-      <p>
-        API URL:
-        <code>{env.apiUrl}</code>
-      </p>
-
-      <p>
-        Socket.IO URL:
-        <code>{env.socketUrl}</code>
-      </p>
-
-      <p>
-        Socket status:
-        <strong>{socketStatus}</strong>
-      </p>
-
-      <button on:click={connectSocket}>
-        Connect Socket.IO
-      </button>
-    </section>
+    <Router {routes} />
   {/if}
 </main>
