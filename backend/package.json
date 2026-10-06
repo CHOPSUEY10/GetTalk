@@ -5,7 +5,13 @@
   "main": "server.js",
   "scripts": {
     "test": "node --test",
-    "migrate": "node migrations/001_create_tables.js",
+    "postinstall": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:validate": "prisma validate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:status": "prisma migrate status",
+    "db:studio": "prisma studio",
     "dev": "nodemon server.js",
     "start": "node --env-file=.env.production server.js"
   },
@@ -14,9 +20,11 @@
   "license": "ISC",
   "type": "module",
   "engines": {
-    "node": ">=20.6.0"
+    "node": ">=20.19.0"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
     "bcrypt": "^6.0.0",
     "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.6",
@@ -28,6 +36,7 @@
     "uuid": "^14.0.2"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "prisma": "7.10.0"
   }
 }

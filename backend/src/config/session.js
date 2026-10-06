@@ -12,7 +12,9 @@ if (env.nodeEnv !== 'test' && process.env.USE_MEMORY_SESSION !== 'true') {
     store = new PgSession({
       pool,
       tableName: 'sessions',
-      createTableIfMissing: true,
+      // Table is created by Prisma Migrate (migrations/*_init). Do not let the
+      // app alter schema at startup (rule.md §9, §10).
+      createTableIfMissing: false,
     });
     store.on('error', (err) => {
       logger.error('Session store error', { message: err.message });
