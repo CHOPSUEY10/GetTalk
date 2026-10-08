@@ -19,7 +19,9 @@
     "vite": "^8.3.0"
   },
   "dependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "socket.io-client": "^4.8.3",
-    "svelte-spa-router": "^5.1.1"
+    "svelte-spa-router": "^5.1.1",
+    "tailwindcss": "^4.3.3"
   }
 }

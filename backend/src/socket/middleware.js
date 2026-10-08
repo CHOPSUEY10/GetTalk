@@ -12,34 +12,41 @@ import logger from '../utils/logger.js';
  */
 export async function socketAuth(socket, next) {
   try {
-    // const userId = socket.request.session?.userId || socket.handshake.auth?.userId;
-    // if (!userId) {
-    //   const error = new Error('Authentication required');
-    //   error.data = { code: 'UNAUTHORIZED' };
-    //   return next(error);
-    // }
-    // const user = await usersRepo.findById(userId);
-    // if (!user) {
-    //   const error = new Error('User not found');
-    //   error.data = { code: 'UNAUTHORIZED' };
-    //   return next(error);
-    // }
-    // socket.data.user = {
-    //   id: user.id,
-    //   username: user.username,
-    // };
+    const userId = socket.request.session?.userId || socket.handshake.auth?.userId;
 
+    if (!userId) {
+      // In development environment, allow handshake query fallback if session cookie isn't available
+      if (process.env.NODE_ENV === 'development' && socket.handshake.query?.userId) {
+        const queryUserId = String(socket.handshake.query.userId);
+        socket.data.user = {
+          id: queryUserId,
+          username: socket.handshake.query.username || 'dev-user',
+        };
+        return next();
+      }
+
+      const error = new Error('Authentication required');
+      /** @type {any} */ (error).data = { code: 'UNAUTHORIZED' };
+      return next(error);
+    }
+
+    const user = await usersRepo.findById(userId);
+    if (!user) {
+      const error = new Error('User not found');
+      /** @type {any} */ (error).data = { code: 'UNAUTHORIZED' };
+      return next(error);
+    }
 
     socket.data.user = {
-      id: 'test123',
-      username: 'test',
+      id: user.id,
+      username: user.username,
     };
 
     return next();
   } catch (err) {
     logger.error('Socket authentication error', { message: err.message });
     const error = new Error('Authentication failed');
-    error.data = { code: 'UNAUTHORIZED' };
+    /** @type {any} */ (error).data = { code: 'UNAUTHORIZED' };
     return next(error);
   }
 }
