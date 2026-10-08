@@ -3,6 +3,7 @@ import { listMessages, sendMessage as apiSendMessage, sendReceipt } from '../ser
 import { sendEncryptedMessage, markMessageDelivered, markMessageRead } from '../services/socket/client.js';
 import { registerSocketListeners } from '../services/socket/handlers.js';
 import { conversationsStore } from './conversations.store.js';
+import logger from '../lib/logger.js';
 
 /**
  * @typedef {Object} MessageItem
@@ -217,13 +218,13 @@ function createMessagesStore() {
 
         return confirmed;
       } catch (err) {
-        console.error('Send message failed:', err);
+        logger.error('Send message failed', err);
         // Mark as failed
         update((s) => {
           const list = s.messagesByConversation[conversationId] || [];
           const failed = list.map((m) =>
             m.client_message_id === clientMessageId || m.id === clientMessageId
-              ? { ...m, status: 'failed' }
+              ? { ...m, status: /** @type {MessageItem['status']} */ ('failed') }
               : m
           );
           return {
@@ -313,6 +314,7 @@ function createMessagesStore() {
      */
     handleMessageDeleted: (messageId) => {
       update((s) => {
+        /** @type {Record<string, MessageItem[]>} */
         const next = {};
         for (const [convId, list] of Object.entries(s.messagesByConversation)) {
           next[convId] = list.filter((m) => m.id !== messageId);
@@ -328,6 +330,7 @@ function createMessagesStore() {
      */
     handleStatusUpdate: (messageId, newStatus) => {
       update((s) => {
+        /** @type {Record<string, MessageItem[]>} */
         const next = {};
         for (const [convId, list] of Object.entries(s.messagesByConversation)) {
           next[convId] = list.map((m) =>

@@ -6,6 +6,7 @@
     import { conversationsStore } from "../stores/conversations.store.js";
     import { messagesStore } from "../stores/messages.store.js";
     import { push } from "svelte-spa-router";
+    import logger from "../lib/logger.js";
 
     /** @type {{ conversationId?: string, [key: string]: any }} */
     export let params = {};
@@ -59,7 +60,7 @@
             });
             scrollToBottom();
         } catch (err) {
-            console.error("Gagal mengirim pesan:", err);
+            logger.error("Gagal mengirim pesan", err);
         } finally {
             isSending = false;
         }

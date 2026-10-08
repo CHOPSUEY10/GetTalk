@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import { getSession, login as apiLogin, logout as apiLogout } from '../services/api/auth.api.js';
 import { userStore } from './user.store.js';
+import logger from '../lib/logger.js';
 
 /**
  * @typedef {Object} User
@@ -80,7 +81,7 @@ function createAuthStore() {
       try {
         await apiLogout();
       } catch (error) {
-        console.error('Logout failed on the server', error);
+        logger.error('Logout failed on the server', error);
       } finally {
         set({ user: null, authenticated: false, loading: false, error: null });
         userStore.set(null);

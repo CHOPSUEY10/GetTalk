@@ -10,6 +10,7 @@
         deleteFromFriendList
     } from "../services/api/friends.api.js";
     import { push } from "svelte-spa-router";
+    import logger from "../lib/logger.js";
 
     let activeTab = "friends"; // 'friends' | 'requests' | 'add'
     let searchQuery = "";
@@ -44,7 +45,7 @@
                 requests = Array.isArray(data) ? data : data?.requests || [];
             }
         } catch (err) {
-            console.error("Gagal memuat data teman:", err);
+            logger.error("Gagal memuat data teman", err);
         } finally {
             loading = false;
         }

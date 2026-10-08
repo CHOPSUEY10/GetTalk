@@ -1,5 +1,6 @@
 import { writable, get } from 'svelte/store';
 import { listConversations, getConversation, createConversation } from '../services/api/conversations.api.js';
+import logger from '../lib/logger.js';
 
 /**
  * @typedef {Object} ConversationState
@@ -81,7 +82,7 @@ function createConversationsStore() {
         }));
         return conv;
       } catch (err) {
-        console.error('Failed to get conversation details:', err);
+        logger.error('Failed to get conversation details', err);
         return null;
       }
     },
