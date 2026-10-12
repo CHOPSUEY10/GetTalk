@@ -1,0 +1,230 @@
+// GetTalk database schema (PostgreSQL).
+//
+// Source of truth for the database structure. All schema changes MUST go
+// through Prisma Migrate (rule.md §10) — never alter tables at app startup.
+//
+// Conventions:
+//   - Table/column names are snake_case (mapped via @@map / @map) to stay
+//     compatible with the existing pg repositories and migration 001.
+//   - Primary keys are server-generated UUIDs (API_CONTRACT.md §13).
+//   - Timestamps are TIMESTAMPTZ.
+//
+// E2EE (rule.md §15): messages store ONLY ciphertext + nonce. There is no
+// plaintext column and none may be added.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum FriendshipStatus {
+  pending
+  accepted
+  rejected
+
+  @@map("friendship_status")
+}
+
+enum ConversationType {
+  direct
+  group
+
+  @@map("conversation_type")
+}
+
+enum ReceiptStatus {
+  delivered
+  read
+
+  @@map("receipt_status")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Users
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  username     String   @unique @db.VarChar(50)
+  email        String   @unique @db.VarChar(255)
+  /// Password hash only (bcrypt). Never return in API responses or logs.
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sentFriendRequests     Friendship[]         @relation("FriendshipFrom")
+  receivedFriendRequests Friendship[]         @relation("FriendshipTo")
+  conversationMembers    ConversationMember[]
+  messages               Message[]
+  messageReceipts        MessageReceipt[]
+  attachments            Attachment[]
+  securityEvents         SecurityEvent[]
+
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sessions
+//
+// Managed by connect-pg-simple (express-session store). The column layout
+// MUST match connect-pg-simple exactly: sid / sess / expire.
+// The user id lives inside `sess` (JSON) — so no FK to users.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Session {
+  sid    String   @id @db.VarChar
+  sess   Json     @db.Json
+  expire DateTime @db.Timestamp(6)
+
+  @@index([expire], map: "IDX_session_expire")
+  @@map("sessions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Friendships
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Friendship {
+  id         String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fromUserId String           @map("from_user_id") @db.Uuid
+  toUserId   String           @map("to_user_id") @db.Uuid
+  status     FriendshipStatus @default(pending)
+  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  fromUser User @relation("FriendshipFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser   User @relation("FriendshipTo", fields: [toUserId], references: [id], onDelete: Cascade)
+
+  @@unique([fromUserId, toUserId])
+  @@index([toUserId, status], map: "idx_friendships_to_user")
+  @@map("friendships")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Conversations
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Conversation {
+  id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type      ConversationType @default(direct)
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// Bumped on every new message; used as `lastMessageAt` for list ordering.
+  updatedAt DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  members  ConversationMember[]
+  messages Message[]
+
+  @@index([updatedAt(sort: Desc)], map: "idx_conversations_updated")
+  @@map("conversations")
+}
+
+model ConversationMember {
+  conversationId String   @map("conversation_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  joinedAt       DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  @@index([userId], map: "idx_conv_members_user")
+  @@map("conversation_members")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Messages — ciphertext only, never plaintext
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Message {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId  String    @map("conversation_id") @db.Uuid
+  senderId        String    @map("sender_id") @db.Uuid
+  /// Client-encrypted payload (base64url). Server never decrypts.
+  bodyCiphertext  String    @map("body_ciphertext") @db.Text
+  /// Client-generated nonce (base64url).
+  nonce           String    @db.Text
+  /// Optional client correlation / idempotency key.
+  clientMessageId String?   @map("client_message_id") @db.VarChar(100)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  editedAt        DateTime? @map("edited_at") @db.Timestamptz(6)
+  /// Soft delete marker.
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  conversation Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User             @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  receipts     MessageReceipt[]
+  attachments  Attachment[]
+
+  /// Idempotency: a sender cannot create two messages with the same clientMessageId.
+  @@unique([senderId, clientMessageId], map: "uq_messages_sender_client_id")
+  @@index([conversationId, createdAt(sort: Desc)], map: "idx_messages_conv_created")
+  @@map("messages")
+}
+
+model MessageReceipt {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  messageId String        @map("message_id") @db.Uuid
+  userId    String        @map("user_id") @db.Uuid
+  status    ReceiptStatus
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, status])
+  @@index([userId], map: "idx_message_receipts_user")
+  @@map("message_receipts")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Attachments — encrypted content; metadata only in DB
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Attachment {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  messageId    String?   @map("message_id") @db.Uuid
+  uploaderId   String    @map("uploader_id") @db.Uuid
+  /// Opaque server-generated storage key. Never derived from the original
+  /// filename and never exposed to clients (rule.md §17).
+  storageKey   String    @unique @map("storage_key") @db.VarChar(500)
+  originalName String?   @map("original_name") @db.VarChar(255)
+  mimeType     String?   @map("mime_type") @db.VarChar(100)
+  sizeBytes    BigInt?   @map("size_bytes")
+  checksum     String?   @db.VarChar(128)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  message  Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  uploader User     @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  @@index([messageId], map: "idx_attachments_message")
+  @@index([uploaderId], map: "idx_attachments_uploader")
+  @@map("attachments")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Security events (audit log)
+// Never store passwords, tokens, keys or plaintext in `metadata`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SecurityEvent {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  eventType String   @map("event_type") @db.VarChar(100)
+  ipAddress String?  @map("ip_address") @db.VarChar(45)
+  metadata  Json?    @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_security_events_user")
+  @@index([eventType, createdAt(sort: Desc)], map: "idx_security_events_type")
+  @@map("security_events")
+}

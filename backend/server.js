@@ -6,7 +6,10 @@ import { createSocketServer } from './src/socket/index.js';
 
 const httpServer = http.createServer(app);
 
-createSocketServer(httpServer, env);
+const io = createSocketServer(httpServer, env);
+
+// Expose io instance on app so controllers can emit socket events
+app.set('io', io);
 
 httpServer.listen(env.port, env.host, () => {
   console.log(
