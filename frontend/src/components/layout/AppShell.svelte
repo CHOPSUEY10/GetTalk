@@ -1,6 +1,7 @@
 <script>
     import { authStore } from "../../stores/auth.store.js";
     import { socketStore } from "../../stores/socket.store.js";
+    import { friendsStore } from "../../stores/friends.store.js";
     import { replace } from "svelte-spa-router";
 
     // Reactive safety check for authentication
@@ -64,11 +65,18 @@
                             </a>
                         </li>
                         <li>
-                            <a href="#/friends" class="group">
-                                <svg class="w-5 h-5 text-slate-400 group-hover:text-indigo-600 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-                                </svg>
-                                <span>Friends</span>
+                            <a href="#/friends" class="group flex items-center justify-between">
+                                <div class="flex items-center gap-3">
+                                    <svg class="w-5 h-5 text-slate-400 group-hover:text-indigo-600 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                                    </svg>
+                                    <span>Friends</span>
+                                </div>
+                                {#if $friendsStore.requests && $friendsStore.requests.length > 0}
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-600 text-white shadow-xs">
+                                        {$friendsStore.requests.length}
+                                    </span>
+                                {/if}
                             </a>
                         </li>
                     </ul>

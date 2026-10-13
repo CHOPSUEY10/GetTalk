@@ -3,6 +3,7 @@ import { listMessages, sendMessage as apiSendMessage, sendReceipt } from '../ser
 import { sendEncryptedMessage, markMessageDelivered, markMessageRead } from '../services/socket/client.js';
 import { registerSocketListeners } from '../services/socket/handlers.js';
 import { conversationsStore } from './conversations.store.js';
+import { encryptMessage, decryptMessage } from '../services/crypto/message-crypto.js';
 import logger from '../lib/logger.js';
 
 /**
@@ -76,7 +77,7 @@ function createMessagesStore() {
     subscribe,
 
     /**
-     * Load messages history for a conversation from REST API.
+     * Load messages history for a conversation from REST API and decrypt payloads.
      * @param {string} conversationId
      */
     loadMessages: async (conversationId) => {
@@ -92,12 +93,31 @@ function createMessagesStore() {
         const res = await listMessages(conversationId, { limit: 50 });
         const list = Array.isArray(res) ? res : res?.messages || [];
 
-        // Format and sort messages chronologically
+        // Decrypt messages client-side via message-crypto.js (Rule §14, §15)
         /** @type {MessageItem[]} */
-        const formatted = list.map((m) => ({
-          ...m,
-          status: /** @type {MessageItem['status']} */ (m.status || 'delivered')
-        }));
+        const formatted = await Promise.all(
+          list.map(async (m) => {
+            const ciphertext = m.body_ciphertext || m.bodyCiphertext;
+            const nonce = m.nonce;
+            let plaintext = m.plaintext;
+
+            if (!plaintext && ciphertext && nonce) {
+              try {
+                plaintext = await decryptMessage(conversationId, ciphertext, nonce);
+              } catch {
+                plaintext = '[Pesan Terenkripsi]';
+              }
+            }
+
+            return {
+              ...m,
+              conversation_id: m.conversation_id || conversationId,
+              body_ciphertext: ciphertext,
+              plaintext: plaintext || ciphertext,
+              status: /** @type {MessageItem['status']} */ (m.status || 'delivered')
+            };
+          })
+        );
 
         update((s) => ({
           ...s,
@@ -125,17 +145,36 @@ function createMessagesStore() {
 
     /**
      * Send an encrypted message to a conversation.
+     * Automatically encrypts plaintext using AES-256-GCM before sending (Rule §14, §15, §20).
+     *
      * @param {string} conversationId
      * @param {{
-     *   bodyCiphertext: string,
-     *   nonce: string,
-     *   senderId: string,
+     *   text?: string,
+     *   bodyCiphertext?: string,
+     *   nonce?: string,
+     *   senderId?: string,
      *   senderUsername?: string,
      *   plaintextPreview?: string
      * }} params
      */
-    sendMessage: async (conversationId, { bodyCiphertext, nonce, senderId, senderUsername, plaintextPreview }) => {
-      if (!conversationId || !bodyCiphertext || !nonce) return null;
+    sendMessage: async (conversationId, params) => {
+      if (!conversationId) return null;
+
+      let bodyCiphertext = params.bodyCiphertext;
+      let nonce = params.nonce;
+      let plaintext = params.text || params.plaintextPreview || '';
+      const senderId = params.senderId || 'me';
+      const senderUsername = params.senderUsername || 'Me';
+
+      // Perform client-side E2EE encryption if text is provided
+      if (params.text && !bodyCiphertext) {
+        plaintext = params.text;
+        const encrypted = await encryptMessage(conversationId, params.text, senderId);
+        bodyCiphertext = encrypted.bodyCiphertext;
+        nonce = encrypted.nonce;
+      }
+
+      if (!bodyCiphertext || !nonce) return null;
 
       const clientMessageId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const nowIso = new Date().toISOString();
@@ -145,10 +184,10 @@ function createMessagesStore() {
         id: clientMessageId,
         conversation_id: conversationId,
         sender_id: senderId,
-        sender_username: senderUsername || 'Me',
+        sender_username: senderUsername,
         body_ciphertext: bodyCiphertext,
         nonce,
-        plaintext: plaintextPreview || bodyCiphertext,
+        plaintext: plaintext || bodyCiphertext,
         status: 'sending',
         client_message_id: clientMessageId,
         created_at: nowIso
@@ -168,7 +207,7 @@ function createMessagesStore() {
 
       conversationsStore.updateLastMessage(conversationId, optimisticMessage);
 
-      // 2. Transmit via Socket.IO first, fallback to REST API if socket fails
+      // 2. Transmit ciphertext via Socket.IO first, fallback to REST API
       try {
         const socketRes = await sendEncryptedMessage({
           conversationId,
@@ -184,7 +223,7 @@ function createMessagesStore() {
             const list = s.messagesByConversation[conversationId] || [];
             const replaced = list.map((m) =>
               m.client_message_id === clientMessageId || m.id === clientMessageId
-                ? { ...serverMessage, plaintext: plaintextPreview || serverMessage.body_ciphertext, status: 'sent' }
+                ? { ...serverMessage, plaintext, status: 'sent' }
                 : m
             );
             return {
@@ -207,7 +246,7 @@ function createMessagesStore() {
           const list = s.messagesByConversation[conversationId] || [];
           const replaced = list.map((m) =>
             m.client_message_id === clientMessageId || m.id === clientMessageId
-              ? { ...confirmed, plaintext: plaintextPreview || confirmed.body_ciphertext, status: 'sent' }
+              ? { ...confirmed, plaintext, status: 'sent' }
               : m
           );
           return {
@@ -238,11 +277,24 @@ function createMessagesStore() {
 
     /**
      * Handle incoming real-time message from Socket.IO room broadcast.
+     * Decrypts ciphertext before adding to UI store.
      * @param {any} incoming
      */
-    handleIncomingMessage: (incoming) => {
+    handleIncomingMessage: async (incoming) => {
       const convId = incoming.conversation_id || incoming.conversationId;
       if (!convId) return;
+
+      const ciphertext = incoming.body_ciphertext || incoming.bodyCiphertext;
+      const nonce = incoming.nonce;
+      let decryptedText = incoming.plaintext;
+
+      if (!decryptedText && ciphertext && nonce) {
+        try {
+          decryptedText = await decryptMessage(convId, ciphertext, nonce);
+        } catch {
+          decryptedText = '[Pesan Terenkripsi]';
+        }
+      }
 
       update((s) => {
         const list = s.messagesByConversation[convId] || [];
@@ -257,7 +309,7 @@ function createMessagesStore() {
         if (alreadyExists) {
           const updated = list.map((m) =>
             m.id === incoming.id || (incoming.client_message_id && m.client_message_id === incoming.client_message_id)
-              ? { ...incoming, plaintext: m.plaintext || incoming.body_ciphertext }
+              ? { ...incoming, plaintext: m.plaintext || decryptedText || ciphertext }
               : m
           );
           return {
@@ -268,6 +320,8 @@ function createMessagesStore() {
 
         const newMsg = {
           ...incoming,
+          body_ciphertext: ciphertext,
+          plaintext: decryptedText || ciphertext,
           status: 'delivered'
         };
 
@@ -280,7 +334,10 @@ function createMessagesStore() {
         };
       });
 
-      conversationsStore.updateLastMessage(convId, incoming);
+      conversationsStore.updateLastMessage(convId, {
+        ...incoming,
+        plaintext: decryptedText || ciphertext
+      });
 
       // Send delivery receipt back to sender
       if (incoming.id) {
@@ -292,14 +349,28 @@ function createMessagesStore() {
      * Handle updated message (edited).
      * @param {any} updatedMessage
      */
-    handleMessageUpdated: (updatedMessage) => {
+    handleMessageUpdated: async (updatedMessage) => {
       const convId = updatedMessage.conversation_id || updatedMessage.conversationId;
       if (!convId) return;
+
+      const ciphertext = updatedMessage.body_ciphertext || updatedMessage.bodyCiphertext;
+      const nonce = updatedMessage.nonce;
+      let decryptedText = updatedMessage.plaintext;
+
+      if (!decryptedText && ciphertext && nonce) {
+        try {
+          decryptedText = await decryptMessage(convId, ciphertext, nonce);
+        } catch {
+          decryptedText = '[Pesan Terenkripsi]';
+        }
+      }
 
       update((s) => {
         const list = s.messagesByConversation[convId] || [];
         const updated = list.map((m) =>
-          m.id === updatedMessage.id ? { ...m, ...updatedMessage } : m
+          m.id === updatedMessage.id
+            ? { ...m, ...updatedMessage, plaintext: decryptedText || ciphertext }
+            : m
         );
         return {
           ...s,

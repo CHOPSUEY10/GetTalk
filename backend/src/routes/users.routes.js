@@ -9,7 +9,9 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/me', usersController.getMe);
+router.post('/me/public-key', usersController.setPublicKey);
 router.get('/search', validate(validateSearchQuery), usersController.search);
+router.get('/:userId/public-key', usersController.getPublicKey);
 router.get('/:userId', usersController.getById);
 
 export default router;

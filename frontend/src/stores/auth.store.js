@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import { getSession, login as apiLogin, logout as apiLogout } from '../services/api/auth.api.js';
 import { userStore } from './user.store.js';
+import { syncIdentityPublicKey, clearCryptoState } from '../services/crypto/message-crypto.js';
 import logger from '../lib/logger.js';
 
 /**
@@ -39,6 +40,7 @@ function createAuthStore() {
         
         set({ user, authenticated: true, loading: false, error: null });
         userStore.set(user);
+        if (user?.id) syncIdentityPublicKey(user.id);
       } catch (err) {
         const error = /** @type {any} */ (err);
         // Only treat as error if it's a server/network error, not a standard unauthenticated response
@@ -64,6 +66,7 @@ function createAuthStore() {
         
         set({ user, authenticated: true, loading: false, error: null });
         userStore.set(user);
+        if (user?.id) syncIdentityPublicKey(user.id);
         return response;
       } catch (err) {
         const error = /** @type {any} */ (err);
@@ -83,6 +86,7 @@ function createAuthStore() {
       } catch (error) {
         logger.error('Logout failed on the server', error);
       } finally {
+        await clearCryptoState();
         set({ user: null, authenticated: false, loading: false, error: null });
         userStore.set(null);
       }

@@ -5,6 +5,7 @@
     import { socketStore } from "../stores/socket.store.js";
     import { conversationsStore } from "../stores/conversations.store.js";
     import { messagesStore } from "../stores/messages.store.js";
+    import AttachmentPicker from "../components/attachments/AttachmentPicker.svelte";
     import { push } from "svelte-spa-router";
     import logger from "../lib/logger.js";
 
@@ -46,23 +47,38 @@
         if (!messageText.trim() || !conversationId || isSending) return;
 
         const textToSend = messageText.trim();
-        const nonce = `nonce-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         messageText = "";
 
         try {
             isSending = true;
             await messagesStore.sendMessage(conversationId, {
-                bodyCiphertext: textToSend, // Ready to receive ciphertext from crypto layer
-                nonce,
+                text: textToSend,
                 senderId: $authStore.user?.id || "me",
-                senderUsername: $authStore.user?.username || "Me",
-                plaintextPreview: textToSend
+                senderUsername: $authStore.user?.username || "Me"
             });
             scrollToBottom();
         } catch (err) {
             logger.error("Gagal mengirim pesan", err);
         } finally {
             isSending = false;
+        }
+    };
+
+    /** @param {CustomEvent<{ fileName: string, fileSize: number }>} e */
+    const handleAttached = async (e) => {
+        const { fileName, fileSize } = e.detail;
+        const sizeStr = (fileSize / 1024).toFixed(1);
+        const attachmentMsg = `📎 [Berkas Terenkripsi] ${fileName} (${sizeStr} KB)`;
+
+        try {
+            await messagesStore.sendMessage(conversationId, {
+                text: attachmentMsg,
+                senderId: $authStore.user?.id || "me",
+                senderUsername: $authStore.user?.username || "Me"
+            });
+            scrollToBottom();
+        } catch (err) {
+            logger.error("Gagal mengirim pesan lampiran", err);
         }
     };
 
@@ -209,6 +225,8 @@
         <!-- Chat Input Bar -->
         <div class="p-4 border-t border-slate-200 bg-white shrink-0">
             <form on:submit|preventDefault={handleSendMessage} class="flex items-center gap-2">
+                <AttachmentPicker {conversationId} disabled={!conversationId || isSending} on:attached={handleAttached} />
+
                 <input
                     type="text"
                     bind:value={messageText}
