@@ -12,19 +12,9 @@ import logger from '../utils/logger.js';
  */
 export async function socketAuth(socket, next) {
   try {
-    const userId = socket.request.session?.userId || socket.handshake.auth?.userId;
+    const userId = socket.request.session?.userId;
 
     if (!userId) {
-      // In development environment, allow handshake query fallback if session cookie isn't available
-      if (process.env.NODE_ENV === 'development' && socket.handshake.query?.userId) {
-        const queryUserId = String(socket.handshake.query.userId);
-        socket.data.user = {
-          id: queryUserId,
-          username: socket.handshake.query.username || 'dev-user',
-        };
-        return next();
-      }
-
       const error = new Error('Authentication required');
       /** @type {any} */ (error).data = { code: 'UNAUTHORIZED' };
       return next(error);

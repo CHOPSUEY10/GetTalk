@@ -1,66 +1,37 @@
 <script>
-    import { onMount } from "svelte";
+    import { onMount, onDestroy } from "svelte";
     import ProtectedLayout from "../components/layout/ProtectedLayout.svelte";
-    import {
-        friendLists,
-        friendRequestList,
-        friendRequest,
-        acceptFriendRequests,
-        rejectFriendRequests,
-        deleteFromFriendList
-    } from "../services/api/friends.api.js";
+    import { friendsStore } from "../stores/friends.store.js";
     import { push } from "svelte-spa-router";
     import logger from "../lib/logger.js";
 
     let activeTab = "friends"; // 'friends' | 'requests' | 'add'
     let searchQuery = "";
     let addUsername = "";
-    let loading = true;
     let actionLoading = false;
     /** @type {string | null} */
     let message = null;
     /** @type {'success' | 'error' | null} */
     let messageType = null;
 
-    /** @type {any[]} */
-    let friends = [];
-    /** @type {any[]} */
-    let requests = [];
+    /** @type {(() => void) | null} */
+    let cleanupSocket = null;
 
-    const loadData = async () => {
-        loading = true;
-        message = null;
-        try {
-            const [friendsRes, requestsRes] = await Promise.allSettled([
-                friendLists(),
-                friendRequestList()
-            ]);
-
-            if (friendsRes.status === "fulfilled") {
-                const data = friendsRes.value;
-                friends = Array.isArray(data) ? data : data?.friends || [];
-            }
-            if (requestsRes.status === "fulfilled") {
-                const data = requestsRes.value;
-                requests = Array.isArray(data) ? data : data?.requests || [];
-            }
-        } catch (err) {
-            logger.error("Gagal memuat data teman", err);
-        } finally {
-            loading = false;
-        }
-    };
+    // Subscribe to the store reactively
+    $: friends = $friendsStore.friends;
+    $: requests = $friendsStore.requests;
+    $: loading = $friendsStore.loading;
 
     const handleSendRequest = async () => {
         if (!addUsername.trim()) return;
         actionLoading = true;
         message = null;
         try {
-            await friendRequest({ username: addUsername.trim() });
+            await friendsStore.sendRequest({ username: addUsername.trim() });
             message = `Permintaan pertemanan berhasil dikirim ke "${addUsername.trim()}".`;
             messageType = "success";
             addUsername = "";
-            await loadData();
+            await friendsStore.loadAll();
         } catch (err) {
             const e = /** @type {any} */ (err);
             message = e.message || "Gagal mengirim permintaan pertemanan.";
@@ -74,10 +45,9 @@
     const handleAccept = async (requestId) => {
         actionLoading = true;
         try {
-            await acceptFriendRequests(requestId);
+            await friendsStore.accept(requestId);
             message = "Permintaan pertemanan diterima.";
             messageType = "success";
-            await loadData();
         } catch (err) {
             const e = /** @type {any} */ (err);
             message = e.message || "Gagal menerima permintaan.";
@@ -91,10 +61,9 @@
     const handleReject = async (requestId) => {
         actionLoading = true;
         try {
-            await rejectFriendRequests(requestId);
+            await friendsStore.reject(requestId);
             message = "Permintaan pertemanan ditolak.";
             messageType = "success";
-            await loadData();
         } catch (err) {
             const e = /** @type {any} */ (err);
             message = e.message || "Gagal menolak permintaan.";
@@ -109,10 +78,9 @@
         if (!confirm("Apakah Anda yakin ingin menghapus teman ini?")) return;
         actionLoading = true;
         try {
-            await deleteFromFriendList(friendId);
+            await friendsStore.remove(friendId);
             message = "Teman berhasil dihapus.";
             messageType = "success";
-            await loadData();
         } catch (err) {
             const e = /** @type {any} */ (err);
             message = e.message || "Gagal menghapus teman.";
@@ -136,7 +104,16 @@
     });
 
     onMount(() => {
-        loadData();
+        friendsStore.loadAll();
+        // Register socket listeners for real-time friend events
+        cleanupSocket = friendsStore.initSocketListeners();
+    });
+
+    onDestroy(() => {
+        if (cleanupSocket) {
+            cleanupSocket();
+            cleanupSocket = null;
+        }
     });
 </script>
 
@@ -316,11 +293,11 @@
                             <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
                                 <div class="flex items-center gap-3 min-w-0">
                                     <div class="w-11 h-11 rounded-xl bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-sm uppercase shrink-0">
-                                        {(req.username || req.sender?.username || "U").slice(0, 2)}
+                                        {(req.fromUser?.username || req.username || req.sender?.username || "U").slice(0, 2)}
                                     </div>
                                     <div class="min-w-0">
                                         <h4 class="font-semibold text-slate-900 text-sm truncate">
-                                            {req.username || req.sender?.username || "User"}
+                                            {req.fromUser?.username || req.username || req.sender?.username || "User"}
                                         </h4>
                                         <p class="text-xs text-slate-500">Ingin berteman dengan Anda</p>
                                     </div>

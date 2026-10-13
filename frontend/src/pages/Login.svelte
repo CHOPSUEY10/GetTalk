@@ -3,25 +3,25 @@
     import { authStore } from "../stores/auth.store.js";
     import { replace } from "svelte-spa-router";
 
-    let username = "";
+    let email = "";
     let password = "";
     let showPassword = false;
     /** @type {string | null} */
     let localError = null;
 
     const handleLogin = async () => {
-        if (!username.trim() || !password) {
-            localError = "Silakan masukkan username dan password.";
+        if (!email.trim() || !password) {
+            localError = "Silakan masukkan email dan password.";
             return;
         }
 
         localError = null;
         try {
-            await authStore.login({ username: username.trim(), password });
+            await authStore.login({ email: email.trim(), password });
             replace("/");
         } catch (err) {
             const e = /** @type {any} */ (err);
-            localError = e.message || "Username atau password salah. Silakan coba lagi.";
+            localError = e.message || "Email atau password salah. Silakan coba lagi.";
         }
     };
 </script>
@@ -44,8 +44,8 @@
 
         <form on:submit|preventDefault={handleLogin} class="space-y-4">
             <div>
-                <label for="username" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
-                    Username
+                <label for="email" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
+                    Email
                 </label>
                 <div class="relative rounded-xl shadow-sm">
                     <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -54,11 +54,11 @@
                         </svg>
                     </div>
                     <input
-                        id="username"
-                        type="text"
-                        bind:value={username}
-                        placeholder="Masukkan username"
-                        autocomplete="username"
+                        id="email"
+                        type="email"
+                        bind:value={email}
+                        placeholder="nama@email.com"
+                        autocomplete="email"
                         required
                         disabled={$authStore.loading}
                         class="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white transition-all disabled:opacity-60"

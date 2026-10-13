@@ -2,6 +2,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import app from '../app.js';
+import { query } from '../src/config/database.js';
 
 let server;
 let baseUrl;
@@ -95,6 +96,60 @@ describe('Authentication API & Validation', () => {
   test('POST /api/auth/logout returns 204 even when unauthenticated', async () => {
     const res = await fetch(`${baseUrl}/api/auth/logout`, { method: 'POST' });
     assert.equal(res.status, 204);
+  });
+
+  test('register → session → login round trip persists to the database', async () => {
+    const suffix = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    const username = `e2e_${suffix}`;
+    const email = `e2e_${suffix}@example.com`;
+    const password = 'correct-horse-battery';
+
+    const registerRes = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, email, password }),
+    });
+    assert.equal(registerRes.status, 201);
+    const { user } = await registerRes.json();
+    assert.equal(user.username, username);
+    assert.ok(user.id);
+
+    const [cookie] = registerRes.headers.getSetCookie();
+
+    try {
+      // The account must exist as a row, with the password stored only as a hash.
+      const { rows } = await query('SELECT password_hash FROM users WHERE id = $1', [user.id]);
+      assert.equal(rows.length, 1, 'registered user was not persisted');
+      assert.notEqual(rows[0].password_hash, password);
+      assert.match(rows[0].password_hash, /^\$2[aby]\$/);
+
+      // The session written by register must resolve back to the same user.
+      const sessionRes = await fetch(`${baseUrl}/api/auth/session`, {
+        headers: { Cookie: cookie },
+      });
+      assert.equal(sessionRes.status, 200);
+      assert.equal((await sessionRes.json()).user.id, user.id);
+
+      // Wrong password is rejected.
+      const badLogin = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: 'wrong-password' }),
+      });
+      assert.equal(badLogin.status, 401);
+
+      // Correct password logs in.
+      const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      assert.equal(loginRes.status, 200);
+      assert.equal((await loginRes.json()).user.id, user.id);
+    } finally {
+      await query(`DELETE FROM sessions WHERE sess->>'userId' = $1`, [user.id]);
+      await query('DELETE FROM users WHERE id = $1', [user.id]);
+    }
   });
 });
 

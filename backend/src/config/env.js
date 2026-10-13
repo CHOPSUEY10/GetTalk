@@ -8,8 +8,12 @@ const backendRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const defaultEnvPath = resolve(backendRoot, '.env');
 const environmentName = process.env.NODE_ENV || 'development';
 const modeEnvPath = resolve(backendRoot, `.env.${environmentName}`);
+const localEnvPath = resolve(backendRoot, `.env.${environmentName}.local`);
 const envPath = existsSync(modeEnvPath) ? modeEnvPath : defaultEnvPath;
 
+// .local overrides (developer-specific, never committed) take precedence,
+// same order as prisma.config.js. dotenv never overwrites an existing key.
+if (existsSync(localEnvPath)) dotenv.config({ path: localEnvPath });
 dotenv.config({ path: envPath });
 
 const allowedEnvironments = [

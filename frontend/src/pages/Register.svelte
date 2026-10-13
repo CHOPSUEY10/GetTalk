@@ -21,8 +21,8 @@
             return;
         }
 
-        if (password.length < 6) {
-            error = "Password minimal terdiri dari 6 karakter.";
+        if (password.length < 8) {
+            error = "Password minimal terdiri dari 8 karakter.";
             return;
         }
 
@@ -140,7 +140,7 @@
                         id="password"
                         type={showPassword ? "text" : "password"}
                         bind:value={password}
-                        placeholder="Minimal 6 karakter"
+                        placeholder="Minimal 8 karakter"
                         autocomplete="new-password"
                         required
                         disabled={loading || success}
