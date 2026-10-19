@@ -13,12 +13,18 @@ const DB_NAME = 'gettalk-keystore';
 const DB_VERSION = 1;
 const STORE_NAME = 'keys';
 
+/** @type {Promise<IDBDatabase> | null} */
+let dbPromise = null;
+
 /**
- * Open (or create) the IndexedDB database.
+ * Open (or create) the IndexedDB database. The connection is cached so
+ * encrypting/decrypting a message history does not open one DB per message.
  * @returns {Promise<IDBDatabase>}
  */
 function openDB() {
-  return new Promise((resolve, reject) => {
+  if (dbPromise) return dbPromise;
+
+  dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onupgradeneeded = () => {
@@ -30,7 +36,12 @@ function openDB() {
 
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
+  }).catch((err) => {
+    dbPromise = null; // allow a retry after a transient failure
+    throw err;
   });
+
+  return dbPromise;
 }
 
 /**
@@ -131,14 +142,50 @@ export async function getDerivedKey(id) {
  * @param {string} id
  * @returns {Promise<void>}
  */
-export async function deleteKey(id) {
-  const db = await openDB();
+export async function deleteKey(id) {  const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
     store.delete(id);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
+ * Pin a peer identity key fingerprint (TOFU, issue #11).
+ *
+ * @param {string} userId
+ * @param {string} fingerprint
+ * @returns {Promise<void>}
+ */
+export async function storeTrustedFingerprint(userId, fingerprint) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put({
+      id: `trust:${userId}`,
+      fingerprint,
+      updatedAt: Date.now(),
+    });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
+ * Read the pinned fingerprint for a peer, or null on first contact.
+ *
+ * @param {string} userId
+ * @returns {Promise<string | null>}
+ */
+export async function getTrustedFingerprint(userId) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const request = tx.objectStore(STORE_NAME).get(`trust:${userId}`);
+    request.onsuccess = () => resolve(request.result?.fingerprint || null);
+    request.onerror = () => reject(request.error);
   });
 }
 

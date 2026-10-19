@@ -98,6 +98,13 @@ export const api = {
    * @param {any} [body]
    * @param {CustomRequestInit} [options]
    */
+  put: (path, body, options = {}) => fetchClient(path, { ...options, method: 'PUT', body }),
+
+  /**
+   * @param {string} path
+   * @param {any} [body]
+   * @param {CustomRequestInit} [options]
+   */
   patch: (path, body, options = {}) => fetchClient(path, { ...options, method: 'PATCH', body }),
 
   /**

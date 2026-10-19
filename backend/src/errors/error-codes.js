@@ -31,6 +31,11 @@ export const CONFLICT = 'CONFLICT';
 export const USER_ALREADY_EXISTS = 'USER_ALREADY_EXISTS';
 export const FRIENDSHIP_ALREADY_EXISTS = 'FRIENDSHIP_ALREADY_EXISTS';
 
+// ── E2EE key registry ──────────────────────────────────────────
+export const INVALID_PUBLIC_KEY = 'INVALID_PUBLIC_KEY';
+export const IDENTITY_KEY_NOT_FOUND = 'IDENTITY_KEY_NOT_FOUND';
+export const KEY_REGISTRY_UNAVAILABLE = 'KEY_REGISTRY_UNAVAILABLE';
+
 // ── Rate Limiting ──────────────────────────────────────────────
 export const TOO_MANY_REQUESTS = 'TOO_MANY_REQUESTS';
 

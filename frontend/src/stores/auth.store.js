@@ -1,7 +1,20 @@
 import { writable } from 'svelte/store';
 import { getSession, login as apiLogin, logout as apiLogout } from '../services/api/auth.api.js';
+import { publishOwnIdentityKey } from '../services/crypto/identity-trust.js';
 import { userStore } from './user.store.js';
 import logger from '../lib/logger.js';
+
+/**
+ * Publish the E2EE identity public key once the session is known.
+ * Failure is non-fatal: the key registry may be temporarily unavailable.
+ * @param {any} user
+ */
+function publishIdentityKey(user) {
+  if (!user?.id) return;
+  publishOwnIdentityKey(user.id).catch((err) => {
+    logger.error('Failed to publish E2EE identity key', err);
+  });
+}
 
 /**
  * @typedef {Object} User
@@ -39,6 +52,7 @@ function createAuthStore() {
         
         set({ user, authenticated: true, loading: false, error: null });
         userStore.set(user);
+        publishIdentityKey(user);
       } catch (err) {
         const error = /** @type {any} */ (err);
         // Only treat as error if it's a server/network error, not a standard unauthenticated response
@@ -64,6 +78,7 @@ function createAuthStore() {
         
         set({ user, authenticated: true, loading: false, error: null });
         userStore.set(user);
+        publishIdentityKey(user);
         return response;
       } catch (err) {
         const error = /** @type {any} */ (err);
