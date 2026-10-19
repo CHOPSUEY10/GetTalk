@@ -194,10 +194,12 @@ model Attachment {
   /// Opaque server-generated storage key. Never derived from the original
   /// filename and never exposed to clients (rule.md §17).
   storageKey   String    @unique @map("storage_key") @db.VarChar(500)
-  originalName String?   @map("original_name") @db.VarChar(255)
-  mimeType     String?   @map("mime_type") @db.VarChar(100)
+  /// Client-encrypted metadata (filename, MIME type). The server never
+  /// decrypts it; authorized recipients recover it with the conversation key.
+  metadataCiphertext String? @map("metadata_ciphertext") @db.Text
+  metadataNonce      String? @map("metadata_nonce") @db.Text
+  /// Size of the encrypted payload. Unavoidably visible to the server.
   sizeBytes    BigInt?   @map("size_bytes")
-  checksum     String?   @db.VarChar(128)
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
 

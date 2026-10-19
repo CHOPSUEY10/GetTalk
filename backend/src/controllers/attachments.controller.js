@@ -2,18 +2,13 @@ import * as attachmentsService from '../services/attachments.service.js';
 
 export async function upload(req, res, next) {
   try {
-    const originalName = req.body.originalName || req.body.filename;
-    const mimeType = req.body.mimeType;
-    const sizeBytes = req.body.sizeBytes !== undefined ? req.body.sizeBytes : req.body.size;
-    const checksum = req.body.checksum || null;
-    const messageId = req.body.messageId || null;
+    const { messageId, sizeBytes, metadataCiphertext, metadataNonce } = req.body;
 
     const attachment = await attachmentsService.upload(req.user.id, {
-      originalName,
-      mimeType,
-      sizeBytes,
-      checksum,
       messageId,
+      sizeBytes,
+      metadataCiphertext,
+      metadataNonce,
     });
 
     return res.status(201).json({ attachment });

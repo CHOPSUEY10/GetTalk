@@ -1,5 +1,8 @@
 /**
  * Attachments Validator
+ *
+ * Issue #15: plaintext filename/MIME type and plaintext checksums are no
+ * longer accepted. Clients send an encrypted metadata blob instead.
  */
 
 export function validateUploadAttachment(body) {
@@ -9,20 +12,32 @@ export function validateUploadAttachment(body) {
     return { valid: false, errors: ['Request body is required'] };
   }
 
-  const originalName = body.originalName || body.filename;
-  const mimeType = body.mimeType;
-  const sizeBytes = body.sizeBytes !== undefined ? body.sizeBytes : body.size;
-
-  if (!originalName || typeof originalName !== 'string') {
-    errors.push('originalName or filename is required');
+  if (body.originalName !== undefined || body.filename !== undefined ||
+      body.mimeType !== undefined || body.checksum !== undefined) {
+    return {
+      valid: false,
+      errors: [
+        'Plaintext attachment metadata is not accepted. Encrypt filename/MIME type client-side and send metadataCiphertext + metadataNonce.',
+      ],
+    };
   }
 
-  if (!mimeType || typeof mimeType !== 'string') {
-    errors.push('mimeType is required');
+  const { messageId, sizeBytes, metadataCiphertext, metadataNonce } = body;
+
+  if (!messageId || typeof messageId !== 'string') {
+    errors.push('messageId is required');
   }
 
-  if (sizeBytes === undefined || typeof sizeBytes !== 'number' || sizeBytes <= 0) {
-    errors.push('sizeBytes or size must be a positive number');
+  if (sizeBytes === undefined || typeof sizeBytes !== 'number' || !Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+    errors.push('sizeBytes must be a positive number');
+  }
+
+  if (!metadataCiphertext || typeof metadataCiphertext !== 'string' || metadataCiphertext.trim().length === 0) {
+    errors.push('metadataCiphertext is required');
+  }
+
+  if (!metadataNonce || typeof metadataNonce !== 'string' || metadataNonce.trim().length === 0) {
+    errors.push('metadataNonce is required');
   }
 
   return {
