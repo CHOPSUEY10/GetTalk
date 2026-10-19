@@ -2,6 +2,18 @@ import * as authService from '../services/auth.service.js';
 import AppError from '../errors/AppError.js';
 import { UNAUTHORIZED } from '../errors/error-codes.js';
 
+/**
+ * Persist the session before replying. Without this, a client that opens the
+ * Socket.IO connection immediately after login can race the session store and
+ * get "Authentication required".
+ * @param {import('express-session').Session & { userId?: string }} session
+ */
+function saveSession(session) {
+  return new Promise((resolve, reject) => {
+    session.save((err) => (err ? reject(err) : resolve()));
+  });
+}
+
 export async function register(req, res, next) {
   try {
     const { username, email, password } = req.body;
@@ -9,6 +21,7 @@ export async function register(req, res, next) {
     const user = await authService.register({ username, email, password });
     if (req.session) {
       req.session.userId = user.id;
+      await saveSession(req.session);
     }
     return res.status(201).json({
       user: {
@@ -28,6 +41,7 @@ export async function login(req, res, next) {
     const user = await authService.login({ email, password });
     if (req.session) {
       req.session.userId = user.id;
+      await saveSession(req.session);
     }
     return res.json({
       user: {
