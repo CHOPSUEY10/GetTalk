@@ -105,15 +105,7 @@
 
     onMount(() => {
         friendsStore.loadAll();
-        // Register socket listeners for real-time friend events
-        cleanupSocket = friendsStore.initSocketListeners();
-    });
-
-    onDestroy(() => {
-        if (cleanupSocket) {
-            cleanupSocket();
-            cleanupSocket = null;
-        }
+        friendsStore.initSocketListeners();
     });
 </script>
 

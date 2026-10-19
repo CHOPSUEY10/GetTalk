@@ -5,6 +5,8 @@
     import { socketStore } from "../stores/socket.store.js";
     import { conversationsStore } from "../stores/conversations.store.js";
     import { messagesStore } from "../stores/messages.store.js";
+    import AttachmentPicker from "../components/attachments/AttachmentPicker.svelte";
+    import { uploadAttachment } from "../services/api/attachments.api.js";
     import { encryptMessage } from "../services/crypto/message-crypto.js";
     import { establishConversationSession } from "../services/crypto/conversation-session.js";
     import { IdentityKeyChangedError } from "../services/crypto/identity-trust.js";
@@ -96,6 +98,44 @@
             scrollToBottom();
         } catch (err) {
             logger.error("Gagal mengirim pesan", err);
+        } finally {
+            isSending = false;
+        }
+    };
+
+    /** @param {CustomEvent<{ encryptedFile: any, fileName: string, fileSize: number }>} e */
+    const handleAttached = async (e) => {
+        const { encryptedFile, fileName, fileSize } = e.detail;
+        if (!conversationId || e2eeStatus !== "ready" || isSending) return;
+
+        isSending = true;
+        try {
+            const sizeStr = (fileSize / 1024).toFixed(1);
+            const text = `📎 [Berkas Terenkripsi] ${fileName} (${sizeStr} KB)`;
+            const { bodyCiphertext, nonce } = await encryptMessage(conversationId, text);
+
+            // The owning message must exist first so the upload is authorized
+            // against its conversation (issue #14).
+            const confirmed = await messagesStore.sendMessage(conversationId, {
+                bodyCiphertext,
+                nonce,
+                senderId: $authStore.user?.id || "me",
+                senderUsername: $authStore.user?.username || "Me",
+                plaintextPreview: text
+            });
+
+            if (confirmed?.id) {
+                await uploadAttachment({
+                    messageId: confirmed.id,
+                    sizeBytes: encryptedFile.encryptedSize,
+                    metadataCiphertext: encryptedFile.metadataCiphertext,
+                    metadataNonce: encryptedFile.metadataNonce
+                });
+            }
+
+            scrollToBottom();
+        } catch (err) {
+            logger.error("Gagal mengirim lampiran", err);
         } finally {
             isSending = false;
         }
@@ -274,6 +314,12 @@
         <!-- Chat Input Bar -->
         <div class="p-4 border-t border-slate-200 bg-white shrink-0">
             <form on:submit|preventDefault={handleSendMessage} class="flex items-center gap-2">
+                <AttachmentPicker
+                    {conversationId}
+                    disabled={e2eeStatus !== 'ready' || isSending}
+                    on:attached={handleAttached}
+                />
+
                 <input
                     type="text"
                     bind:value={messageText}

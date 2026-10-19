@@ -15,4 +15,3 @@ export const getUser = (userId) => {
   const safeUserId = encodeURIComponent(userId);
   return api.get(`/api/users/${safeUserId}`);
 };
-
