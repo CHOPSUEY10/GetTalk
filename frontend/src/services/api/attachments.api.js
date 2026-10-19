@@ -1,21 +1,37 @@
 import { api } from './client.js';
 
 /**
- * Upload encrypted attachment metadata (issues #14, #15; API contract §10).
- *
- * The backend stores opaque ciphertext only. Plaintext filename/MIME/checksum
- * fields are rejected by the validator.
+ * Upload encrypted attachment bytes + metadata (issues #14, #15).
  *
  * @param {{
  *   messageId: string,
- *   sizeBytes: number,
  *   metadataCiphertext: string,
- *   metadataNonce: string
+ *   metadataNonce: string,
+ *   encryptedBlob: Blob
  * }} payload
  * @returns {Promise<{ attachment: any }>}
  */
-export const uploadAttachment = (payload) => {
-  return api.post('/api/attachments', payload);
+export const uploadAttachment = ({
+  messageId,
+  metadataCiphertext,
+  metadataNonce,
+  encryptedBlob,
+}) => {
+  return api.postBinary('/api/attachments', encryptedBlob, {
+    'X-Message-Id': messageId,
+    'X-Metadata-Ciphertext': metadataCiphertext,
+    'X-Metadata-Nonce': metadataNonce,
+  });
+};
+
+/**
+ * Download the encrypted attachment bytes.
+ *
+ * @param {string} attachmentId
+ * @returns {Promise<ArrayBuffer>}
+ */
+export const downloadAttachmentContent = (attachmentId) => {
+  return api.getBinary(`/api/attachments/${encodeURIComponent(attachmentId)}/content`);
 };
 
 /**

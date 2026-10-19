@@ -9,6 +9,7 @@ import * as events from './events.js';
  *   onMessageDeleted?: (payload: { messageId: string }) => void,
  *   onMessageDelivered?: (payload: { messageId: string }) => void,
  *   onMessageRead?: (payload: { messageId: string }) => void,
+ *   onAttachmentNew?: (payload: { attachment: any }) => void,
  *   onFriendRequest?: (payload: any) => void,
  *   onFriendAccepted?: (payload: any) => void
  * }} callbacks
@@ -40,6 +41,11 @@ export function registerSocketListeners(callbacks) {
   if (callbacks.onMessageRead) {
     socket.on(events.MESSAGE_READ, callbacks.onMessageRead);
     handlers.push(() => socket.off(events.MESSAGE_READ, callbacks.onMessageRead));
+  }
+
+  if (callbacks.onAttachmentNew) {
+    socket.on(events.ATTACHMENT_NEW, callbacks.onAttachmentNew);
+    handlers.push(() => socket.off(events.ATTACHMENT_NEW, callbacks.onAttachmentNew));
   }
 
   if (callbacks.onFriendRequest) {

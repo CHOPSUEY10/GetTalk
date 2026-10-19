@@ -6,10 +6,11 @@
     import { conversationsStore } from "../stores/conversations.store.js";
     import { messagesStore } from "../stores/messages.store.js";
     import AttachmentPicker from "../components/attachments/AttachmentPicker.svelte";
-    import { uploadAttachment } from "../services/api/attachments.api.js";
+    import { uploadAttachment, downloadAttachmentContent } from "../services/api/attachments.api.js";
     import { encryptMessage } from "../services/crypto/message-crypto.js";
+    import { decryptFile, createDownloadUrl } from "../services/crypto/file-crypto.js";
     import { establishConversationSession } from "../services/crypto/conversation-session.js";
-    import { IdentityKeyChangedError } from "../services/crypto/identity-trust.js";
+    import { IdentityKeyChangedError, acceptChangedPeerKey } from "../services/crypto/identity-trust.js";
     import { push } from "svelte-spa-router";
     import logger from "../lib/logger.js";
 
@@ -24,6 +25,10 @@
     let e2eeStatus = "initializing";
     /** @type {string | null} */
     let e2eeError = null;
+    /** @type {string | null} */
+    let attachmentError = null;
+    /** @type {null | { userId: string, previousFingerprint: string, fingerprint: string }} */
+    let keyChange = null;
 
     $: if (params.conversationId && params.conversationId !== conversationId) {
         if (conversationId) {
@@ -39,6 +44,7 @@
         roomStatus = "connecting";
         e2eeStatus = "initializing";
         e2eeError = null;
+        keyChange = null;
 
         // Establish the E2EE session before joining the room or loading history,
         // so no message is displayed or sent without a verified key.
@@ -59,9 +65,16 @@
                 e2eeStatus = "ready";
             } catch (err) {
                 e2eeStatus = "error";
-                e2eeError = err instanceof IdentityKeyChangedError
-                    ? "Kunci keamanan lawan bicara berubah. Verifikasi fingerprint sebelum melanjutkan."
-                    : (err?.message || "Gagal menyiapkan sesi E2EE.");
+                if (err instanceof IdentityKeyChangedError) {
+                    keyChange = {
+                        userId: err.userId,
+                        previousFingerprint: err.previousFingerprint,
+                        fingerprint: err.fingerprint
+                    };
+                    e2eeError = "Kunci keamanan lawan bicara berubah. Verifikasi fingerprint sebelum melanjutkan.";
+                } else {
+                    e2eeError = err?.message || "Gagal menyiapkan sesi E2EE.";
+                }
                 logger.error("E2EE session setup failed", err);
             }
         }
@@ -103,6 +116,23 @@
         }
     };
 
+    const handleAcceptNewKey = async () => {
+        if (!keyChange) return;
+
+        const confirmed = confirm(
+            "Pastikan fingerprint baru cocok dengan yang diberikan lawan bicara lewat kanal lain (tatap muka/telepon). Lanjutkan?"
+        );
+        if (!confirmed) return;
+
+        try {
+            await acceptChangedPeerKey(keyChange.userId);
+            await initConversation(conversationId);
+        } catch (err) {
+            logger.error("Gagal menerima kunci baru", err);
+            e2eeError = "Gagal menerima kunci baru. Coba lagi.";
+        }
+    };
+
     /** @param {CustomEvent<{ encryptedFile: any, fileName: string, fileSize: number }>} e */
     const handleAttached = async (e) => {
         const { encryptedFile, fileName, fileSize } = e.detail;
@@ -127,9 +157,9 @@
             if (confirmed?.id) {
                 await uploadAttachment({
                     messageId: confirmed.id,
-                    sizeBytes: encryptedFile.encryptedSize,
                     metadataCiphertext: encryptedFile.metadataCiphertext,
-                    metadataNonce: encryptedFile.metadataNonce
+                    metadataNonce: encryptedFile.metadataNonce,
+                    encryptedBlob: encryptedFile.encryptedBlob
                 });
             }
 
@@ -138,6 +168,32 @@
             logger.error("Gagal mengirim lampiran", err);
         } finally {
             isSending = false;
+        }
+    };
+
+    /** @param {any} attachment */
+    const handleDownloadAttachment = async (attachment) => {
+        try {
+            attachmentError = null;
+            const content = await downloadAttachmentContent(attachment.id);
+            const file = await decryptFile(
+                content,
+                conversationId,
+                attachment.metadataCiphertext,
+                attachment.metadataNonce
+            );
+
+            const url = createDownloadUrl(file.blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = file.name || "attachment";
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            logger.error("Gagal mengunduh lampiran", err);
+            attachmentError = "Gagal mengunduh atau mendekripsi lampiran.";
         }
     };
 
@@ -255,7 +311,26 @@
                 {#if e2eeStatus === 'ready'}
                     Pesan dan data hanya dapat dibaca oleh Anda dan lawan bicara.
                 {:else if e2eeStatus === 'error'}
-                    {e2eeError || "Kunci tidak dapat diverifikasi."} Pengiriman pesan diblokir.
+                    <p>{e2eeError || "Kunci tidak dapat diverifikasi."} Pengiriman pesan diblokir.</p>
+                    {#if keyChange}
+                        <div class="mt-2 p-2.5 rounded-lg bg-white/70 border border-rose-100 text-left font-mono text-[10px] leading-relaxed break-all text-slate-700">
+                            <div>
+                                <span class="font-sans font-semibold">Fingerprint lama</span><br>
+                                {keyChange.previousFingerprint}
+                            </div>
+                            <div class="mt-1.5">
+                                <span class="font-sans font-semibold">Fingerprint baru</span><br>
+                                {keyChange.fingerprint}
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            class="mt-2 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition-colors"
+                            on:click={handleAcceptNewKey}
+                        >
+                            Verifikasi dan terima kunci baru
+                        </button>
+                    {/if}
                 {:else}
                     Menghitung kunci bersama. Pengiriman pesan belum diaktifkan.
                 {/if}
@@ -289,6 +364,20 @@
                                     <span class="italic opacity-70">Mendekripsi...</span>
                                 {/if}
                             </p>
+
+                            {#if msg.attachments?.length}
+                                <div class="mt-2 space-y-1">
+                                    {#each msg.attachments as att (att.id)}
+                                        <button
+                                            type="button"
+                                            class="inline-flex items-center gap-1.5 text-xs underline underline-offset-2 {isSelf ? 'text-indigo-100 hover:text-white' : 'text-indigo-600 hover:text-indigo-800'}"
+                                            on:click={() => handleDownloadAttachment(att)}
+                                        >
+                                            Download
+                                        </button>
+                                    {/each}
+                                </div>
+                            {/if}
                             <div class="flex items-center justify-end gap-1.5 mt-1 text-[10px] {isSelf ? 'text-indigo-200' : 'text-slate-400'}">
                                 <span>
                                     {new Date(msg.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -313,6 +402,9 @@
 
         <!-- Chat Input Bar -->
         <div class="p-4 border-t border-slate-200 bg-white shrink-0">
+            {#if attachmentError}
+                <p class="mb-2 text-xs text-rose-600">{attachmentError}</p>
+            {/if}
             <form on:submit|preventDefault={handleSendMessage} class="flex items-center gap-2">
                 <AttachmentPicker
                     {conversationId}

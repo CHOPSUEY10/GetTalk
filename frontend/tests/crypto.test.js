@@ -169,9 +169,6 @@ describe('Attachment encryption and metadata privacy (issue #15)', () => {
 
     const decrypted = await decryptFile(
       await encrypted.encryptedBlob.arrayBuffer(),
-      encrypted.fileNonce,
-      encrypted.encryptedFileKey,
-      encrypted.keyNonce,
       conversationId,
       encrypted.metadataCiphertext,
       encrypted.metadataNonce
@@ -196,9 +193,6 @@ describe('Attachment encryption and metadata privacy (issue #15)', () => {
     await assert.rejects(
       decryptFile(
         await encrypted.encryptedBlob.arrayBuffer(),
-        encrypted.fileNonce,
-        encrypted.encryptedFileKey,
-        encrypted.keyNonce,
         conversationId,
         toBase64Url(metadataBytes.buffer),
         encrypted.metadataNonce

@@ -79,6 +79,40 @@ async function fetchClient(endpoint, options = {}) {
   return data;
 }
 
+/**
+ * Binary request helper (encrypted attachments). Returns an ArrayBuffer.
+ *
+ * @param {string} endpoint
+ * @param {RequestInit} [options]
+ * @returns {Promise<ArrayBuffer>}
+ */
+async function fetchBinary(endpoint, options = {}) {
+  const url = `${env.apiUrl}${endpoint}`;
+
+  let response;
+  try {
+    response = await fetch(url, { credentials: 'include', ...options });
+  } catch {
+    throw new Error('Network error or unable to reach the server.');
+  }
+
+  if (!response.ok) {
+    let message = response.statusText || 'Unknown API Error';
+    try {
+      const data = await response.json();
+      message = data?.error?.message || message;
+    } catch {
+      // Binary/non-JSON error body.
+    }
+    if (response.status === 401) {
+      window.dispatchEvent(new CustomEvent('api:unauthorized'));
+    }
+    throw new ApiError(response.status, message);
+  }
+
+  return response.arrayBuffer();
+}
+
 export const api = {
   /**
    * @param {string} path
@@ -99,6 +133,24 @@ export const api = {
    * @param {CustomRequestInit} [options]
    */
   put: (path, body, options = {}) => fetchClient(path, { ...options, method: 'PUT', body }),
+
+  /**
+   * Send raw bytes (e.g. encrypted attachment).
+   * @param {string} path
+   * @param {Blob | ArrayBuffer | Uint8Array} body
+   * @param {Record<string, string>} [headers]
+   */
+  postBinary: (path, body, headers = {}) => fetchBinary(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', ...headers },
+    body,
+  }),
+
+  /**
+   * Fetch raw bytes.
+   * @param {string} path
+   */
+  getBinary: (path) => fetchBinary(path, { method: 'GET' }),
 
   /**
    * @param {string} path

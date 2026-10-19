@@ -30,7 +30,7 @@ import logger from '../lib/logger.js';
  * @returns {any}
  */
 function normalizeMessage(message, conversationId) {
-  return {
+  const normalized = {
     ...message,
     conversation_id: message.conversation_id || message.conversationId || conversationId,
     sender_id: message.sender_id || message.senderId,
@@ -39,6 +39,13 @@ function normalizeMessage(message, conversationId) {
     created_at: message.created_at || message.createdAt,
     updated_at: message.updated_at || message.updatedAt
   };
+
+  // Only set when present so an update response does not wipe known attachments.
+  if (Array.isArray(message.attachments)) {
+    normalized.attachments = message.attachments;
+  }
+
+  return normalized;
 }
 
 /**
@@ -111,6 +118,11 @@ function createMessagesStore() {
       const messageId = payload?.messageId;
       if (messageId) {
         messagesStore.handleStatusUpdate(messageId, 'read');
+      }
+    },
+    onAttachmentNew: (payload) => {
+      if (payload?.attachment) {
+        messagesStore.handleAttachmentNew(payload.attachment);
       }
     }
   });
@@ -344,19 +356,36 @@ function createMessagesStore() {
 
       // Decrypt asynchronously; the UI shows a placeholder until it resolves.
       if (normalized.id) {
-        decryptPayload(convId, normalized.body_ciphertext, normalized.nonce).then((decrypted) => {
-          update((s) => {
-            const list = s.messagesByConversation[convId] || [];
-            if (!list.some((m) => m.id === normalized.id)) return s;
-            return {
-              ...s,
-              messagesByConversation: {
-                ...s.messagesByConversation,
-                [convId]: list.map((m) => (m.id === normalized.id ? { ...m, ...decrypted } : m))
-              }
-            };
+        decryptPayload(convId, normalized.body_ciphertext, normalized.nonce)
+          .then((decrypted) => {
+            update((s) => {
+              const list = s.messagesByConversation[convId] || [];
+              if (!list.some((m) => m.id === normalized.id)) return s;
+              return {
+                ...s,
+                messagesByConversation: {
+                  ...s.messagesByConversation,
+                  [convId]: list.map((m) => (m.id === normalized.id ? { ...m, ...decrypted } : m))
+                }
+              };
+            });
+          })
+          .catch(() => {
+            update((s) => {
+              const list = s.messagesByConversation[convId] || [];
+              return {
+                ...s,
+                messagesByConversation: {
+                  ...s.messagesByConversation,
+                  [convId]: list.map((m) =>
+                    m.id === normalized.id
+                      ? { ...m, plaintext: null, decryptError: true }
+                      : m
+                  )
+                }
+              };
+            });
           });
-        });
 
         // Send delivery receipt back to sender
         markMessageDelivered(normalized.id);
@@ -385,19 +414,64 @@ function createMessagesStore() {
       });
 
       if (normalized.id) {
-        decryptPayload(convId, normalized.body_ciphertext, normalized.nonce).then((decrypted) => {
-          update((s) => {
-            const list = s.messagesByConversation[convId] || [];
+        decryptPayload(convId, normalized.body_ciphertext, normalized.nonce)
+          .then((decrypted) => {
+            update((s) => {
+              const list = s.messagesByConversation[convId] || [];
+              return {
+                ...s,
+                messagesByConversation: {
+                  ...s.messagesByConversation,
+                  [convId]: list.map((m) => (m.id === normalized.id ? { ...m, ...decrypted } : m))
+                }
+              };
+            });
+          })
+          .catch(() => {
+            update((s) => {
+              const list = s.messagesByConversation[convId] || [];
+              return {
+                ...s,
+                messagesByConversation: {
+                  ...s.messagesByConversation,
+                  [convId]: list.map((m) =>
+                    m.id === normalized.id
+                      ? { ...m, plaintext: null, decryptError: true }
+                      : m
+                  )
+                }
+              };
+            });
+          });
+      }
+    },
+
+    /**
+     * Attach a newly uploaded encrypted file to its message.
+     * @param {any} attachment
+     */
+    handleAttachmentNew: (attachment) => {
+      const messageId = attachment?.messageId;
+      if (!messageId) return;
+
+      update((s) => {
+        /** @type {Record<string, MessageItem[]>} */
+        const next = {};
+        for (const [convId, list] of Object.entries(s.messagesByConversation)) {
+          next[convId] = list.map((m) => {
+            if (m.id !== messageId) return m;
+            const existing = m.attachments || [];
             return {
-              ...s,
-              messagesByConversation: {
-                ...s.messagesByConversation,
-                [convId]: list.map((m) => (m.id === normalized.id ? { ...m, ...decrypted } : m))
-              }
+              ...m,
+              attachments: [
+                ...existing.filter((a) => a.id !== attachment.id),
+                attachment
+              ]
             };
           });
-        });
-      }
+        }
+        return { ...s, messagesByConversation: next };
+      });
     },
 
     /**
