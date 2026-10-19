@@ -12,6 +12,15 @@ import { encryptText, decryptText, toBase64Url, fromBase64Url, nonceToBase64Url,
 import { storeKeyPair, getKeyPair, storeDerivedKey, getDerivedKey, clearAll } from './key-store.js';
 
 /**
+ * Active derived-key id per conversation.
+ *
+ * The id includes the peer fingerprint so a rotated peer key never silently
+ * reuses a stale conversation key.
+ * @type {Map<string, string>}
+ */
+const activeDerivedIds = new Map();
+
+/**
  * Get or create the user's ECDH key pair.
  * The key pair is persisted in IndexedDB under `user:<userId>`.
  *
@@ -46,10 +55,18 @@ export async function getOrCreateIdentityKeyPair(userId) {
  * @param {string} conversationId
  * @param {CryptoKey} ownPrivateKey
  * @param {string} peerPublicKeyBase64 - Peer's public key as Base64URL
+ * @param {string} peerFingerprint - Locally computed fingerprint of the peer key
  * @returns {Promise<CryptoKey>} AES-256-GCM key for the conversation
  */
-export async function establishConversationKey(conversationId, ownPrivateKey, peerPublicKeyBase64) {
-  const derivedId = `derived:${conversationId}`;
+export async function establishConversationKey(conversationId, ownPrivateKey, peerPublicKeyBase64, peerFingerprint) {
+  if (!peerPublicKeyBase64 || !peerFingerprint) {
+    throw new Error(
+      'Cannot establish a conversation key without the peer public key and fingerprint.'
+    );
+  }
+
+  const derivedId = `derived:${conversationId}:${peerFingerprint}`;
+  activeDerivedIds.set(conversationId, derivedId);
 
   // Check cache first
   const cached = await getDerivedKey(derivedId);
@@ -69,6 +86,39 @@ export async function establishConversationKey(conversationId, ownPrivateKey, pe
 }
 
 /**
+ * @param {string} conversationId
+ * @returns {string}
+ */
+function activeDerivedId(conversationId) {
+  const derivedId = activeDerivedIds.get(conversationId);
+  if (!derivedId) {
+    throw new Error(
+      `No encryption key established for conversation ${conversationId}. ` +
+      'Call establishConversationKey() first.'
+    );
+  }
+  return derivedId;
+}
+
+/**
+ * Get the active derived conversation key, if a session is established.
+ * Used by other payload types (e.g. attachment encryption) so they never
+ * derive keys from public identifiers.
+ *
+ * @param {string} conversationId
+ * @returns {Promise<CryptoKey>}
+ */
+export async function getConversationKey(conversationId) {
+  const key = await getDerivedKey(activeDerivedId(conversationId));
+  if (!key) {
+    throw new Error(
+      `No encryption key established for conversation ${conversationId}.`
+    );
+  }
+  return key;
+}
+
+/**
  * Encrypt a message for sending.
  *
  * @param {string} conversationId
@@ -77,8 +127,7 @@ export async function establishConversationKey(conversationId, ownPrivateKey, pe
  *   Base64URL-encoded ciphertext and nonce ready for the API contract.
  */
 export async function encryptMessage(conversationId, plaintext) {
-  const derivedId = `derived:${conversationId}`;
-  const key = await getDerivedKey(derivedId);
+  const key = await getDerivedKey(activeDerivedId(conversationId));
 
   if (!key) {
     throw new Error(
@@ -104,8 +153,7 @@ export async function encryptMessage(conversationId, plaintext) {
  * @returns {Promise<string>} Decrypted plaintext
  */
 export async function decryptMessage(conversationId, bodyCiphertextBase64, nonceBase64) {
-  const derivedId = `derived:${conversationId}`;
-  const key = await getDerivedKey(derivedId);
+  const key = await getDerivedKey(activeDerivedId(conversationId));
 
   if (!key) {
     throw new Error(
@@ -126,5 +174,6 @@ export async function decryptMessage(conversationId, bodyCiphertextBase64, nonce
  * @returns {Promise<void>}
  */
 export async function clearCryptoState() {
+  activeDerivedIds.clear();
   await clearAll();
 }
