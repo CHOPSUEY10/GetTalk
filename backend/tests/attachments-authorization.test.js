@@ -76,6 +76,7 @@ describe('Conversation and attachment authorization (issues #14, #15)', () => {
     const bob = await registerUser('bob');
     const carol = await registerUser('carol');
     let conversationId = null;
+    let attachmentId = null;
 
     try {
       // Alice ↔ Bob conversation.
@@ -96,19 +97,23 @@ describe('Conversation and attachment authorization (issues #14, #15)', () => {
       assert.equal(msgRes.status, 201);
       const message = (await msgRes.json()).message;
 
-      // Encrypted attachment metadata; no plaintext fields.
-      const uploadRes = await api('/api/attachments', {
+      // Encrypted bytes + encrypted metadata in headers; no plaintext fields.
+      const content = Buffer.from('encrypted-attachment-bytes');
+      const uploadRes = await fetch(`${baseUrl}/api/attachments`, {
         method: 'POST',
-        cookie: alice.cookie,
-        body: {
-          messageId: message.id,
-          sizeBytes: 64,
-          metadataCiphertext: 'bWV0YWRhdGE',
-          metadataNonce: 'bm9uY2U',
+        headers: {
+          Cookie: alice.cookie,
+          'Content-Type': 'application/octet-stream',
+          'X-Message-Id': message.id,
+          'X-Metadata-Ciphertext': 'bWV0YWRhdGE',
+          'X-Metadata-Nonce': 'bm9uY2U',
         },
+        body: content,
       });
       assert.equal(uploadRes.status, 201);
       const attachment = (await uploadRes.json()).attachment;
+      attachmentId = attachment.id;
+      assert.equal(Number(attachment.sizeBytes), content.length);
       assert.equal(attachment.metadataCiphertext, 'bWV0YWRhdGE');
       assert.equal(attachment.metadataNonce, 'bm9uY2U');
       assert.equal(attachment.originalName, undefined);
@@ -116,12 +121,23 @@ describe('Conversation and attachment authorization (issues #14, #15)', () => {
       assert.equal(attachment.checksum, undefined);
       assert.equal(attachment.storageKey, undefined);
 
-      // Conversation member can read; an unrelated user cannot.
+      // Conversation member can read metadata and content; an unrelated user cannot.
       assert.equal((await api(`/api/attachments/${attachment.id}`, { cookie: bob.cookie })).status, 200);
 
-      const forbiddenAttachment = await api(`/api/attachments/${attachment.id}`, { cookie: carol.cookie });
-      assert.equal(forbiddenAttachment.status, 403);
-      assert.equal((await forbiddenAttachment.json()).error.code, 'FORBIDDEN');
+      const contentRes = await api(`/api/attachments/${attachment.id}/content`, {
+        cookie: bob.cookie,
+      });
+      assert.equal(contentRes.status, 200);
+      assert.deepEqual(Buffer.from(await contentRes.arrayBuffer()), content);
+
+      const forbiddenMetadata = await api(`/api/attachments/${attachment.id}`, { cookie: carol.cookie });
+      assert.equal(forbiddenMetadata.status, 403);
+      assert.equal((await forbiddenMetadata.json()).error.code, 'FORBIDDEN');
+
+      assert.equal(
+        (await api(`/api/attachments/${attachment.id}/content`, { cookie: carol.cookie })).status,
+        403
+      );
 
       // Non-member cannot read or send messages in the conversation.
       assert.equal(
@@ -138,19 +154,18 @@ describe('Conversation and attachment authorization (issues #14, #15)', () => {
       );
 
       // Non-member cannot attach files to a message in the conversation.
-      assert.equal(
-        (await api('/api/attachments', {
-          method: 'POST',
-          cookie: carol.cookie,
-          body: {
-            messageId: message.id,
-            sizeBytes: 10,
-            metadataCiphertext: 'eA',
-            metadataNonce: 'eQ',
-          },
-        })).status,
-        403
-      );
+      const forbiddenUpload = await fetch(`${baseUrl}/api/attachments`, {
+        method: 'POST',
+        headers: {
+          Cookie: carol.cookie,
+          'Content-Type': 'application/octet-stream',
+          'X-Message-Id': message.id,
+          'X-Metadata-Ciphertext': 'eA',
+          'X-Metadata-Nonce': 'eQ',
+        },
+        body: Buffer.from('x'),
+      });
+      assert.equal(forbiddenUpload.status, 403);
 
       // Plaintext metadata is rejected outright (issue #15).
       const plaintextUpload = await api('/api/attachments', {
@@ -166,6 +181,13 @@ describe('Conversation and attachment authorization (issues #14, #15)', () => {
       assert.equal(plaintextUpload.status, 400);
       assert.equal((await plaintextUpload.json()).error.code, 'VALIDATION_ERROR');
     } finally {
+      if (attachmentId && alice?.cookie) {
+        await api(`/api/attachments/${attachmentId}`, {
+          method: 'DELETE',
+          cookie: alice.cookie,
+        }).catch(() => {});
+      }
+
       const ids = [alice?.user.id, bob?.user.id, carol?.user.id].filter(Boolean);
 
       if (conversationId) {

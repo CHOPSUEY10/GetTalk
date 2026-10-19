@@ -20,6 +20,7 @@ export const MESSAGE_READ        = 'message:read';
 export const MESSAGE_NEW         = 'message:new';
 export const MESSAGE_UPDATED     = 'message:updated';
 export const MESSAGE_DELETED     = 'message:deleted';
+export const ATTACHMENT_NEW      = 'attachment:new';
 
 // Re-used bi-directionally
 // MESSAGE_DELIVERED and MESSAGE_READ are listed above

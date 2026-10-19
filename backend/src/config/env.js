@@ -69,6 +69,9 @@ function validateEnvironment() {
   // Optional so the app still boots when Redis is down; the key registry
   // then fails safely with 503 (issue #11).
   const redisUrl = process.env.REDIS_URL?.trim() || 'redis://127.0.0.1:6379';
+  // Local encrypted-attachment storage. Replace with object storage in
+  // production if needed; the key is opaque and server-generated.
+  const storageDir = resolve(backendRoot, process.env.STORAGE_DIR?.trim() || 'storage');
 
   return {
     nodeEnv,
@@ -77,7 +80,8 @@ function validateEnvironment() {
     corsOrigin,
     databaseUrl,
     sessionSecret,
-    redisUrl
+    redisUrl,
+    storageDir
   };
 }
 
