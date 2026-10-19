@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import app from '../app.js';
 import { query } from '../src/config/database.js';
+import { closeRedis } from '../src/config/redis.js';
 
 let server;
 let baseUrl;
@@ -19,6 +20,7 @@ before(async () => {
 });
 
 after(async () => {
+  await closeRedis();
   await new Promise((resolve) => server.close(resolve));
 });
 
