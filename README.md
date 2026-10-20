@@ -130,7 +130,15 @@ Contoh:
 | Frontend | 5173 |
 | Backend | 5000 |
 
-PostgreSQL dan Redis akan ditambahkan pada tahap infrastructure bootstrap.
+Redis dijalankan melalui `infra/docker-compose.yml` (PostgreSQL tetap dikonfigurasi terpisah).
+
+```bash
+docker compose -f infra/docker-compose.yml up -d
+```
+
+Redis menyimpan registry public key E2EE (lihat
+[`docs/E2EE_KEY_REGISTRY.md`](docs/E2EE_KEY_REGISTRY.md)). Konfigurasi
+koneksi memakai `REDIS_URL` (default `redis://127.0.0.1:6379`).
 
 ## Database (Prisma ORM)
 

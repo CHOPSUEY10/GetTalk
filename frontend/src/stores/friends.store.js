@@ -7,6 +7,7 @@ import {
   rejectFriendRequests,
   deleteFromFriendList,
 } from '../services/api/friends.api.js';
+import { searchUsers } from '../services/api/users.api.js';
 import { socket } from '../services/socket/client.js';
 import * as events from '../services/socket/events.js';
 
@@ -73,11 +74,35 @@ function createFriendsStore() {
 
     /**
      * Send a friend request.
+     *
+     * The UI collects a username; the API contract requires a userId, so
+     * resolve the exact username first (usernames are unique).
+     *
      * @param {{ userId?: string, username?: string }} payload
      */
     sendRequest: async (payload) => {
-      const result = await friendRequest(payload);
-      return result;
+      let userId = payload?.userId;
+      const username = payload?.username?.trim();
+
+      if (!userId && username) {
+        const res = await searchUsers(username);
+        const users = Array.isArray(res) ? res : res?.users || [];
+        const match = users.find(
+          (u) => u.username?.toLowerCase() === username.toLowerCase()
+        );
+
+        if (!match) {
+          throw new Error(`Pengguna "${username}" tidak ditemukan.`);
+        }
+
+        userId = match.id;
+      }
+
+      if (!userId) {
+        throw new Error('userId or username is required');
+      }
+
+      return friendRequest({ userId });
     },
 
     /**

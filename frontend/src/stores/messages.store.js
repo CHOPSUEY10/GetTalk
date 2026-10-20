@@ -2,8 +2,8 @@ import { writable, get } from 'svelte/store';
 import { listMessages, sendMessage as apiSendMessage, sendReceipt } from '../services/api/messages.api.js';
 import { sendEncryptedMessage, markMessageDelivered, markMessageRead } from '../services/socket/client.js';
 import { registerSocketListeners } from '../services/socket/handlers.js';
+import { decryptMessage } from '../services/crypto/message-crypto.js';
 import { conversationsStore } from './conversations.store.js';
-import { encryptMessage, decryptMessage } from '../services/crypto/message-crypto.js';
 import logger from '../lib/logger.js';
 
 /**
@@ -14,13 +14,62 @@ import logger from '../lib/logger.js';
  * @property {string} [sender_username]
  * @property {string} body_ciphertext
  * @property {string} nonce
- * @property {string} [plaintext]
+ * @property {string | null} [plaintext] Decrypted locally; never plaintext from the server
+ * @property {boolean} [decryptError]
  * @property {'sending' | 'sent' | 'delivered' | 'read' | 'failed'} [status]
  * @property {string} [client_message_id]
  * @property {string} created_at
  * @property {string} [updated_at]
  * @property {string | null} [deleted_at]
  */
+
+/**
+ * Normalise server/socket messages (camelCase) to the shape the UI uses.
+ * @param {any} message
+ * @param {string} conversationId
+ * @returns {any}
+ */
+function normalizeMessage(message, conversationId) {
+  const normalized = {
+    ...message,
+    conversation_id: message.conversation_id || message.conversationId || conversationId,
+    sender_id: message.sender_id || message.senderId,
+    body_ciphertext: message.body_ciphertext || message.bodyCiphertext,
+    client_message_id: message.client_message_id || message.clientMessageId,
+    created_at: message.created_at || message.createdAt,
+    updated_at: message.updated_at || message.updatedAt
+  };
+
+  // Only set when present so an update response does not wipe known attachments.
+  if (Array.isArray(message.attachments)) {
+    normalized.attachments = message.attachments;
+  }
+
+  return normalized;
+}
+
+/**
+ * Decrypt one payload. Failures never fall back to showing ciphertext as
+ * message content.
+ * @param {string} conversationId
+ * @param {string | undefined} ciphertext
+ * @param {string | undefined} nonce
+ * @returns {Promise<{ plaintext: string | null, decryptError: boolean }>}
+ */
+async function decryptPayload(conversationId, ciphertext, nonce) {
+  if (!ciphertext || !nonce) {
+    return { plaintext: null, decryptError: true };
+  }
+
+  try {
+    return {
+      plaintext: await decryptMessage(conversationId, ciphertext, nonce),
+      decryptError: false
+    };
+  } catch {
+    return { plaintext: null, decryptError: true };
+  }
+}
 
 /**
  * @typedef {Object} MessagesState
@@ -70,6 +119,11 @@ function createMessagesStore() {
       if (messageId) {
         messagesStore.handleStatusUpdate(messageId, 'read');
       }
+    },
+    onAttachmentNew: (payload) => {
+      if (payload?.attachment) {
+        messagesStore.handleAttachmentNew(payload.attachment);
+      }
     }
   });
 
@@ -77,7 +131,7 @@ function createMessagesStore() {
     subscribe,
 
     /**
-     * Load messages history for a conversation from REST API and decrypt payloads.
+     * Load messages history for a conversation from REST API and decrypt it.
      * @param {string} conversationId
      */
     loadMessages: async (conversationId) => {
@@ -93,28 +147,19 @@ function createMessagesStore() {
         const res = await listMessages(conversationId, { limit: 50 });
         const list = Array.isArray(res) ? res : res?.messages || [];
 
-        // Decrypt messages client-side via message-crypto.js (Rule §14, §15)
         /** @type {MessageItem[]} */
         const formatted = await Promise.all(
-          list.map(async (m) => {
-            const ciphertext = m.body_ciphertext || m.bodyCiphertext;
-            const nonce = m.nonce;
-            let plaintext = m.plaintext;
-
-            if (!plaintext && ciphertext && nonce) {
-              try {
-                plaintext = await decryptMessage(conversationId, ciphertext, nonce);
-              } catch {
-                plaintext = '[Pesan Terenkripsi]';
-              }
-            }
-
+          list.map(async (raw) => {
+            const message = normalizeMessage(raw, conversationId);
+            const decrypted = await decryptPayload(
+              conversationId,
+              message.body_ciphertext,
+              message.nonce
+            );
             return {
-              ...m,
-              conversation_id: m.conversation_id || conversationId,
-              body_ciphertext: ciphertext,
-              plaintext: plaintext || ciphertext,
-              status: /** @type {MessageItem['status']} */ (m.status || 'delivered')
+              ...message,
+              ...decrypted,
+              status: /** @type {MessageItem['status']} */ (message.status || 'delivered')
             };
           })
         );
@@ -145,36 +190,17 @@ function createMessagesStore() {
 
     /**
      * Send an encrypted message to a conversation.
-     * Automatically encrypts plaintext using AES-256-GCM before sending (Rule §14, §15, §20).
-     *
      * @param {string} conversationId
      * @param {{
-     *   text?: string,
-     *   bodyCiphertext?: string,
-     *   nonce?: string,
-     *   senderId?: string,
+     *   bodyCiphertext: string,
+     *   nonce: string,
+     *   senderId: string,
      *   senderUsername?: string,
      *   plaintextPreview?: string
      * }} params
      */
-    sendMessage: async (conversationId, params) => {
-      if (!conversationId) return null;
-
-      let bodyCiphertext = params.bodyCiphertext;
-      let nonce = params.nonce;
-      let plaintext = params.text || params.plaintextPreview || '';
-      const senderId = params.senderId || 'me';
-      const senderUsername = params.senderUsername || 'Me';
-
-      // Perform client-side E2EE encryption if text is provided
-      if (params.text && !bodyCiphertext) {
-        plaintext = params.text;
-        const encrypted = await encryptMessage(conversationId, params.text, senderId);
-        bodyCiphertext = encrypted.bodyCiphertext;
-        nonce = encrypted.nonce;
-      }
-
-      if (!bodyCiphertext || !nonce) return null;
+    sendMessage: async (conversationId, { bodyCiphertext, nonce, senderId, senderUsername, plaintextPreview }) => {
+      if (!conversationId || !bodyCiphertext || !nonce) return null;
 
       const clientMessageId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const nowIso = new Date().toISOString();
@@ -184,10 +210,11 @@ function createMessagesStore() {
         id: clientMessageId,
         conversation_id: conversationId,
         sender_id: senderId,
-        sender_username: senderUsername,
+        sender_username: senderUsername || 'Me',
         body_ciphertext: bodyCiphertext,
         nonce,
-        plaintext: plaintext || bodyCiphertext,
+        plaintext: plaintextPreview || null,
+        decryptError: false,
         status: 'sending',
         client_message_id: clientMessageId,
         created_at: nowIso
@@ -207,7 +234,7 @@ function createMessagesStore() {
 
       conversationsStore.updateLastMessage(conversationId, optimisticMessage);
 
-      // 2. Transmit ciphertext via Socket.IO first, fallback to REST API
+      // 2. Transmit via Socket.IO first, fallback to REST API if socket fails
       try {
         const socketRes = await sendEncryptedMessage({
           conversationId,
@@ -219,11 +246,12 @@ function createMessagesStore() {
         const serverMessage = socketRes?.message;
 
         if (serverMessage) {
+          const confirmed = normalizeMessage(serverMessage, conversationId);
           update((s) => {
             const list = s.messagesByConversation[conversationId] || [];
             const replaced = list.map((m) =>
               m.client_message_id === clientMessageId || m.id === clientMessageId
-                ? { ...serverMessage, plaintext, status: 'sent' }
+                ? { ...confirmed, plaintext: plaintextPreview || null, decryptError: false, status: 'sent' }
                 : m
             );
             return {
@@ -231,7 +259,7 @@ function createMessagesStore() {
               messagesByConversation: { ...s.messagesByConversation, [conversationId]: replaced }
             };
           });
-          return serverMessage;
+          return confirmed;
         }
 
         // Fallback to REST API if socket response did not return message
@@ -241,12 +269,12 @@ function createMessagesStore() {
           clientMessageId
         });
 
-        const confirmed = restRes?.message || restRes;
+        const confirmed = normalizeMessage(restRes?.message || restRes, conversationId);
         update((s) => {
           const list = s.messagesByConversation[conversationId] || [];
           const replaced = list.map((m) =>
             m.client_message_id === clientMessageId || m.id === clientMessageId
-              ? { ...confirmed, plaintext, status: 'sent' }
+              ? { ...confirmed, plaintext: plaintextPreview || null, decryptError: false, status: 'sent' }
               : m
           );
           return {
@@ -277,24 +305,13 @@ function createMessagesStore() {
 
     /**
      * Handle incoming real-time message from Socket.IO room broadcast.
-     * Decrypts ciphertext before adding to UI store.
      * @param {any} incoming
      */
-    handleIncomingMessage: async (incoming) => {
+    handleIncomingMessage: (incoming) => {
       const convId = incoming.conversation_id || incoming.conversationId;
       if (!convId) return;
 
-      const ciphertext = incoming.body_ciphertext || incoming.bodyCiphertext;
-      const nonce = incoming.nonce;
-      let decryptedText = incoming.plaintext;
-
-      if (!decryptedText && ciphertext && nonce) {
-        try {
-          decryptedText = await decryptMessage(convId, ciphertext, nonce);
-        } catch {
-          decryptedText = '[Pesan Terenkripsi]';
-        }
-      }
+      const normalized = normalizeMessage(incoming, convId);
 
       update((s) => {
         const list = s.messagesByConversation[convId] || [];
@@ -302,14 +319,15 @@ function createMessagesStore() {
         // Avoid duplicates (by id or client_message_id)
         const alreadyExists = list.some(
           (m) =>
-            m.id === incoming.id ||
-            (incoming.client_message_id && m.client_message_id === incoming.client_message_id)
+            m.id === normalized.id ||
+            (normalized.client_message_id && m.client_message_id === normalized.client_message_id)
         );
 
         if (alreadyExists) {
           const updated = list.map((m) =>
-            m.id === incoming.id || (incoming.client_message_id && m.client_message_id === incoming.client_message_id)
-              ? { ...incoming, plaintext: m.plaintext || decryptedText || ciphertext }
+            m.id === normalized.id ||
+            (normalized.client_message_id && m.client_message_id === normalized.client_message_id)
+              ? { ...normalized, plaintext: m.plaintext ?? null, decryptError: false }
               : m
           );
           return {
@@ -319,9 +337,9 @@ function createMessagesStore() {
         }
 
         const newMsg = {
-          ...incoming,
-          body_ciphertext: ciphertext,
-          plaintext: decryptedText || ciphertext,
+          ...normalized,
+          plaintext: null,
+          decryptError: false,
           status: 'delivered'
         };
 
@@ -334,14 +352,43 @@ function createMessagesStore() {
         };
       });
 
-      conversationsStore.updateLastMessage(convId, {
-        ...incoming,
-        plaintext: decryptedText || ciphertext
-      });
+      conversationsStore.updateLastMessage(convId, normalized);
 
-      // Send delivery receipt back to sender
-      if (incoming.id) {
-        markMessageDelivered(incoming.id);
+      // Decrypt asynchronously; the UI shows a placeholder until it resolves.
+      if (normalized.id) {
+        decryptPayload(convId, normalized.body_ciphertext, normalized.nonce)
+          .then((decrypted) => {
+            update((s) => {
+              const list = s.messagesByConversation[convId] || [];
+              if (!list.some((m) => m.id === normalized.id)) return s;
+              return {
+                ...s,
+                messagesByConversation: {
+                  ...s.messagesByConversation,
+                  [convId]: list.map((m) => (m.id === normalized.id ? { ...m, ...decrypted } : m))
+                }
+              };
+            });
+          })
+          .catch(() => {
+            update((s) => {
+              const list = s.messagesByConversation[convId] || [];
+              return {
+                ...s,
+                messagesByConversation: {
+                  ...s.messagesByConversation,
+                  [convId]: list.map((m) =>
+                    m.id === normalized.id
+                      ? { ...m, plaintext: null, decryptError: true }
+                      : m
+                  )
+                }
+              };
+            });
+          });
+
+        // Send delivery receipt back to sender
+        markMessageDelivered(normalized.id);
       }
     },
 
@@ -349,33 +396,81 @@ function createMessagesStore() {
      * Handle updated message (edited).
      * @param {any} updatedMessage
      */
-    handleMessageUpdated: async (updatedMessage) => {
+    handleMessageUpdated: (updatedMessage) => {
       const convId = updatedMessage.conversation_id || updatedMessage.conversationId;
       if (!convId) return;
 
-      const ciphertext = updatedMessage.body_ciphertext || updatedMessage.bodyCiphertext;
-      const nonce = updatedMessage.nonce;
-      let decryptedText = updatedMessage.plaintext;
-
-      if (!decryptedText && ciphertext && nonce) {
-        try {
-          decryptedText = await decryptMessage(convId, ciphertext, nonce);
-        } catch {
-          decryptedText = '[Pesan Terenkripsi]';
-        }
-      }
+      const normalized = normalizeMessage(updatedMessage, convId);
 
       update((s) => {
         const list = s.messagesByConversation[convId] || [];
         const updated = list.map((m) =>
-          m.id === updatedMessage.id
-            ? { ...m, ...updatedMessage, plaintext: decryptedText || ciphertext }
-            : m
+          m.id === normalized.id ? { ...m, ...normalized } : m
         );
         return {
           ...s,
           messagesByConversation: { ...s.messagesByConversation, [convId]: updated }
         };
+      });
+
+      if (normalized.id) {
+        decryptPayload(convId, normalized.body_ciphertext, normalized.nonce)
+          .then((decrypted) => {
+            update((s) => {
+              const list = s.messagesByConversation[convId] || [];
+              return {
+                ...s,
+                messagesByConversation: {
+                  ...s.messagesByConversation,
+                  [convId]: list.map((m) => (m.id === normalized.id ? { ...m, ...decrypted } : m))
+                }
+              };
+            });
+          })
+          .catch(() => {
+            update((s) => {
+              const list = s.messagesByConversation[convId] || [];
+              return {
+                ...s,
+                messagesByConversation: {
+                  ...s.messagesByConversation,
+                  [convId]: list.map((m) =>
+                    m.id === normalized.id
+                      ? { ...m, plaintext: null, decryptError: true }
+                      : m
+                  )
+                }
+              };
+            });
+          });
+      }
+    },
+
+    /**
+     * Attach a newly uploaded encrypted file to its message.
+     * @param {any} attachment
+     */
+    handleAttachmentNew: (attachment) => {
+      const messageId = attachment?.messageId;
+      if (!messageId) return;
+
+      update((s) => {
+        /** @type {Record<string, MessageItem[]>} */
+        const next = {};
+        for (const [convId, list] of Object.entries(s.messagesByConversation)) {
+          next[convId] = list.map((m) => {
+            if (m.id !== messageId) return m;
+            const existing = m.attachments || [];
+            return {
+              ...m,
+              attachments: [
+                ...existing.filter((a) => a.id !== attachment.id),
+                attachment
+              ]
+            };
+          });
+        }
+        return { ...s, messagesByConversation: next };
       });
     },
 

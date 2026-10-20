@@ -29,6 +29,9 @@ Thumbs.db
 # Test / coverage
 coverage/
 
+# Local encrypted attachment storage
+backend/storage/
+
 # Temporary files
 tmp/
 temp/

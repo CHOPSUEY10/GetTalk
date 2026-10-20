@@ -2,6 +2,7 @@
     import { onMount, onDestroy } from "svelte";
     import ProtectedLayout from "../components/layout/ProtectedLayout.svelte";
     import { friendsStore } from "../stores/friends.store.js";
+    import { conversationsStore } from "../stores/conversations.store.js";
     import { push } from "svelte-spa-router";
     import logger from "../lib/logger.js";
 
@@ -91,10 +92,25 @@
     };
 
     /** @param {any} friend */
-    const startChat = (friend) => {
-        const id = friend.conversationId || friend.id || friend.userId;
-        if (id) {
-            push(`/chat/${id}`);
+    const startChat = async (friend) => {
+        const targetUserId = friend.userId || friend.id;
+        if (friend.conversationId) {
+            push(`/chat/${friend.conversationId}`);
+            return;
+        }
+
+        if (!targetUserId) return;
+
+        try {
+            // Friends are keyed by userId, which is not a conversation id.
+            const conversationId = await conversationsStore.createOrOpenDirectChat(targetUserId);
+            if (conversationId) {
+                push(`/chat/${conversationId}`);
+            }
+        } catch (err) {
+            logger.error("Gagal membuka percakapan", err);
+            message = err?.message || "Gagal membuka percakapan.";
+            messageType = "error";
         }
     };
 

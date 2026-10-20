@@ -1,8 +1,20 @@
 import { writable } from 'svelte/store';
 import { getSession, login as apiLogin, logout as apiLogout } from '../services/api/auth.api.js';
+import { publishOwnIdentityKey } from '../services/crypto/identity-trust.js';
 import { userStore } from './user.store.js';
-import { syncIdentityPublicKey, clearCryptoState } from '../services/crypto/message-crypto.js';
 import logger from '../lib/logger.js';
+
+/**
+ * Publish the E2EE identity public key once the session is known.
+ * Failure is non-fatal: the key registry may be temporarily unavailable.
+ * @param {any} user
+ */
+function publishIdentityKey(user) {
+  if (!user?.id) return;
+  publishOwnIdentityKey(user.id).catch((err) => {
+    logger.error('Failed to publish E2EE identity key', err);
+  });
+}
 
 /**
  * @typedef {Object} User
@@ -40,7 +52,7 @@ function createAuthStore() {
         
         set({ user, authenticated: true, loading: false, error: null });
         userStore.set(user);
-        if (user?.id) syncIdentityPublicKey(user.id);
+        publishIdentityKey(user);
       } catch (err) {
         const error = /** @type {any} */ (err);
         // Only treat as error if it's a server/network error, not a standard unauthenticated response
@@ -66,7 +78,7 @@ function createAuthStore() {
         
         set({ user, authenticated: true, loading: false, error: null });
         userStore.set(user);
-        if (user?.id) syncIdentityPublicKey(user.id);
+        publishIdentityKey(user);
         return response;
       } catch (err) {
         const error = /** @type {any} */ (err);
@@ -86,7 +98,6 @@ function createAuthStore() {
       } catch (error) {
         logger.error('Logout failed on the server', error);
       } finally {
-        await clearCryptoState();
         set({ user: null, authenticated: false, loading: false, error: null });
         userStore.set(null);
       }

@@ -1,28 +1,34 @@
 /**
- * Attachments Validator
+ * Attachments Validator (issues #14, #15)
+ *
+ * Uploads are raw encrypted bytes (`application/octet-stream`). Message id
+ * and encrypted metadata travel in headers so the body stays binary.
  */
 
-export function validateUploadAttachment(body) {
+export function validateUploadAttachment(body, req) {
   const errors = [];
+  const headers = req?.headers || {};
 
-  if (!body || typeof body !== 'object') {
-    return { valid: false, errors: ['Request body is required'] };
+  const messageId = headers['x-message-id'];
+  const metadataCiphertext = headers['x-metadata-ciphertext'];
+  const metadataNonce = headers['x-metadata-nonce'];
+
+  if (!Buffer.isBuffer(body) || body.length === 0) {
+    errors.push(
+      'Encrypted attachment body is required (Content-Type: application/octet-stream)'
+    );
   }
 
-  const originalName = body.originalName || body.filename;
-  const mimeType = body.mimeType;
-  const sizeBytes = body.sizeBytes !== undefined ? body.sizeBytes : body.size;
-
-  if (!originalName || typeof originalName !== 'string') {
-    errors.push('originalName or filename is required');
+  if (!messageId || typeof messageId !== 'string') {
+    errors.push('X-Message-Id header is required');
   }
 
-  if (!mimeType || typeof mimeType !== 'string') {
-    errors.push('mimeType is required');
+  if (!metadataCiphertext || typeof metadataCiphertext !== 'string') {
+    errors.push('X-Metadata-Ciphertext header is required');
   }
 
-  if (sizeBytes === undefined || typeof sizeBytes !== 'number' || sizeBytes <= 0) {
-    errors.push('sizeBytes or size must be a positive number');
+  if (!metadataNonce || typeof metadataNonce !== 'string') {
+    errors.push('X-Metadata-Nonce header is required');
   }
 
   return {

@@ -1,8 +1,6 @@
 <script>
     import { createEventDispatcher } from 'svelte';
     import { encryptFile } from '../../services/crypto/file-crypto.js';
-    import { uploadAttachment } from '../../services/api/attachments.api.js';
-    import { authStore } from '../../stores/auth.store.js';
     import logger from '../../lib/logger.js';
 
     export let conversationId = '';
@@ -41,22 +39,11 @@
             isEncrypting = true;
             errorMessage = '';
 
-            // 1. Client-Side Encryption before upload (Rule §21, API contract §10)
-            const currentUserId = $authStore.user?.id || 'me';
-            const encrypted = await encryptFile(file, conversationId, currentUserId);
-
-            // 2. Upload metadata to backend attachments storage API
-            const uploadRes = await uploadAttachment({
-                originalName: encrypted.originalName,
-                mimeType: encrypted.mimeType,
-                sizeBytes: encrypted.originalSize,
-                checksum: encrypted.checksum,
-            });
-
-            const attachment = uploadRes?.attachment || uploadRes;
+            // Encrypt content + metadata client-side. Upload happens after the
+            // owning message exists, so it can carry a valid messageId (issue #14).
+            const encrypted = await encryptFile(file, conversationId);
 
             dispatch('attached', {
-                attachment,
                 encryptedFile: encrypted,
                 fileName: file.name,
                 fileSize: file.size,
@@ -64,8 +51,8 @@
             });
         } catch (err) {
             const error = /** @type {any} */ (err);
-            logger.error('Client-side file encryption / upload failed', error);
-            errorMessage = error.message || 'Gagal mengenkripsi dan mengunggah file';
+            logger.error('Client-side file encryption failed', error);
+            errorMessage = error.message || 'Gagal mengenkripsi file';
             setTimeout(() => (errorMessage = ''), 4000);
         } finally {
             isEncrypting = false;
@@ -85,7 +72,7 @@
     <button
         type="button"
         class="p-2 text-slate-500 hover:text-indigo-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
-        title={isEncrypting ? 'Mengenksipsi file...' : 'Lampirkan file (Terenkripsi E2EE)'}
+        title={isEncrypting ? 'Mengenkripsi file...' : 'Lampirkan file (Terenkripsi E2EE)'}
         on:click={triggerFileInput}
         disabled={disabled || isEncrypting}
     >
