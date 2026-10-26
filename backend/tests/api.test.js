@@ -40,6 +40,32 @@ describe('Health and System Endpoints', () => {
     assert.equal(body.status, 'running');
   });
 
+  test('responses include security headers and hide the Express signature', async () => {
+    const res = await fetch(`${baseUrl}/health`);
+
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(res.headers.get('x-frame-options'), 'DENY');
+    assert.equal(res.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+    assert.equal(res.headers.get('permissions-policy'), 'camera=(), microphone=(), geolocation=()');
+    assert.equal(res.headers.get('x-powered-by'), null);
+  });
+
+  test('oversized JSON request bodies are rejected with 413', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ padding: 'x'.repeat(110 * 1024) }),
+    });
+
+    assert.equal(res.status, 413);
+    assert.deepEqual(await res.json(), {
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'Request body too large.',
+      },
+    });
+  });
+
   test('GET /unknown-route returns 404 with standard error envelope', async () => {
     const res = await fetch(`${baseUrl}/api/nonexistent`);
     assert.equal(res.status, 404);
@@ -98,6 +124,24 @@ describe('Authentication API & Validation', () => {
   test('POST /api/auth/logout returns 204 even when unauthenticated', async () => {
     const res = await fetch(`${baseUrl}/api/auth/logout`, { method: 'POST' });
     assert.equal(res.status, 204);
+  });
+
+  test('MFA verification requires a valid pre-authentication challenge', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/mfa/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challengeId: 'unknown', code: '123456' }),
+    });
+
+    assert.equal(res.status, 401);
+    assert.equal((await res.json()).error.code, 'UNAUTHORIZED');
+  });
+
+  test('MFA settings require an authenticated session', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/mfa/status`);
+
+    assert.equal(res.status, 401);
+    assert.equal((await res.json()).error.code, 'UNAUTHORIZED');
   });
 
   test('register → session → login round trip persists to the database', async () => {

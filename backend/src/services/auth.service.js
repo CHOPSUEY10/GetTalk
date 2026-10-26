@@ -24,7 +24,11 @@ export async function register({ username, email, password }) {
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
   const user = await usersRepo.create({ username, email, passwordHash });
 
-  return { id: user.id, username: user.username };
+  return {
+    id: user.id,
+    username: user.username,
+    mfaEnabled: user.mfa_enabled,
+  };
 }
 
 export async function login({ email, password }) {
@@ -42,11 +46,19 @@ export async function login({ email, password }) {
     throw new AppError('Invalid email or password', 401, INVALID_CREDENTIALS);
   }
 
-  return { id: user.id, username: user.username };
+  return {
+    id: user.id,
+    username: user.username,
+    mfaEnabled: user.mfa_enabled,
+  };
 }
 
 export async function getSession(userId) {
   const user = await usersRepo.findById(userId);
   if (!user) return null;
-  return { id: user.id, username: user.username };
+  return {
+    id: user.id,
+    username: user.username,
+    mfaEnabled: user.mfa_enabled,
+  };
 }

@@ -122,6 +122,10 @@ Contoh:
 .env.production.local
 ```
 
+Kontrol keamanan lapisan API dan batasannya dijelaskan di
+[`docs/APP_LAYER_SECURITY.md`](docs/APP_LAYER_SECURITY.md). Kontrol aplikasi
+tersebut bukan pengganti NGFW/firewall jaringan.
+
 
 ## Current Development Ports
 
