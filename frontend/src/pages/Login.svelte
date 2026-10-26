@@ -9,6 +9,7 @@
     /** @type {string | null} */
     let mfaChallengeId = null;
     let showPassword = false;
+    let submitting = false;
     /** @type {string | null} */
     let localError = null;
 
@@ -19,6 +20,7 @@
         }
 
         localError = null;
+        submitting = true;
         try {
             const response = await authStore.login({ email: email.trim(), password });
             if (response?.mfaRequired) {
@@ -29,6 +31,8 @@
         } catch (err) {
             const e = /** @type {any} */ (err);
             localError = e.message || "Email atau password salah. Silakan coba lagi.";
+        } finally {
+            submitting = false;
         }
     };
 
@@ -38,12 +42,15 @@
             return;
         }
         localError = null;
+        submitting = true;
         try {
             await authStore.verifyMfa({ challengeId: mfaChallengeId, code: mfaCode.trim() });
             replace("/");
         } catch (err) {
             const e = /** @type {any} */ (err);
             localError = e.message || "Kode MFA tidak valid.";
+        } finally {
+            submitting = false;
         }
     };
 </script>
@@ -83,7 +90,7 @@
                         placeholder="123456 atau kode pemulihan"
                         autocomplete="one-time-code"
                         required
-                        disabled={$authStore.loading}
+                        disabled={submitting}
                         class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white transition-all disabled:opacity-60"
                     />
                 </div>
@@ -105,7 +112,7 @@
                         placeholder="nama@email.com"
                         autocomplete="email"
                         required
-                        disabled={$authStore.loading}
+                        disabled={submitting}
                         class="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white transition-all disabled:opacity-60"
                     />
                 </div>
@@ -128,7 +135,7 @@
                         placeholder="••••••••"
                         autocomplete="current-password"
                         required
-                        disabled={$authStore.loading}
+                        disabled={submitting}
                         class="w-full pl-10 pr-11 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white transition-all disabled:opacity-60"
                     />
                     <button
@@ -154,10 +161,10 @@
 
             <button
                 type="submit"
-                disabled={$authStore.loading}
+                disabled={submitting}
                 class="w-full mt-2 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-xl transition-all shadow-md shadow-indigo-200 hover:shadow-indigo-300 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
             >
-                {#if $authStore.loading}
+                {#if submitting}
                     <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                     <span>Memproses...</span>
                 {:else}

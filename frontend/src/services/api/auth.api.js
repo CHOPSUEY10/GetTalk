@@ -15,7 +15,7 @@ export const logout = () => {
 };
 
 export const getSession = () => {
-  return api.get('/api/auth/session');
+  return api.get('/api/auth/session', { suppressUnauthorizedEvent: true });
 };
 
 /** @param {any} payload */

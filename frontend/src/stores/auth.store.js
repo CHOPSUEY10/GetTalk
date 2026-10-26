@@ -76,11 +76,16 @@ function createAuthStore() {
     },
     /** @param {any} payload */
     login: async (payload) => {
-      update(state => ({ ...state, loading: true, error: null }));
+      // NOTE: Do NOT set loading:true here. The global `loading` flag controls
+      // the splash-screen vs Router toggle in App.svelte. Setting it to true
+      // would unmount the Router (destroying Login.svelte and its local MFA
+      // challenge state) and remount it when loading returns to false, causing
+      // the mfaChallengeId to be lost.
+      update(state => ({ ...state, error: null }));
       try {
         const response = await apiLogin(payload);
         if (response?.mfaRequired) {
-          set({ user: null, authenticated: false, loading: false, error: null });
+          update(state => ({ ...state, user: null, authenticated: false, error: null }));
           userStore.set(null);
           return response;
         }
@@ -92,19 +97,20 @@ function createAuthStore() {
         return response;
       } catch (err) {
         const error = /** @type {any} */ (err);
-        set({ 
+        update(state => ({
+          ...state,
           user: null, 
           authenticated: false, 
-          loading: false, 
           error: error.message 
-        });
+        }));
         userStore.set(null);
         throw error;
       }
     },
     /** @param {{ challengeId: string, code: string }} payload */
     verifyMfa: async (payload) => {
-      update(state => ({ ...state, loading: true, error: null }));
+      // Same as login: avoid toggling the global loading flag.
+      update(state => ({ ...state, error: null }));
       try {
         const response = await apiVerifyMfa(payload);
         const user = response?.user || response;
@@ -114,12 +120,12 @@ function createAuthStore() {
         return response;
       } catch (err) {
         const error = /** @type {any} */ (err);
-        set({
+        update(state => ({
+          ...state,
           user: null,
           authenticated: false,
-          loading: false,
           error: error.message,
-        });
+        }));
         userStore.set(null);
         throw error;
       }
