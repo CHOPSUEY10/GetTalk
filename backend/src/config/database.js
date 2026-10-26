@@ -4,8 +4,21 @@ import logger from '../utils/logger.js';
 
 const { Pool } = pg;
 
+function resolveDatabaseUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.searchParams.get('sslmode') === 'require' && !parsed.searchParams.has('uselibpqcompat')) {
+      parsed.searchParams.set('uselibpqcompat', 'true');
+      return parsed.toString();
+    }
+  } catch {
+    // Fallback jika bukan URL standar
+  }
+  return rawUrl;
+}
+
 const pool = new Pool({
-  connectionString: env.databaseUrl,
+  connectionString: resolveDatabaseUrl(env.databaseUrl),
 });
 
 pool.on('error', (err) => {
