@@ -72,6 +72,9 @@ export async function login(req, res, next) {
       },
     });
   } catch (err) {
+    if (err.retryAfterSeconds) {
+      res.set('Retry-After', String(err.retryAfterSeconds));
+    }
     return next(err);
   }
 }

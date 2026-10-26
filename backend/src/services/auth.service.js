@@ -3,11 +3,22 @@ import * as usersRepo from '../repositories/users.repository.js';
 import AppError from '../errors/AppError.js';
 import {
   INVALID_CREDENTIALS,
+  LOGIN_LOCKED,
   USER_ALREADY_EXISTS,
   VALIDATION_ERROR,
 } from '../errors/error-codes.js';
 
 const SALT_ROUNDS = 12;
+
+function loginLockedError(retryAfterSeconds) {
+  const error = new AppError(
+    `Too many failed login attempts. Please try again in ${retryAfterSeconds} seconds.`,
+    429,
+    LOGIN_LOCKED
+  );
+  error.retryAfterSeconds = retryAfterSeconds;
+  return error;
+}
 
 export async function register({ username, email, password }) {
   // Check existing user
@@ -41,11 +52,20 @@ export async function login({ email, password }) {
     throw new AppError('Invalid email or password', 401, INVALID_CREDENTIALS);
   }
 
+  if (user.login_lock_remaining_seconds > 0) {
+    throw loginLockedError(user.login_lock_remaining_seconds);
+  }
+
   const valid = await bcrypt.compare(password, user.password_hash);
   if (!valid) {
+    const attempt = await usersRepo.recordFailedLogin(user.id);
+    if (attempt.retry_after_seconds > 0) {
+      throw loginLockedError(attempt.retry_after_seconds);
+    }
     throw new AppError('Invalid email or password', 401, INVALID_CREDENTIALS);
   }
 
+  await usersRepo.resetFailedLogins(user.id);
   return {
     id: user.id,
     username: user.username,

@@ -62,9 +62,11 @@ model User {
   /// SHA-256 hashes of high-entropy, one-time recovery codes.
   mfaRecoveryCodes String[] @default([]) @map("mfa_recovery_codes")
   /// Highest accepted TOTP time step, preventing code replay.
-  mfaLastTotpStep BigInt   @default(-1) @map("mfa_last_totp_step")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  mfaLastTotpStep    BigInt    @default(-1) @map("mfa_last_totp_step")
+  failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
+  loginLockedUntil    DateTime? @map("login_locked_until") @db.Timestamptz(6)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   sentFriendRequests     Friendship[]         @relation("FriendshipFrom")
   receivedFriendRequests Friendship[]         @relation("FriendshipTo")
