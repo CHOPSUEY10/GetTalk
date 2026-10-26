@@ -122,6 +122,11 @@ Contoh:
 .env.production.local
 ```
 
+## Login Security
+
+Login to an existing account is temporarily locked for one minute after three
+consecutive failed password attempts. A successful login resets the failed
+attempt counter.
 
 ## Current Development Ports
 

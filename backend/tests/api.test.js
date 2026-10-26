@@ -140,6 +140,35 @@ describe('Authentication API & Validation', () => {
       });
       assert.equal(badLogin.status, 401);
 
+      const secondBadLogin = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: 'wrong-password' }),
+      });
+      assert.equal(secondBadLogin.status, 401);
+
+      const thirdBadLogin = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: 'wrong-password' }),
+      });
+      assert.equal(thirdBadLogin.status, 429);
+      assert.equal((await thirdBadLogin.json()).error.code, 'LOGIN_LOCKED');
+      const retryAfter = Number(thirdBadLogin.headers.get('retry-after'));
+      assert.ok(retryAfter > 0 && retryAfter <= 60);
+
+      const lockedLogin = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      assert.equal(lockedLogin.status, 429);
+
+      await query(
+        'UPDATE users SET login_locked_until = NOW() - INTERVAL \'1 second\' WHERE id = $1',
+        [user.id]
+      );
+
       // Correct password logs in.
       const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
         method: 'POST',
@@ -148,6 +177,12 @@ describe('Authentication API & Validation', () => {
       });
       assert.equal(loginRes.status, 200);
       assert.equal((await loginRes.json()).user.id, user.id);
+      const { rows: loginState } = await query(
+        'SELECT failed_login_attempts, login_locked_until FROM users WHERE id = $1',
+        [user.id]
+      );
+      assert.equal(loginState[0].failed_login_attempts, 0);
+      assert.equal(loginState[0].login_locked_until, null);
     } finally {
       await query(`DELETE FROM sessions WHERE sess->>'userId' = $1`, [user.id]);
       await query('DELETE FROM users WHERE id = $1', [user.id]);
