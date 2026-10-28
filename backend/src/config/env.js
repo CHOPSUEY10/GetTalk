@@ -66,6 +66,7 @@ function validateEnvironment() {
   const corsOrigin = requiredEnv('CORS_ORIGIN');
   const databaseUrl = requiredEnv('DATABASE_URL');
   const sessionSecret = requiredEnv('SESSION_SECRET');
+  const mfaEncryptionKey = process.env.MFA_ENCRYPTION_KEY?.trim() || sessionSecret;
   // Optional so the app still boots when Redis is down; the key registry
   // then fails safely with 503 (issue #11).
   const redisUrl = process.env.REDIS_URL?.trim() || 'redis://127.0.0.1:6379';
@@ -80,6 +81,7 @@ function validateEnvironment() {
     corsOrigin,
     databaseUrl,
     sessionSecret,
+    mfaEncryptionKey,
     redisUrl,
     storageDir
   };

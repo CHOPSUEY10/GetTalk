@@ -25,15 +25,16 @@ export class ApiError extends Error {
  */
 async function fetchClient(endpoint, options = {}) {
   const url = `${env.apiUrl}${endpoint}`;
-  
+  const { suppressUnauthorizedEvent = false, ...requestOptions } = options;
+
   const headers = {
     'Content-Type': 'application/json',
-    ...(options.headers || {}),
+    ...(requestOptions.headers || {}),
   };
 
   /** @type {RequestInit & { body?: any }} */
   const fetchOptions = {
-    ...options,
+    ...requestOptions,
     headers,
     credentials: 'include',
   };
@@ -70,7 +71,7 @@ async function fetchClient(endpoint, options = {}) {
       data?.message ||
       response.statusText ||
       'Unknown API Error';
-    if (response.status === 401) {
+    if (response.status === 401 && !suppressUnauthorizedEvent) {
       window.dispatchEvent(new CustomEvent('api:unauthorized'));
     }
     throw new ApiError(response.status, errorMessage, data);
@@ -165,4 +166,3 @@ export const api = {
    */
   delete: (path, options = {}) => fetchClient(path, { ...options, method: 'DELETE' }),
 };
-

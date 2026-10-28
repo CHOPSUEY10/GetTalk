@@ -122,6 +122,16 @@ Contoh:
 .env.production.local
 ```
 
+## Login Security
+
+Login to an existing account is temporarily locked for one minute after three
+consecutive failed password attempts. A successful login resets the failed
+attempt counter.
+
+Kontrol keamanan lapisan API dan batasannya dijelaskan di
+[`docs/APP_LAYER_SECURITY.md`](docs/APP_LAYER_SECURITY.md). Kontrol aplikasi
+tersebut bukan pengganti NGFW/firewall jaringan.
+
 
 ## Current Development Ports
 

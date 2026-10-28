@@ -56,8 +56,17 @@ model User {
   email        String   @unique @db.VarChar(255)
   /// Password hash only (bcrypt). Never return in API responses or logs.
   passwordHash String   @map("password_hash") @db.VarChar(255)
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  /// TOTP secret encrypted using the application MFA key; never return to clients.
+  mfaSecret    String?  @map("mfa_secret") @db.Text
+  mfaEnabled   Boolean  @default(false) @map("mfa_enabled")
+  /// SHA-256 hashes of high-entropy, one-time recovery codes.
+  mfaRecoveryCodes String[] @default([]) @map("mfa_recovery_codes")
+  /// Highest accepted TOTP time step, preventing code replay.
+  mfaLastTotpStep    BigInt    @default(-1) @map("mfa_last_totp_step")
+  failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
+  loginLockedUntil    DateTime? @map("login_locked_until") @db.Timestamptz(6)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   sentFriendRequests     Friendship[]         @relation("FriendshipFrom")
   receivedFriendRequests Friendship[]         @relation("FriendshipTo")

@@ -9,6 +9,9 @@
 export const UNAUTHORIZED = 'UNAUTHORIZED';
 export const INVALID_CREDENTIALS = 'INVALID_CREDENTIALS';
 export const SESSION_EXPIRED = 'SESSION_EXPIRED';
+export const MFA_ALREADY_ENABLED = 'MFA_ALREADY_ENABLED';
+export const MFA_NOT_ENABLED = 'MFA_NOT_ENABLED';
+export const LOGIN_LOCKED = 'LOGIN_LOCKED';
 
 // ── Authorization ──────────────────────────────────────────────
 export const FORBIDDEN = 'FORBIDDEN';

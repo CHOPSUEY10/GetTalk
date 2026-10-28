@@ -1,5 +1,5 @@
 import logger from '../utils/logger.js';
-import { INTERNAL_ERROR } from '../errors/error-codes.js';
+import { BAD_REQUEST, INTERNAL_ERROR } from '../errors/error-codes.js';
 
 /**
  * Global Express error-handling middleware.
@@ -14,15 +14,27 @@ import { INTERNAL_ERROR } from '../errors/error-codes.js';
  */
 // eslint-disable-next-line no-unused-vars -- Express requires 4 params
 export function errorHandler(err, req, res, _next) {
+  const isPayloadTooLarge = err.type === 'entity.too.large';
+  const isInvalidJson = err.type === 'entity.parse.failed';
   // ── Determine status & codes ────────────────────────────────
-  const statusCode = err.statusCode || 500;
-  const code = err.code || INTERNAL_ERROR;
+  const statusCode = isPayloadTooLarge
+    ? 413
+    : isInvalidJson
+      ? 400
+      : err.statusCode || 500;
+  const code = isPayloadTooLarge || isInvalidJson
+    ? BAD_REQUEST
+    : err.code || INTERNAL_ERROR;
 
   // For non-operational (unexpected) errors, use a generic message
   // so internals are never leaked.
-  const message = err.isOperational
-    ? err.message
-    : 'Internal server error';
+  const message = isPayloadTooLarge
+    ? 'Request body too large.'
+    : isInvalidJson
+      ? 'Invalid JSON request body.'
+      : err.isOperational
+        ? err.message
+        : 'Internal server error';
 
   // ── Log ──────────────────────────────────────────────────────
   if (statusCode >= 500) {
@@ -47,7 +59,12 @@ export function errorHandler(err, req, res, _next) {
   };
 
   // Attach stack in development only (never in production).
-  if (process.env.NODE_ENV === 'development' && err.stack) {
+  if (
+    process.env.NODE_ENV === 'development'
+    && err.stack
+    && !isPayloadTooLarge
+    && !isInvalidJson
+  ) {
     body.error.stack = err.stack;
   }
 

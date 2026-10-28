@@ -5,7 +5,11 @@
 
     let email = "";
     let password = "";
+    let mfaCode = "";
+    /** @type {string | null} */
+    let mfaChallengeId = null;
     let showPassword = false;
+    let submitting = false;
     /** @type {string | null} */
     let localError = null;
 
@@ -16,12 +20,37 @@
         }
 
         localError = null;
+        submitting = true;
         try {
-            await authStore.login({ email: email.trim(), password });
+            const response = await authStore.login({ email: email.trim(), password });
+            if (response?.mfaRequired) {
+                mfaChallengeId = response.challengeId;
+                return;
+            }
             replace("/");
         } catch (err) {
             const e = /** @type {any} */ (err);
             localError = e.message || "Email atau password salah. Silakan coba lagi.";
+        } finally {
+            submitting = false;
+        }
+    };
+
+    const handleMfaVerify = async () => {
+        if (!mfaCode.trim() || !mfaChallengeId) {
+            localError = "Masukkan kode autentikator atau kode pemulihan.";
+            return;
+        }
+        localError = null;
+        submitting = true;
+        try {
+            await authStore.verifyMfa({ challengeId: mfaChallengeId, code: mfaCode.trim() });
+            replace("/");
+        } catch (err) {
+            const e = /** @type {any} */ (err);
+            localError = e.message || "Kode MFA tidak valid.";
+        } finally {
+            submitting = false;
         }
     };
 </script>
@@ -29,8 +58,14 @@
 <PublicLayout>
     <div class="space-y-6">
         <div class="text-center mb-6">
-            <h2 class="text-xl font-bold text-slate-900 tracking-tight">Selamat Datang Kembali</h2>
-            <p class="text-sm text-slate-500 mt-1">Masuk ke akun GetTalk Anda untuk mulai berkirim pesan aman.</p>
+            <h2 class="text-xl font-bold text-slate-900 tracking-tight">
+                {mfaChallengeId ? "Verifikasi MFA" : "Selamat Datang Kembali"}
+            </h2>
+            <p class="text-sm text-slate-500 mt-1">
+                {mfaChallengeId
+                    ? "Masukkan kode dari aplikasi autentikator atau gunakan kode pemulihan."
+                    : "Masuk ke akun GetTalk Anda untuk mulai berkirim pesan aman."}
+            </p>
         </div>
 
         {#if localError || $authStore.error}
@@ -42,7 +77,24 @@
             </div>
         {/if}
 
-        <form on:submit|preventDefault={handleLogin} class="space-y-4">
+        <form on:submit|preventDefault={mfaChallengeId ? handleMfaVerify : handleLogin} class="space-y-4">
+            {#if mfaChallengeId}
+                <div>
+                    <label for="mfa-code" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
+                        Kode MFA
+                    </label>
+                    <input
+                        id="mfa-code"
+                        type="text"
+                        bind:value={mfaCode}
+                        placeholder="123456 atau kode pemulihan"
+                        autocomplete="one-time-code"
+                        required
+                        disabled={submitting}
+                        class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white transition-all disabled:opacity-60"
+                    />
+                </div>
+            {:else}
             <div>
                 <label for="email" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
                     Email
@@ -60,7 +112,7 @@
                         placeholder="nama@email.com"
                         autocomplete="email"
                         required
-                        disabled={$authStore.loading}
+                        disabled={submitting}
                         class="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white transition-all disabled:opacity-60"
                     />
                 </div>
@@ -83,7 +135,7 @@
                         placeholder="••••••••"
                         autocomplete="current-password"
                         required
-                        disabled={$authStore.loading}
+                        disabled={submitting}
                         class="w-full pl-10 pr-11 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white transition-all disabled:opacity-60"
                     />
                     <button
@@ -105,17 +157,18 @@
                     </button>
                 </div>
             </div>
+            {/if}
 
             <button
                 type="submit"
-                disabled={$authStore.loading}
+                disabled={submitting}
                 class="w-full mt-2 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-xl transition-all shadow-md shadow-indigo-200 hover:shadow-indigo-300 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
             >
-                {#if $authStore.loading}
+                {#if submitting}
                     <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                     <span>Memproses...</span>
                 {:else}
-                    <span>Masuk</span>
+                    <span>{mfaChallengeId ? "Verifikasi" : "Masuk"}</span>
                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
                     </svg>
@@ -124,12 +177,26 @@
         </form>
 
         <div class="pt-4 border-t border-slate-100 text-center">
-            <p class="text-sm text-slate-500">
-                Belum memiliki akun?
-                <a href="#/register" class="font-semibold text-indigo-600 hover:text-indigo-700 hover:underline ml-1">
-                    Daftar Sekarang
-                </a>
-            </p>
+            {#if mfaChallengeId}
+                <button
+                    type="button"
+                    class="text-sm font-semibold text-indigo-600 hover:text-indigo-700 hover:underline"
+                    on:click={() => {
+                        mfaChallengeId = null;
+                        mfaCode = "";
+                        localError = null;
+                    }}
+                >
+                    Kembali ke login
+                </button>
+            {:else}
+                <p class="text-sm text-slate-500">
+                    Belum memiliki akun?
+                    <a href="#/register" class="font-semibold text-indigo-600 hover:text-indigo-700 hover:underline ml-1">
+                        Daftar Sekarang
+                    </a>
+                </p>
+            {/if}
         </div>
     </div>
 </PublicLayout>

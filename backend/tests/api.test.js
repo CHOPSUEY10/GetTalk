@@ -40,6 +40,32 @@ describe('Health and System Endpoints', () => {
     assert.equal(body.status, 'running');
   });
 
+  test('responses include security headers and hide the Express signature', async () => {
+    const res = await fetch(`${baseUrl}/health`);
+
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(res.headers.get('x-frame-options'), 'DENY');
+    assert.equal(res.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+    assert.equal(res.headers.get('permissions-policy'), 'camera=(), microphone=(), geolocation=()');
+    assert.equal(res.headers.get('x-powered-by'), null);
+  });
+
+  test('oversized JSON request bodies are rejected with 413', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ padding: 'x'.repeat(110 * 1024) }),
+    });
+
+    assert.equal(res.status, 413);
+    assert.deepEqual(await res.json(), {
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'Request body too large.',
+      },
+    });
+  });
+
   test('GET /unknown-route returns 404 with standard error envelope', async () => {
     const res = await fetch(`${baseUrl}/api/nonexistent`);
     assert.equal(res.status, 404);
@@ -100,6 +126,24 @@ describe('Authentication API & Validation', () => {
     assert.equal(res.status, 204);
   });
 
+  test('MFA verification requires a valid pre-authentication challenge', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/mfa/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challengeId: 'unknown', code: '123456' }),
+    });
+
+    assert.equal(res.status, 401);
+    assert.equal((await res.json()).error.code, 'UNAUTHORIZED');
+  });
+
+  test('MFA settings require an authenticated session', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/mfa/status`);
+
+    assert.equal(res.status, 401);
+    assert.equal((await res.json()).error.code, 'UNAUTHORIZED');
+  });
+
   test('register → session → login round trip persists to the database', async () => {
     const suffix = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
     const username = `e2e_${suffix}`;
@@ -140,6 +184,35 @@ describe('Authentication API & Validation', () => {
       });
       assert.equal(badLogin.status, 401);
 
+      const secondBadLogin = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: 'wrong-password' }),
+      });
+      assert.equal(secondBadLogin.status, 401);
+
+      const thirdBadLogin = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: 'wrong-password' }),
+      });
+      assert.equal(thirdBadLogin.status, 429);
+      assert.equal((await thirdBadLogin.json()).error.code, 'LOGIN_LOCKED');
+      const retryAfter = Number(thirdBadLogin.headers.get('retry-after'));
+      assert.ok(retryAfter > 0 && retryAfter <= 60);
+
+      const lockedLogin = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      assert.equal(lockedLogin.status, 429);
+
+      await query(
+        'UPDATE users SET login_locked_until = NOW() - INTERVAL \'1 second\' WHERE id = $1',
+        [user.id]
+      );
+
       // Correct password logs in.
       const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
         method: 'POST',
@@ -148,6 +221,12 @@ describe('Authentication API & Validation', () => {
       });
       assert.equal(loginRes.status, 200);
       assert.equal((await loginRes.json()).user.id, user.id);
+      const { rows: loginState } = await query(
+        'SELECT failed_login_attempts, login_locked_until FROM users WHERE id = $1',
+        [user.id]
+      );
+      assert.equal(loginState[0].failed_login_attempts, 0);
+      assert.equal(loginState[0].login_locked_until, null);
     } finally {
       await query(`DELETE FROM sessions WHERE sess->>'userId' = $1`, [user.id]);
       await query('DELETE FROM users WHERE id = $1', [user.id]);

@@ -1,5 +1,10 @@
 import { writable } from 'svelte/store';
-import { getSession, login as apiLogin, logout as apiLogout } from '../services/api/auth.api.js';
+import {
+  getSession,
+  login as apiLogin,
+  logout as apiLogout,
+  verifyMfa as apiVerifyMfa,
+} from '../services/api/auth.api.js';
 import { publishOwnIdentityKey } from '../services/crypto/identity-trust.js';
 import { userStore } from './user.store.js';
 import logger from '../lib/logger.js';
@@ -71,9 +76,19 @@ function createAuthStore() {
     },
     /** @param {any} payload */
     login: async (payload) => {
-      update(state => ({ ...state, loading: true, error: null }));
+      // NOTE: Do NOT set loading:true here. The global `loading` flag controls
+      // the splash-screen vs Router toggle in App.svelte. Setting it to true
+      // would unmount the Router (destroying Login.svelte and its local MFA
+      // challenge state) and remount it when loading returns to false, causing
+      // the mfaChallengeId to be lost.
+      update(state => ({ ...state, error: null }));
       try {
         const response = await apiLogin(payload);
+        if (response?.mfaRequired) {
+          update(state => ({ ...state, user: null, authenticated: false, error: null }));
+          userStore.set(null);
+          return response;
+        }
         const user = response?.user || response;
         
         set({ user, authenticated: true, loading: false, error: null });
@@ -82,12 +97,35 @@ function createAuthStore() {
         return response;
       } catch (err) {
         const error = /** @type {any} */ (err);
-        set({ 
+        update(state => ({
+          ...state,
           user: null, 
           authenticated: false, 
-          loading: false, 
           error: error.message 
-        });
+        }));
+        userStore.set(null);
+        throw error;
+      }
+    },
+    /** @param {{ challengeId: string, code: string }} payload */
+    verifyMfa: async (payload) => {
+      // Same as login: avoid toggling the global loading flag.
+      update(state => ({ ...state, error: null }));
+      try {
+        const response = await apiVerifyMfa(payload);
+        const user = response?.user || response;
+        set({ user, authenticated: true, loading: false, error: null });
+        userStore.set(user);
+        publishIdentityKey(user);
+        return response;
+      } catch (err) {
+        const error = /** @type {any} */ (err);
+        update(state => ({
+          ...state,
+          user: null,
+          authenticated: false,
+          error: error.message,
+        }));
         userStore.set(null);
         throw error;
       }
@@ -115,4 +153,3 @@ function createAuthStore() {
 }
 
 export const authStore = createAuthStore();
-

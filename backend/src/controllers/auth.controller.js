@@ -1,6 +1,8 @@
 import * as authService from '../services/auth.service.js';
+import * as mfaService from '../services/mfa.service.js';
 import AppError from '../errors/AppError.js';
 import { UNAUTHORIZED } from '../errors/error-codes.js';
+import { randomUUID } from 'node:crypto';
 
 /**
  * Persist the session before replying. Without this, a client that opens the
@@ -11,6 +13,12 @@ import { UNAUTHORIZED } from '../errors/error-codes.js';
 function saveSession(session) {
   return new Promise((resolve, reject) => {
     session.save((err) => (err ? reject(err) : resolve()));
+  });
+}
+
+function regenerateSession(req) {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate((err) => (err ? reject(err) : resolve()));
   });
 }
 
@@ -27,6 +35,7 @@ export async function register(req, res, next) {
       user: {
         id: user.id,
         username: user.username,
+        mfaEnabled: user.mfaEnabled,
       },
     });
   } catch (err) {
@@ -40,6 +49,18 @@ export async function login(req, res, next) {
 
     const user = await authService.login({ email, password });
     if (req.session) {
+      await regenerateSession(req);
+      if (user.mfaEnabled) {
+        const challengeId = randomUUID();
+        req.session.mfaChallenge = {
+          challengeId,
+          userId: user.id,
+          expiresAt: Date.now() + 5 * 60 * 1000,
+          attempts: 0,
+        };
+        await saveSession(req.session);
+        return res.json({ mfaRequired: true, challengeId });
+      }
       req.session.userId = user.id;
       await saveSession(req.session);
     }
@@ -47,9 +68,13 @@ export async function login(req, res, next) {
       user: {
         id: user.id,
         username: user.username,
+        mfaEnabled: user.mfaEnabled,
       },
     });
   } catch (err) {
+    if (err.retryAfterSeconds) {
+      res.set('Retry-After', String(err.retryAfterSeconds));
+    }
     return next(err);
   }
 }
@@ -87,6 +112,7 @@ export async function session(req, res, next) {
       user: {
         id: user.id,
         username: user.username,
+        mfaEnabled: user.mfaEnabled,
       },
     });
   } catch (err) {
@@ -96,13 +122,105 @@ export async function session(req, res, next) {
 
 export async function mfaVerify(req, res, next) {
   try {
-    // Stub for MFA challenge verification
-    return res.status(400).json({
-      error: {
-        code: 'NOT_IMPLEMENTED',
-        message: 'MFA verification is not configured for this account',
+    const challenge = req.session?.mfaChallenge;
+    const { challengeId, code } = req.body;
+    if (!challenge || challenge.challengeId !== challengeId) {
+      return next(new AppError('MFA challenge is invalid or expired', 401, UNAUTHORIZED));
+    }
+    if (challenge.expiresAt <= Date.now()) {
+      delete req.session.mfaChallenge;
+      await saveSession(req.session);
+      return next(new AppError('MFA challenge is invalid or expired', 401, UNAUTHORIZED));
+    }
+
+    if (challenge.attempts >= 5) {
+      delete req.session.mfaChallenge;
+      await saveSession(req.session);
+      return next(new AppError('MFA challenge has expired', 401, UNAUTHORIZED));
+    }
+
+    const verified = await mfaService.verifyChallenge(challenge.userId, code);
+    if (!verified) {
+      challenge.attempts += 1;
+      if (challenge.attempts >= 5) delete req.session.mfaChallenge;
+      await saveSession(req.session);
+      return next(new AppError('Invalid authenticator or recovery code', 401, UNAUTHORIZED));
+    }
+
+    const user = await authService.getSession(challenge.userId);
+    if (!user) {
+      delete req.session.mfaChallenge;
+      await saveSession(req.session);
+      return next(new AppError('Unauthorized', 401, UNAUTHORIZED));
+    }
+
+    await regenerateSession(req);
+    req.session.userId = user.id;
+    await saveSession(req.session);
+    return res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        mfaEnabled: user.mfaEnabled,
       },
     });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function mfaStatus(req, res, next) {
+  try {
+    const user = await authService.getSession(req.user.id);
+    if (!user) return next(new AppError('Unauthorized', 401, UNAUTHORIZED));
+    return res.json({ enabled: user.mfaEnabled });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function mfaSetup(req, res, next) {
+  try {
+    const setup = await mfaService.beginSetup(req.user.id, req.body.password);
+    req.session.pendingMfaSetup = {
+      encryptedSecret: setup.encryptedSecret,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    };
+    await saveSession(req.session);
+    return res.json({ secret: setup.secret, otpauthUri: setup.otpauthUri });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function mfaEnable(req, res, next) {
+  try {
+    const pending = req.session.pendingMfaSetup;
+    if (!pending || pending.expiresAt <= Date.now()) {
+      delete req.session.pendingMfaSetup;
+      await saveSession(req.session);
+      return next(new AppError('MFA setup has expired; start setup again', 400, 'VALIDATION_ERROR'));
+    }
+
+    const recoveryCodes = await mfaService.enable(
+      req.user.id,
+      pending.encryptedSecret,
+      req.body.code
+    );
+    delete req.session.pendingMfaSetup;
+    await saveSession(req.session);
+    return res.json({ enabled: true, recoveryCodes });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function mfaDisable(req, res, next) {
+  try {
+    await mfaService.disable(req.user.id, req.body.password, req.body.code);
+    delete req.session.pendingMfaSetup;
+    await saveSession(req.session);
+    return res.json({ enabled: false });
   } catch (err) {
     return next(err);
   }
