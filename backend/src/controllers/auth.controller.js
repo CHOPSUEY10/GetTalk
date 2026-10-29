@@ -1,5 +1,6 @@
 import * as authService from '../services/auth.service.js';
 import * as mfaService from '../services/mfa.service.js';
+import * as passwordResetService from '../services/password-reset.service.js';
 import AppError from '../errors/AppError.js';
 import { UNAUTHORIZED } from '../errors/error-codes.js';
 import { randomUUID } from 'node:crypto';
@@ -221,6 +222,60 @@ export async function mfaDisable(req, res, next) {
     delete req.session.pendingMfaSetup;
     await saveSession(req.session);
     return res.json({ enabled: false });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+/**
+ * POST /api/auth/password/forgot
+ *
+ * Always returns the same generic response regardless of whether the email
+ * exists in the system (anti user-enumeration).
+ *
+ * In production the raw token would be sent via an email transport.
+ * For development/testing the token is returned in the response body so
+ * the flow can be exercised without an email service.
+ */
+export async function forgotPassword(req, res, next) {
+  try {
+    const { email } = req.body;
+    const result = await passwordResetService.requestReset(email.trim());
+
+    // Build response — always the same generic message
+    const response = {
+      message: 'Jika email terdaftar, tautan pengaturan ulang kata sandi telah dikirimkan.',
+    };
+
+    // In non-production environments, include the token for testing
+    if (result.sent && process.env.NODE_ENV !== 'production') {
+      response._devToken = result.rawToken;
+    }
+
+    return res.json(response);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+/**
+ * POST /api/auth/password/reset
+ *
+ * Validates the token, updates the password, and revokes all sessions.
+ */
+export async function resetPassword(req, res, next) {
+  try {
+    const { token, email, newPassword } = req.body;
+
+    await passwordResetService.resetPassword({
+      token,
+      email: email.trim(),
+      newPassword,
+    });
+
+    return res.json({
+      message: 'Kata sandi berhasil diubah. Silakan login kembali.',
+    });
   } catch (err) {
     return next(err);
   }

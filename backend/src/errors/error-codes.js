@@ -12,6 +12,8 @@ export const SESSION_EXPIRED = 'SESSION_EXPIRED';
 export const MFA_ALREADY_ENABLED = 'MFA_ALREADY_ENABLED';
 export const MFA_NOT_ENABLED = 'MFA_NOT_ENABLED';
 export const LOGIN_LOCKED = 'LOGIN_LOCKED';
+export const INVALID_RESET_TOKEN = 'INVALID_RESET_TOKEN';
+export const RESET_TOKEN_EXPIRED = 'RESET_TOKEN_EXPIRED';
 
 // ── Authorization ──────────────────────────────────────────────
 export const FORBIDDEN = 'FORBIDDEN';

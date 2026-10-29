@@ -122,3 +122,49 @@ export function validateMfaDisable(body) {
   }
   return { valid: errors.length === 0, errors };
 }
+
+export function validateForgotPassword(body) {
+  const errors = [];
+
+  if (!body || typeof body !== 'object') {
+    return { valid: false, errors: ['Request body is required'] };
+  }
+
+  const { email } = body;
+
+  if (!email || typeof email !== 'string' || !EMAIL_REGEX.test(email.trim())) {
+    errors.push('A valid email address is required');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+export function validateResetPassword(body) {
+  const errors = [];
+
+  if (!body || typeof body !== 'object') {
+    return { valid: false, errors: ['Request body is required'] };
+  }
+
+  const { token, email, newPassword } = body;
+
+  if (!token || typeof token !== 'string' || token.trim().length === 0) {
+    errors.push('Reset token is required');
+  }
+
+  if (!email || typeof email !== 'string' || !EMAIL_REGEX.test(email.trim())) {
+    errors.push('A valid email address is required');
+  }
+
+  if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
+    errors.push('New password must be at least 8 characters long');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}

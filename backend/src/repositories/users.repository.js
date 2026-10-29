@@ -140,3 +140,17 @@ export async function search(q, limit = 20) {
   );
   return result.rows;
 }
+
+/**
+ * Update a user's password hash (used by the password-reset flow).
+ *
+ * @param {string} id — user id
+ * @param {string} passwordHash — new bcrypt hash
+ */
+export async function updatePasswordHash(id, passwordHash) {
+  const result = await query(
+    `UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1`,
+    [id, passwordHash]
+  );
+  return result.rowCount === 1;
+}

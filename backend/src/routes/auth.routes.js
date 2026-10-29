@@ -10,6 +10,8 @@ import {
   validateMfaCode,
   validateMfaSetup,
   validateMfaDisable,
+  validateForgotPassword,
+  validateResetPassword,
 } from '../validators/auth.validator.js';
 
 const router = Router();
@@ -40,6 +42,20 @@ router.delete(
   rateLimiter({ name: 'auth:mfa:disable', limit: 5, windowSeconds: 60 }),
   validate(validateMfaDisable),
   authController.mfaDisable
+);
+
+// ── Password Reset ─────────────────────────────────────────────
+router.post(
+  '/password/forgot',
+  rateLimiter({ name: 'auth:password:forgot', limit: 3, windowSeconds: 900 }),
+  validate(validateForgotPassword),
+  authController.forgotPassword
+);
+router.post(
+  '/password/reset',
+  rateLimiter({ name: 'auth:password:reset', limit: 10, windowSeconds: 900 }),
+  validate(validateResetPassword),
+  authController.resetPassword
 );
 
 export default router;
