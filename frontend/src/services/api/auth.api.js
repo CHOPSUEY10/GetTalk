@@ -30,3 +30,6 @@ export const setupMfa = (payload) => api.post('/api/auth/mfa/setup', payload);
 export const enableMfa = (payload) => api.post('/api/auth/mfa/enable', payload);
 
 export const disableMfa = (payload) => api.delete('/api/auth/mfa', { body: payload });
+export const forgotPassword = (payload) => api.post('/api/auth/password/forgot', payload);
+
+export const resetPassword = (payload) => api.post('/api/auth/password/reset', payload);

@@ -37,6 +37,7 @@
     "uuid": "^14.0.2"
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
     "nodemon": "^1.14.10",
     "prisma": "^7.10.1"
   }

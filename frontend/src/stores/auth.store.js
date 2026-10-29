@@ -4,6 +4,8 @@ import {
   login as apiLogin,
   logout as apiLogout,
   verifyMfa as apiVerifyMfa,
+  forgotPassword as apiForgotPassword,
+  resetPassword as apiResetPassword,
 } from '../services/api/auth.api.js';
 import { publishOwnIdentityKey } from '../services/crypto/identity-trust.js';
 import { userStore } from './user.store.js';
@@ -148,6 +150,34 @@ function createAuthStore() {
     setUnauthenticated: () => {
       set({ user: null, authenticated: false, loading: false, error: null });
       userStore.set(null);
+    },
+    /** @param {{ email: string }} payload */
+    forgotPassword: async (payload) => {
+      // Show loading while request is in flight
+      update(state => ({ ...state, loading: true, error: null }));
+      try {
+        const response = await apiForgotPassword(payload);
+        // Loading finished, keep user unchanged
+        update(state => ({ ...state, loading: false }));
+        return response;
+      } catch (err) {
+        const error = /** @type {any} */ (err);
+        update(state => ({ ...state, loading: false, error: error.message }));
+        throw error;
+      }
+    },
+    /** @param {{ email: string, token: string, password: string }} payload */
+    resetPassword: async (payload) => {
+      update(state => ({ ...state, loading: true, error: null }));
+      try {
+        const response = await apiResetPassword(payload);
+        update(state => ({ ...state, loading: false }));
+        return response;
+      } catch (err) {
+        const error = /** @type {any} */ (err);
+        update(state => ({ ...state, loading: false, error: error.message }));
+        throw error;
+      }
     }
   };
 }

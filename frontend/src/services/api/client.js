@@ -15,7 +15,7 @@ export class ApiError extends Error {
 }
 
 /**
- * @typedef {RequestInit & { body?: any }} CustomRequestInit
+ * @typedef {RequestInit & { body?: any, suppressUnauthorizedEvent?: boolean }} CustomRequestInit
  */
 
 /**
@@ -141,11 +141,16 @@ export const api = {
    * @param {Blob | ArrayBuffer | Uint8Array} body
    * @param {Record<string, string>} [headers]
    */
-  postBinary: (path, body, headers = {}) => fetchBinary(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream', ...headers },
-    body,
-  }),
+  postBinary: (path, body, headers = {}) => {
+    const normalizedBody = ArrayBuffer.isView(body)
+      ? /** @type {ArrayBuffer} */ (body.buffer)
+      : body;
+    return fetchBinary(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', ...headers },
+      body: normalizedBody,
+    });
+  },
 
   /**
    * Fetch raw bytes.
