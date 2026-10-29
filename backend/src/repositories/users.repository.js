@@ -19,7 +19,7 @@ export async function findByEmail(email) {
               ELSE 0
             END AS login_lock_remaining_seconds,
             created_at, updated_at
-     FROM users WHERE email = $1`,
+     FROM users WHERE LOWER(email) = LOWER($1)`,
     [email]
   );
   return result.rows[0] || null;
@@ -142,14 +142,20 @@ export async function search(q, limit = 20) {
 }
 
 /**
- * Update a user's password hash (used by the password-reset flow).
+ * Update a user's password hash and clear any login lockout state
+ * (used by the password-reset flow).
  *
  * @param {string} id — user id
  * @param {string} passwordHash — new bcrypt hash
  */
 export async function updatePasswordHash(id, passwordHash) {
   const result = await query(
-    `UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1`,
+    `UPDATE users
+     SET password_hash = $2,
+         failed_login_attempts = 0,
+         login_locked_until = NULL,
+         updated_at = NOW()
+     WHERE id = $1`,
     [id, passwordHash]
   );
   return result.rowCount === 1;

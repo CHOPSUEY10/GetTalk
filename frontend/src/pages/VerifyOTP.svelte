@@ -51,13 +51,14 @@
      */
     function handleInput(index, e) {
         const target = /** @type {HTMLInputElement} */ (e.target);
-        let val = target.value;
+        // Only allow numeric digits (0-9)
+        let val = target.value.replace(/\D/g, "");
 
-        // Take only the last character entered
         if (val.length > 1) {
             val = val.slice(-1);
         }
 
+        target.value = val;
         otpDigits[index] = val;
         localError = null;
 
@@ -67,7 +68,7 @@
         }
 
         // Auto-submit if all 6 digits are filled
-        if (otpDigits.every((d) => d.trim() !== "") && index === 5) {
+        if (otpDigits.every((d) => /^\d$/.test(d)) && index === 5) {
             handleVerify();
         }
     }
@@ -100,7 +101,7 @@
     function handlePaste(e) {
         e.preventDefault();
         const clipboardData = e.clipboardData?.getData("text") || "";
-        const cleaned = clipboardData.replace(/\s+/g, "").slice(0, 6);
+        const cleaned = clipboardData.replace(/\D/g, "").slice(0, 6);
 
         if (!cleaned) return;
 
@@ -114,7 +115,7 @@
         const nextIndex = Math.min(cleaned.length, 5);
         inputRefs[nextIndex]?.focus();
 
-        if (otpDigits.every((d) => d.trim() !== "")) {
+        if (otpDigits.every((d) => /^\d$/.test(d))) {
             handleVerify();
         }
     }
@@ -130,16 +131,15 @@
             return;
         }
 
-        if (otpCode.length < 6) {
-            localError = "Silakan masukkan 6 digit kode OTP lengkap.";
+        if (!/^\d{6}$/.test(otpCode)) {
+            localError = "Silakan masukkan 6 digit angka kode OTP lengkap.";
             return;
         }
 
         isVerifying = true;
 
         try {
-            // Client-side format & completeness check
-            // Forward to reset password page with email and token (OTP code)
+            // Forward to reset password page with email and 6-digit OTP token
             const target = `/reset-password?email=${encodeURIComponent(email.trim())}&token=${encodeURIComponent(otpCode)}`;
             push(target);
         } catch (err) {
@@ -236,6 +236,7 @@
                             id="otp-{index}"
                             type="text"
                             inputmode="numeric"
+                            pattern="[0-9]*"
                             maxlength="1"
                             bind:value={otpDigits[index]}
                             bind:this={inputRefs[index]}
@@ -250,7 +251,7 @@
 
             <button
                 type="submit"
-                disabled={isVerifying || otpDigits.some((d) => !d.trim())}
+                disabled={isVerifying || otpDigits.some((d) => !/^\d$/.test(d))}
                 class="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-xl transition-all shadow-md shadow-indigo-200 hover:shadow-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
             >
                 {#if isVerifying}

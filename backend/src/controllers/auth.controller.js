@@ -230,29 +230,20 @@ export async function mfaDisable(req, res, next) {
 /**
  * POST /api/auth/password/forgot
  *
- * Always returns the same generic response regardless of whether the email
- * exists in the system (anti user-enumeration).
- *
- * In production the raw token would be sent via an email transport.
- * For development/testing the token is returned in the response body so
- * the flow can be exercised without an email service.
+ * Always returns the exact same generic response regardless of whether the
+ * email exists in the system (anti user-enumeration). Never exposes the
+ * raw OTP token in the HTTP response body.
  */
 export async function forgotPassword(req, res, next) {
   try {
     const { email } = req.body;
-    const result = await passwordResetService.requestReset(email.trim());
+    await passwordResetService.requestReset(email.trim(), {
+      ipAddress: req.ip || req.socket?.remoteAddress || null,
+    });
 
-    // Build response — always the same generic message
-    const response = {
+    return res.json({
       message: 'Jika email terdaftar, tautan pengaturan ulang kata sandi telah dikirimkan.',
-    };
-
-    // In non-production environments, include the token for testing
-    if (result.sent && process.env.NODE_ENV !== 'production') {
-      response._devToken = result.rawToken;
-    }
-
-    return res.json(response);
+    });
   } catch (err) {
     return next(err);
   }
@@ -261,16 +252,18 @@ export async function forgotPassword(req, res, next) {
 /**
  * POST /api/auth/password/reset
  *
- * Validates the token, updates the password, and revokes all sessions.
+ * Validates the 6-digit OTP token, updates the password, and revokes all sessions.
  */
 export async function resetPassword(req, res, next) {
   try {
-    const { token, email, newPassword } = req.body;
+    const { token, email, newPassword, password } = req.body;
+    const resolvedPassword = newPassword ?? password;
 
     await passwordResetService.resetPassword({
-      token,
+      token: token.trim(),
       email: email.trim(),
-      newPassword,
+      newPassword: resolvedPassword,
+      ipAddress: req.ip || req.socket?.remoteAddress || null,
     });
 
     return res.json({

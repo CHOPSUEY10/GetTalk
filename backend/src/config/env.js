@@ -74,6 +74,18 @@ function validateEnvironment() {
   // production if needed; the key is opaque and server-generated.
   const storageDir = resolve(backendRoot, process.env.STORAGE_DIR?.trim() || 'storage');
 
+  // SMTP configuration for transactional emails (OTP / Password Reset)
+  const smtpHost = process.env.SMTP_HOST?.trim() || '';
+  const smtpPort = positiveIntegerEnv('SMTP_PORT', 587);
+  const smtpSecure = process.env.SMTP_SECURE === 'true' || smtpPort === 465;
+  const smtpUser = process.env.SMTP_USER?.trim() || '';
+  // Strip spaces in case a 16-char Google App Password is pasted with spaces
+  const smtpPass = process.env.SMTP_PASS ? process.env.SMTP_PASS.replace(/\s+/g, '') : '';
+  const smtpFrom =
+    process.env.SMTP_FROM?.trim() ||
+    smtpUser ||
+    'GetTalk Security <no-reply@gettalk.local>';
+
   return {
     nodeEnv,
     host,
@@ -83,7 +95,13 @@ function validateEnvironment() {
     sessionSecret,
     mfaEncryptionKey,
     redisUrl,
-    storageDir
+    storageDir,
+    smtpHost,
+    smtpPort,
+    smtpSecure,
+    smtpUser,
+    smtpPass,
+    smtpFrom,
   };
 }
 

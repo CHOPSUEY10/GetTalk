@@ -153,12 +153,10 @@ function createAuthStore() {
     },
     /** @param {{ email: string }} payload */
     forgotPassword: async (payload) => {
-      // Show loading while request is in flight
-      update(state => ({ ...state, loading: true, error: null }));
+      // Avoid setting global `loading: true` which would unmount the Router in App.svelte
+      update(state => ({ ...state, loading: false, error: null }));
       try {
         const response = await apiForgotPassword(payload);
-        // Loading finished, keep user unchanged
-        update(state => ({ ...state, loading: false }));
         return response;
       } catch (err) {
         const error = /** @type {any} */ (err);
@@ -166,12 +164,17 @@ function createAuthStore() {
         throw error;
       }
     },
-    /** @param {{ email: string, token: string, password: string }} payload */
+    /** @param {{ email: string, token: string, password?: string, newPassword?: string }} payload */
     resetPassword: async (payload) => {
-      update(state => ({ ...state, loading: true, error: null }));
+      update(state => ({ ...state, loading: false, error: null }));
       try {
-        const response = await apiResetPassword(payload);
-        update(state => ({ ...state, loading: false }));
+        const resolvedPassword = payload.newPassword ?? payload.password;
+        const response = await apiResetPassword({
+          email: payload.email,
+          token: payload.token,
+          newPassword: resolvedPassword,
+          password: resolvedPassword,
+        });
         return response;
       } catch (err) {
         const error = /** @type {any} */ (err);

@@ -3,13 +3,20 @@ process.env.VITE_API_URL = process.env.VITE_API_URL || 'http://localhost:3000';
 process.env.VITE_SOCKET_URL = process.env.VITE_SOCKET_URL || 'http://localhost:3000';
 
 import 'fake-indexeddb/auto';
-import { test, describe, beforeEach, afterEach } from 'node:test';
+import { test, describe, before, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { get } from 'svelte/store';
-import { forgotPassword, resetPassword } from '../src/services/api/auth.api.js';
-import { authStore } from '../src/stores/auth.store.js';
 
-describe('Frontend Password Reset Flow', () => {
+let forgotPassword;
+let resetPassword;
+let authStore;
+
+before(async () => {
+  ({ forgotPassword, resetPassword } = await import('../src/services/api/auth.api.js'));
+  ({ authStore } = await import('../src/stores/auth.store.js'));
+});
+
+describe('Frontend Password Reset Flow (6-Digit OTP)', () => {
   let originalFetch;
   let fetchCalls = [];
 
@@ -47,12 +54,12 @@ describe('Frontend Password Reset Flow', () => {
     assert.deepEqual(JSON.parse(fetchCalls[0].options.body), { email: 'user@example.com' });
   });
 
-  test('auth.api.resetPassword sends POST to /api/auth/password/reset', async () => {
+  test('auth.api.resetPassword sends POST to /api/auth/password/reset with 6-digit OTP', async () => {
     globalThis.fetch = async (url, options) => {
       fetchCalls.push({ url, options });
       return new Response(
         JSON.stringify({
-          message: 'Kata sandi berhasil diatur ulang. Silakan masuk kembali.',
+          message: 'Kata sandi berhasil diubah. Silakan login kembali.',
         }),
         {
           status: 200,
@@ -63,19 +70,19 @@ describe('Frontend Password Reset Flow', () => {
 
     const payload = {
       email: 'user@example.com',
-      token: 'a'.repeat(64),
-      password: 'NewStrongPassword123!',
+      token: '482910',
+      newPassword: 'NewStrongPassword123!',
     };
 
     const res = await resetPassword(payload);
-    assert.equal(res.message, 'Kata sandi berhasil diatur ulang. Silakan masuk kembali.');
+    assert.equal(res.message, 'Kata sandi berhasil diubah. Silakan login kembali.');
     assert.equal(fetchCalls.length, 1);
     assert.ok(fetchCalls[0].url.endsWith('/api/auth/password/reset'));
     assert.equal(fetchCalls[0].options.method, 'POST');
     assert.deepEqual(JSON.parse(fetchCalls[0].options.body), payload);
   });
 
-  test('authStore.forgotPassword executes and manages loading state', async () => {
+  test('authStore.forgotPassword executes without unmounting router via global loading', async () => {
     globalThis.fetch = async () => {
       return new Response(
         JSON.stringify({
@@ -95,13 +102,14 @@ describe('Frontend Password Reset Flow', () => {
     assert.equal(state.error, null);
   });
 
-  test('authStore.resetPassword catches error and records error in store', async () => {
-    globalThis.fetch = async () => {
+  test('authStore.resetPassword normalizes password fields and records API error in store', async () => {
+    globalThis.fetch = async (url, options) => {
+      fetchCalls.push({ url, options });
       return new Response(
         JSON.stringify({
           error: {
-            code: 'INVALID_TOKEN',
-            message: 'Token pengaturan ulang kata sandi tidak valid atau telah kedaluwarsa.',
+            code: 'INVALID_RESET_TOKEN',
+            message: 'Kode OTP pengaturan ulang kata sandi tidak valid atau telah kedaluwarsa.',
           },
         }),
         {
@@ -115,24 +123,28 @@ describe('Frontend Password Reset Flow', () => {
       async () => {
         await authStore.resetPassword({
           email: 'test@example.com',
-          token: 'invalid',
+          token: '123456',
           password: 'Password123!',
         });
       },
       (err) => {
         assert.equal(
           err.message,
-          'Token pengaturan ulang kata sandi tidak valid atau telah kedaluwarsa.'
+          'Kode OTP pengaturan ulang kata sandi tidak valid atau telah kedaluwarsa.'
         );
         return true;
       }
     );
 
+    const sentBody = JSON.parse(fetchCalls[0].options.body);
+    assert.equal(sentBody.token, '123456');
+    assert.equal(sentBody.newPassword, 'Password123!');
+
     const state = get(authStore);
     assert.equal(state.loading, false);
     assert.equal(
       state.error,
-      'Token pengaturan ulang kata sandi tidak valid atau telah kedaluwarsa.'
+      'Kode OTP pengaturan ulang kata sandi tidak valid atau telah kedaluwarsa.'
     );
   });
 });

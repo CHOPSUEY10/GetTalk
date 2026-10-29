@@ -149,9 +149,10 @@ export function validateResetPassword(body) {
     return { valid: false, errors: ['Request body is required'] };
   }
 
-  const { token, email, newPassword } = body;
+  const { token, email, newPassword, password } = body;
+  const resolvedPassword = newPassword ?? password;
 
-  if (!token || typeof token !== 'string' || token.trim().length === 0) {
+  if (!token || typeof token !== 'string' || token.trim().length === 0 || token.length > 128) {
     errors.push('Reset token is required');
   }
 
@@ -159,7 +160,7 @@ export function validateResetPassword(body) {
     errors.push('A valid email address is required');
   }
 
-  if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
+  if (!resolvedPassword || typeof resolvedPassword !== 'string' || resolvedPassword.length < 8) {
     errors.push('New password must be at least 8 characters long');
   }
 

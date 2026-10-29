@@ -40,21 +40,20 @@
         token = params.token.trim();
         email = params.email.trim();
 
-        if (!token || !email) {
+        if (!token || !email || !/^\d{6}$/.test(token)) {
             tokenMissing = true;
-            localError = "Kode OTP atau informasi email tidak ditemukan. Silakan lakukan verifikasi ulang melalui halaman lupa kata sandi.";
+            localError = "Kode OTP 6-digit atau informasi email tidak ditemukan. Silakan lakukan verifikasi ulang melalui halaman lupa kata sandi.";
         }
     });
 
     $: hasMinLength = password.length >= 8;
-    $: hasNumberOrSpecial = /[0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password);
     $: passwordsMatch = password && confirmPassword && password === confirmPassword;
 
     const handleReset = async () => {
         localError = null;
 
-        if (!email || !token) {
-            localError = "Informasi token atau email tidak valid. Silakan minta tautan baru.";
+        if (!email || !/^\d{6}$/.test(token)) {
+            localError = "Informasi kode OTP 6-digit atau email tidak valid. Silakan minta kode baru.";
             return;
         }
 
@@ -73,6 +72,7 @@
             const res = await authStore.resetPassword({
                 email,
                 token,
+                newPassword: password,
                 password,
             });
             successMessage =
@@ -81,7 +81,7 @@
             const e = /** @type {any} */ (err);
             localError =
                 e.message ||
-                "Token pengaturan ulang kata sandi tidak valid atau telah kedaluwarsa.";
+                "Kode OTP pengaturan ulang kata sandi tidak valid atau telah kedaluwarsa.";
         } finally {
             isSubmitting = false;
         }
@@ -104,7 +104,7 @@
                 </svg>
                 <div class="flex-1">
                     <span>{localError}</span>
-                    {#if tokenMissing || localError.includes("tidak valid") || localError.includes("kedaluwarsa")}
+                    {#if tokenMissing || localError.includes("tidak valid") || localError.includes("kedaluwarsa") || localError.includes("expired") || localError.includes("Invalid")}
                         <div class="mt-2">
                             <a
                                 href="#/forgot-password"

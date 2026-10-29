@@ -21,6 +21,22 @@ export async function create({ userId, tokenHash, expiresAt }) {
 }
 
 /**
+ * Find all active (unused, not expired) token records for a user.
+ *
+ * @param {string} userId
+ */
+export async function findActiveByUserId(userId) {
+  const result = await query(
+    `SELECT id, user_id, token_hash, used, expires_at, created_at
+     FROM password_reset_tokens
+     WHERE user_id = $1 AND used = FALSE AND expires_at > NOW()
+     ORDER BY created_at DESC`,
+    [userId]
+  );
+  return result.rows;
+}
+
+/**
  * Find a valid (unused, not expired) token record by its SHA-256 hash.
  *
  * @param {string} tokenHash
@@ -36,15 +52,20 @@ export async function findValidByHash(tokenHash) {
 }
 
 /**
- * Mark a token as used so it cannot be replayed.
+ * Atomically mark a token as used so it cannot be replayed concurrently.
+ * Returns the updated row if it was still unused and unexpired, or null otherwise.
  *
  * @param {string} id
  */
 export async function markUsed(id) {
-  await query(
-    `UPDATE password_reset_tokens SET used = TRUE WHERE id = $1`,
+  const result = await query(
+    `UPDATE password_reset_tokens
+     SET used = TRUE
+     WHERE id = $1 AND used = FALSE AND expires_at > NOW()
+     RETURNING id, user_id, token_hash, used, expires_at`,
     [id]
   );
+  return result.rows[0] || null;
 }
 
 /**
