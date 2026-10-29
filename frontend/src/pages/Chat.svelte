@@ -6,6 +6,7 @@
     import { conversationsStore } from "../stores/conversations.store.js";
     import { messagesStore } from "../stores/messages.store.js";
     import AttachmentPicker from "../components/attachments/AttachmentPicker.svelte";
+    import MessageItem from "../components/chat/MessageItem.svelte";
     import { uploadAttachment, downloadAttachmentContent } from "../services/api/attachments.api.js";
     import { encryptMessage } from "../services/crypto/message-crypto.js";
     import { decryptFile, createDownloadUrl } from "../services/crypto/file-crypto.js";
@@ -20,6 +21,8 @@
     let conversationId = "";
     let messageText = "";
     let isSending = false;
+    /** @type {string | null} */
+    let mutatingMessageId = null;
     let roomStatus = "connecting";
     /** @type {'initializing' | 'ready' | 'error'} */
     let e2eeStatus = "initializing";
@@ -73,7 +76,8 @@
                     };
                     e2eeError = "Kunci keamanan lawan bicara berubah. Verifikasi fingerprint sebelum melanjutkan.";
                 } else {
-                    e2eeError = err?.message || "Gagal menyiapkan sesi E2EE.";
+                    const e = /** @type {any} */ (err);
+                    e2eeError = e?.message || "Gagal menyiapkan sesi E2EE.";
                 }
                 logger.error("E2EE session setup failed", err);
             }
@@ -113,6 +117,54 @@
             logger.error("Gagal mengirim pesan", err);
         } finally {
             isSending = false;
+        }
+    };
+
+    /**
+     * Handle message edit (FR-11, AC-07, AC-09).
+     * @param {CustomEvent<{ messageId: string, plaintext: string, done: (err: string | null) => void }>} e
+     */
+    const handleEditMessage = async (e) => {
+        const { messageId, plaintext, done } = e.detail;
+        if (!conversationId || e2eeStatus !== "ready" || mutatingMessageId) {
+            done?.("Sesi E2EE belum siap atau operasi lain sedang berjalan.");
+            return;
+        }
+
+        mutatingMessageId = messageId;
+        try {
+            await messagesStore.editMessage(conversationId, messageId, { plaintext });
+            done?.(null);
+        } catch (err) {
+            const error = /** @type {any} */ (err);
+            logger.error("Gagal mengedit pesan", error);
+            done?.(error?.message || "Gagal memperbarui pesan.");
+        } finally {
+            mutatingMessageId = null;
+        }
+    };
+
+    /**
+     * Handle message soft-delete (FR-12, RB-05, AC-08, AC-09).
+     * @param {CustomEvent<{ messageId: string, done: (err: string | null) => void }>} e
+     */
+    const handleDeleteMessage = async (e) => {
+        const { messageId, done } = e.detail;
+        if (!conversationId || mutatingMessageId) {
+            done?.("Operasi lain sedang berjalan.");
+            return;
+        }
+
+        mutatingMessageId = messageId;
+        try {
+            await messagesStore.deleteMessage(conversationId, messageId);
+            done?.(null);
+        } catch (err) {
+            const error = /** @type {any} */ (err);
+            logger.error("Gagal menghapus pesan", error);
+            done?.(error?.message || "Gagal menghapus pesan.");
+        } finally {
+            mutatingMessageId = null;
         }
     };
 
@@ -349,53 +401,15 @@
             {:else}
                 {#each currentMessages as msg (msg.id || msg.client_message_id)}
                     {@const isSelf = msg.sender_id === $authStore.user?.id || msg.sender_username === $authStore.user?.username || msg.sender_id === 'me'}
-                    <div class="flex flex-col {isSelf ? 'items-end' : 'items-start'}">
-                        <div
-                            class="max-w-md rounded-2xl px-4 py-2.5 text-sm shadow-xs {isSelf
-                                ? 'bg-indigo-600 text-white rounded-br-none'
-                                : 'bg-white text-slate-900 border border-slate-200 rounded-bl-none'}"
-                        >
-                            <p class="leading-relaxed break-words">
-                                {#if msg.plaintext != null}
-                                    {msg.plaintext}
-                                {:else if msg.decryptError}
-                                    <span class="italic opacity-70">Tidak dapat didekripsi</span>
-                                {:else}
-                                    <span class="italic opacity-70">Mendekripsi...</span>
-                                {/if}
-                            </p>
-
-                            {#if msg.attachments?.length}
-                                <div class="mt-2 space-y-1">
-                                    {#each msg.attachments as att (att.id)}
-                                        <button
-                                            type="button"
-                                            class="inline-flex items-center gap-1.5 text-xs underline underline-offset-2 {isSelf ? 'text-indigo-100 hover:text-white' : 'text-indigo-600 hover:text-indigo-800'}"
-                                            on:click={() => handleDownloadAttachment(att)}
-                                        >
-                                            Download
-                                        </button>
-                                    {/each}
-                                </div>
-                            {/if}
-                            <div class="flex items-center justify-end gap-1.5 mt-1 text-[10px] {isSelf ? 'text-indigo-200' : 'text-slate-400'}">
-                                <span>
-                                    {new Date(msg.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                </span>
-                                {#if isSelf}
-                                    {#if msg.status === 'sending'}
-                                        <div class="w-2.5 h-2.5 border border-indigo-200 border-t-transparent rounded-full animate-spin"></div>
-                                    {:else if msg.status === 'failed'}
-                                        <span class="text-rose-300 font-bold" title="Gagal terkirim">!</span>
-                                    {:else if msg.status === 'read'}
-                                        <span class="text-emerald-300 font-bold" title="Dibaca">✓✓</span>
-                                    {:else}
-                                        <span title="Terkirim">✓</span>
-                                    {/if}
-                                {/if}
-                            </div>
-                        </div>
-                    </div>
+                    <MessageItem
+                        {msg}
+                        {isSelf}
+                        e2eeReady={e2eeStatus === 'ready'}
+                        isBusy={mutatingMessageId === msg.id}
+                        on:edit={handleEditMessage}
+                        on:delete={handleDeleteMessage}
+                        on:download={(e) => handleDownloadAttachment(e.detail.attachment)}
+                    />
                 {/each}
             {/if}
         </div>

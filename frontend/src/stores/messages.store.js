@@ -1,8 +1,18 @@
-import { writable, get } from 'svelte/store';
-import { listMessages, sendMessage as apiSendMessage, sendReceipt } from '../services/api/messages.api.js';
-import { sendEncryptedMessage, markMessageDelivered, markMessageRead } from '../services/socket/client.js';
+import { writable } from 'svelte/store';
+import {
+  listMessages,
+  sendMessage as apiSendMessage,
+  updateMessage as apiUpdateMessage,
+  deleteMessage as apiDeleteMessage
+} from '../services/api/messages.api.js';
+import {
+  sendEncryptedMessage,
+  editEncryptedMessage,
+  deleteEncryptedMessage,
+  markMessageDelivered
+} from '../services/socket/client.js';
 import { registerSocketListeners } from '../services/socket/handlers.js';
-import { decryptMessage } from '../services/crypto/message-crypto.js';
+import { encryptMessage, decryptMessage } from '../services/crypto/message-crypto.js';
 import { conversationsStore } from './conversations.store.js';
 import logger from '../lib/logger.js';
 
@@ -19,25 +29,37 @@ import logger from '../lib/logger.js';
  * @property {'sending' | 'sent' | 'delivered' | 'read' | 'failed'} [status]
  * @property {string} [client_message_id]
  * @property {string} created_at
- * @property {string} [updated_at]
+ * @property {string | null} [updated_at]
+ * @property {string | null} [edited_at]
  * @property {string | null} [deleted_at]
+ * @property {any[]} [attachments]
  */
 
 /**
  * Normalise server/socket messages (camelCase) to the shape the UI uses.
  * @param {any} message
- * @param {string} conversationId
+ * @param {string} [conversationId]
  * @returns {any}
  */
 function normalizeMessage(message, conversationId) {
+  const editedAt =
+    message.edited_at ||
+    message.editedAt ||
+    message.updated_at ||
+    message.updatedAt ||
+    null;
+
   const normalized = {
     ...message,
+    id: message.id || message.messageId || message.message_id,
     conversation_id: message.conversation_id || message.conversationId || conversationId,
     sender_id: message.sender_id || message.senderId,
     body_ciphertext: message.body_ciphertext || message.bodyCiphertext,
     client_message_id: message.client_message_id || message.clientMessageId,
     created_at: message.created_at || message.createdAt,
-    updated_at: message.updated_at || message.updatedAt
+    updated_at: editedAt,
+    edited_at: editedAt,
+    deleted_at: message.deleted_at || message.deletedAt || null
   };
 
   // Only set when present so an update response does not wipe known attachments.
@@ -97,13 +119,13 @@ function createMessagesStore() {
       }
     },
     onMessageUpdated: (payload) => {
-      const updated = payload?.message;
-      if (updated) {
+      const updated = payload?.message || payload;
+      if (updated && (updated.id || updated.messageId || updated.message_id)) {
         messagesStore.handleMessageUpdated(updated);
       }
     },
     onMessageDeleted: (payload) => {
-      const messageId = payload?.messageId;
+      const messageId = payload?.messageId || payload?.message_id;
       if (messageId) {
         messagesStore.handleMessageDeleted(messageId);
       }
@@ -147,9 +169,16 @@ function createMessagesStore() {
         const res = await listMessages(conversationId, { limit: 50 });
         const list = Array.isArray(res) ? res : res?.messages || [];
 
+        // Backend returns DESC by created_at; display chronologically (oldest -> newest)
+        const ordered = [...list].sort(
+          (a, b) =>
+            new Date(a.created_at || a.createdAt || 0).getTime() -
+            new Date(b.created_at || b.createdAt || 0).getTime()
+        );
+
         /** @type {MessageItem[]} */
         const formatted = await Promise.all(
-          list.map(async (raw) => {
+          ordered.map(async (raw) => {
             const message = normalizeMessage(raw, conversationId);
             const decrypted = await decryptPayload(
               conversationId,
@@ -243,6 +272,12 @@ function createMessagesStore() {
           clientMessageId
         });
 
+        if (socketRes?.error && !socketRes?.disconnected) {
+          const error = /** @type {any} */ (new Error(socketRes.error));
+          error.code = socketRes.code;
+          throw error;
+        }
+
         const serverMessage = socketRes?.message;
 
         if (serverMessage) {
@@ -299,6 +334,136 @@ function createMessagesStore() {
             messagesByConversation: { ...s.messagesByConversation, [conversationId]: failed }
           };
         });
+        throw err;
+      }
+    },
+
+    /**
+     * Edit an existing message owned by the current user (FR-11, AC-07, AC-09).
+     * Re-encrypts with a fresh AES-GCM nonce if plaintext is provided, or accepts
+     * pre-encrypted { bodyCiphertext, nonce, plaintextPreview }.
+     *
+     * @param {string} conversationId
+     * @param {string} messageId
+     * @param {{
+     *   plaintext?: string,
+     *   bodyCiphertext?: string,
+     *   nonce?: string,
+     *   plaintextPreview?: string
+     * }} params
+     */
+    editMessage: async (conversationId, messageId, params) => {
+      if (!conversationId || !messageId) {
+        throw new Error('conversationId dan messageId diperlukan untuk mengedit pesan.');
+      }
+
+      let bodyCiphertext = params?.bodyCiphertext;
+      let nonce = params?.nonce;
+      const preview = params?.plaintextPreview ?? params?.plaintext ?? null;
+
+      if (!bodyCiphertext || !nonce) {
+        if (!params?.plaintext || !params.plaintext.trim()) {
+          throw new Error('Isi pesan baru tidak boleh kosong.');
+        }
+        const encrypted = await encryptMessage(conversationId, params.plaintext.trim());
+        bodyCiphertext = encrypted.bodyCiphertext;
+        nonce = encrypted.nonce;
+      }
+
+      try {
+        const socketRes = await editEncryptedMessage({
+          messageId,
+          bodyCiphertext,
+          nonce
+        });
+
+        if (socketRes?.error && !socketRes?.disconnected) {
+          const error = /** @type {any} */ (new Error(socketRes.error));
+          error.code = socketRes.code;
+          throw error;
+        }
+
+        let serverMessage = socketRes?.message;
+
+        if (!serverMessage) {
+          const restRes = await apiUpdateMessage(messageId, {
+            bodyCiphertext,
+            nonce
+          });
+          serverMessage = restRes?.message || restRes;
+        }
+
+        const confirmed = normalizeMessage(
+          serverMessage || {
+            id: messageId,
+            conversationId,
+            bodyCiphertext,
+            nonce,
+            editedAt: new Date().toISOString()
+          },
+          conversationId
+        );
+
+        const editedIso = confirmed.edited_at || new Date().toISOString();
+
+        update((s) => {
+          const list = s.messagesByConversation[conversationId] || [];
+          const updatedList = list.map((m) =>
+            m.id === messageId
+              ? {
+                  ...m,
+                  ...confirmed,
+                  plaintext: preview !== null ? preview.trim() : m.plaintext,
+                  decryptError: false,
+                  edited_at: editedIso,
+                  updated_at: editedIso
+                }
+              : m
+          );
+          return {
+            ...s,
+            messagesByConversation: {
+              ...s.messagesByConversation,
+              [conversationId]: updatedList
+            }
+          };
+        });
+
+        return confirmed;
+      } catch (err) {
+        logger.error('Edit message failed', err);
+        throw err;
+      }
+    },
+
+    /**
+     * Soft-delete an existing message owned by the current user (FR-12, RB-05, AC-08, AC-09).
+     *
+     * @param {string} conversationId
+     * @param {string} messageId
+     */
+    deleteMessage: async (conversationId, messageId) => {
+      if (!conversationId || !messageId) {
+        throw new Error('conversationId dan messageId diperlukan untuk menghapus pesan.');
+      }
+
+      try {
+        const socketRes = await deleteEncryptedMessage({ messageId });
+
+        if (socketRes?.error && !socketRes?.disconnected) {
+          const error = /** @type {any} */ (new Error(socketRes.error));
+          error.code = socketRes.code;
+          throw error;
+        }
+
+        if (socketRes?.disconnected || !socketRes?.success) {
+          await apiDeleteMessage(messageId);
+        }
+
+        // Remove from local state so original body is never shown after deletion (RB-05, AC-08)
+        messagesStore.handleMessageDeleted(messageId);
+      } catch (err) {
+        logger.error('Delete message failed', err);
         throw err;
       }
     },
@@ -397,53 +562,74 @@ function createMessagesStore() {
      * @param {any} updatedMessage
      */
     handleMessageUpdated: (updatedMessage) => {
-      const convId = updatedMessage.conversation_id || updatedMessage.conversationId;
-      if (!convId) return;
+      const targetId = updatedMessage.id || updatedMessage.messageId || updatedMessage.message_id;
+      if (!targetId) return;
 
-      const normalized = normalizeMessage(updatedMessage, convId);
+      let resolvedConvId = updatedMessage.conversation_id || updatedMessage.conversationId;
 
       update((s) => {
-        const list = s.messagesByConversation[convId] || [];
+        if (!resolvedConvId) {
+          for (const [cId, list] of Object.entries(s.messagesByConversation)) {
+            if (list.some((m) => m.id === targetId)) {
+              resolvedConvId = cId;
+              break;
+            }
+          }
+        }
+        if (!resolvedConvId) return s;
+
+        const normalized = normalizeMessage(updatedMessage, resolvedConvId);
+        const editedIso = normalized.edited_at || new Date().toISOString();
+        const list = s.messagesByConversation[resolvedConvId] || [];
         const updated = list.map((m) =>
-          m.id === normalized.id ? { ...m, ...normalized } : m
+          m.id === targetId
+            ? {
+                ...m,
+                ...normalized,
+                edited_at: editedIso,
+                updated_at: editedIso
+              }
+            : m
         );
         return {
           ...s,
-          messagesByConversation: { ...s.messagesByConversation, [convId]: updated }
+          messagesByConversation: { ...s.messagesByConversation, [resolvedConvId]: updated }
         };
       });
 
-      if (normalized.id) {
-        decryptPayload(convId, normalized.body_ciphertext, normalized.nonce)
-          .then((decrypted) => {
-            update((s) => {
-              const list = s.messagesByConversation[convId] || [];
-              return {
-                ...s,
-                messagesByConversation: {
-                  ...s.messagesByConversation,
-                  [convId]: list.map((m) => (m.id === normalized.id ? { ...m, ...decrypted } : m))
-                }
-              };
-            });
-          })
-          .catch(() => {
-            update((s) => {
-              const list = s.messagesByConversation[convId] || [];
-              return {
-                ...s,
-                messagesByConversation: {
-                  ...s.messagesByConversation,
-                  [convId]: list.map((m) =>
-                    m.id === normalized.id
-                      ? { ...m, plaintext: null, decryptError: true }
-                      : m
-                  )
-                }
-              };
-            });
+      if (!resolvedConvId) return;
+      const convId = resolvedConvId;
+      const normalized = normalizeMessage(updatedMessage, convId);
+
+      decryptPayload(convId, normalized.body_ciphertext, normalized.nonce)
+        .then((decrypted) => {
+          update((s) => {
+            const list = s.messagesByConversation[convId] || [];
+            return {
+              ...s,
+              messagesByConversation: {
+                ...s.messagesByConversation,
+                [convId]: list.map((m) => (m.id === targetId ? { ...m, ...decrypted } : m))
+              }
+            };
           });
-      }
+        })
+        .catch(() => {
+          update((s) => {
+            const list = s.messagesByConversation[convId] || [];
+            return {
+              ...s,
+              messagesByConversation: {
+                ...s.messagesByConversation,
+                [convId]: list.map((m) =>
+                  m.id === targetId
+                    ? { ...m, plaintext: null, decryptError: true }
+                    : m
+                )
+              }
+            };
+          });
+        });
     },
 
     /**
@@ -475,7 +661,8 @@ function createMessagesStore() {
     },
 
     /**
-     * Handle deleted message.
+     * Handle deleted message (RB-05, AC-08).
+     * Removes the soft-deleted message so its original body is never displayed.
      * @param {string} messageId
      */
     handleMessageDeleted: (messageId) => {

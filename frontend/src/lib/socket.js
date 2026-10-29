@@ -3,6 +3,8 @@ import {
   joinConversation,
   leaveConversation,
   sendEncryptedMessage,
+  editEncryptedMessage,
+  deleteEncryptedMessage,
   markMessageDelivered,
   markMessageRead
 } from '../services/socket/client.js';
@@ -17,6 +19,8 @@ export {
   joinConversation,
   leaveConversation,
   sendEncryptedMessage,
+  editEncryptedMessage,
+  deleteEncryptedMessage,
   markMessageDelivered,
   markMessageRead
 };

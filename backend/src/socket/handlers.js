@@ -80,7 +80,10 @@ export function registerHandlers(socket, io) {
 
   socket.on(events.MESSAGE_EDIT, async (data, callback) => {
     try {
-      const { messageId, bodyCiphertext, nonce } = data || {};
+      const messageId = data?.messageId || data?.message_id;
+      const bodyCiphertext = data?.bodyCiphertext || data?.newCiphertext || data?.new_ciphertext;
+      const nonce = data?.nonce;
+
       if (!messageId || !bodyCiphertext || !nonce) {
         if (callback) callback({ error: 'Missing required parameters' });
         return;
@@ -97,7 +100,14 @@ export function registerHandlers(socket, io) {
         nonce,
       });
 
-      const payload = { message };
+      const payload = {
+        message,
+        messageId: message.id,
+        conversationId: existing.conversation_id,
+        bodyCiphertext: message.bodyCiphertext,
+        nonce: message.nonce,
+        updatedAt: message.editedAt,
+      };
       io.to(rooms.conversationRoom(existing.conversation_id)).emit(events.MESSAGE_UPDATED, payload);
 
       if (callback) callback({ success: true, message });
@@ -109,7 +119,7 @@ export function registerHandlers(socket, io) {
 
   socket.on(events.MESSAGE_DELETE, async (data, callback) => {
     try {
-      const { messageId } = data || {};
+      const messageId = data?.messageId || data?.message_id;
       if (!messageId) {
         if (callback) callback({ error: 'messageId is required' });
         return;
@@ -121,13 +131,15 @@ export function registerHandlers(socket, io) {
         return;
       }
 
-      await messagesService.remove(userId, messageId);
+      const deleted = await messagesService.remove(userId, messageId);
 
       io.to(rooms.conversationRoom(existing.conversation_id)).emit(events.MESSAGE_DELETED, {
-        messageId,
+        messageId: deleted.messageId,
+        conversationId: deleted.conversationId,
+        deletedAt: deleted.deletedAt,
       });
 
-      if (callback) callback({ success: true });
+      if (callback) callback({ success: true, deletedAt: deleted.deletedAt });
     } catch (err) {
       logger.error('Error in message:delete', { message: err.message });
       if (callback) callback({ error: err.message, code: err.code });
