@@ -1,16 +1,23 @@
+const getEnvValue = (name) => {
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[name] !== undefined) {
+    return import.meta.env[name];
+  }
+
+  return undefined;
+};
+
 /**
  * @param {string} name
  */
 const requiredEnv = (name) => {
-  const value = import.meta.env[name];
-  if (!value || value.trim() === '') {
-      throw new Error(
-        `Environment variable ${name} belum dikonfigurasi`
-      );
-    }
+  const value = getEnvValue(name);
+  if (!value || String(value).trim() === '') {
+    throw new Error(
+      `Environment variable ${name} belum dikonfigurasi`
+    );
+  }
 
-    return value.trim();
-
+  return String(value).trim();
 }
 
 /**
@@ -18,7 +25,7 @@ const requiredEnv = (name) => {
  * @param {number} defaultValue
 */
 function positiveIntegerEnv(name, defaultValue) {
-  const value = import.meta.env[name];
+  const value = getEnvValue(name);
 
   if (!value) {
     return defaultValue;
@@ -35,7 +42,7 @@ function positiveIntegerEnv(name, defaultValue) {
   return parsed;
 }
 
-const validateEnvironment = () =>  {
+const validateEnvironment = () => {
   const appEnv = requiredEnv('VITE_APP_ENV');
 
   const allowedEnvironments = [

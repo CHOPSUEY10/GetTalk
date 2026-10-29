@@ -119,9 +119,17 @@
             </div>
 
             <div>
-                <label for="password" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
-                    Password
-                </label>
+                <div class="flex items-center justify-between mb-1.5">
+                    <label for="password" class="block text-xs font-semibold uppercase tracking-wider text-slate-600">
+                        Password
+                    </label>
+                    <a
+                        href="#/forgot-password"
+                        class="text-xs font-medium text-indigo-600 hover:text-indigo-700 hover:underline"
+                    >
+                        Lupa kata sandi?
+                    </a>
+                </div>
                 <div class="relative rounded-xl shadow-sm">
                     <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
                         <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
