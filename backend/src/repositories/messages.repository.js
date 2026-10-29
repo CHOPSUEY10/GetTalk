@@ -72,8 +72,12 @@ export async function update(messageId, { bodyCiphertext, nonce }) {
      SET body_ciphertext = $1, nonce = $2, edited_at = NOW()
      WHERE id = $3 AND deleted_at IS NULL
      RETURNING id,
+               conversation_id AS "conversationId",
+               sender_id AS "senderId",
                body_ciphertext AS "bodyCiphertext",
                nonce,
+               client_message_id AS "clientMessageId",
+               created_at AS "createdAt",
                edited_at AS "editedAt"`,
     [bodyCiphertext, nonce, messageId]
   );
@@ -81,8 +85,14 @@ export async function update(messageId, { bodyCiphertext, nonce }) {
 }
 
 export async function softDelete(messageId) {
-  await query(
-    'UPDATE messages SET deleted_at = NOW() WHERE id = $1',
+  const result = await query(
+    `UPDATE messages
+     SET deleted_at = NOW()
+     WHERE id = $1
+     RETURNING id,
+               conversation_id AS "conversationId",
+               deleted_at AS "deletedAt"`,
     [messageId]
   );
+  return result.rows[0] || null;
 }

@@ -5,8 +5,8 @@ import * as events from './events.js';
  * Register incoming socket event listeners.
  * @param {{
  *   onNewMessage?: (payload: { message: any }) => void,
- *   onMessageUpdated?: (payload: { message: any }) => void,
- *   onMessageDeleted?: (payload: { messageId: string }) => void,
+ *   onMessageUpdated?: (payload: { message?: any, messageId?: string, message_id?: string, conversationId?: string, bodyCiphertext?: string, nonce?: string, updatedAt?: string }) => void,
+ *   onMessageDeleted?: (payload: { messageId?: string, message_id?: string, conversationId?: string, deletedAt?: string }) => void,
  *   onMessageDelivered?: (payload: { messageId: string }) => void,
  *   onMessageRead?: (payload: { messageId: string }) => void,
  *   onAttachmentNew?: (payload: { attachment: any }) => void,

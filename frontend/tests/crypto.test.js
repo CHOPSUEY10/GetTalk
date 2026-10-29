@@ -48,6 +48,37 @@ describe('E2EE message crypto (issues #10, #12)', () => {
     );
   });
 
+  test('editing a message produces a fresh unique nonce and decrypts to the updated plaintext (FR-11, NFR-07)', async () => {
+    const alice = await generateKeyPair();
+    const bob = await generateKeyPair();
+    const conversationId = nextConversation();
+
+    await establishConversationKey(
+      conversationId,
+      alice.privateKey,
+      await exportPublicKeyBase64(bob.publicKey),
+      'bob-fingerprint'
+    );
+    const initial = await encryptMessage(conversationId, 'pesan awal');
+    const edited = await encryptMessage(conversationId, 'pesan setelah diedit');
+
+    // Nonce must never be reused across encryptions under the same key (NFR-07)
+    assert.notEqual(initial.nonce, edited.nonce);
+    assert.notEqual(initial.bodyCiphertext, edited.bodyCiphertext);
+
+    await establishConversationKey(
+      conversationId,
+      bob.privateKey,
+      await exportPublicKeyBase64(alice.publicKey),
+      'alice-fingerprint'
+    );
+
+    assert.equal(
+      await decryptMessage(conversationId, edited.bodyCiphertext, edited.nonce),
+      'pesan setelah diedit'
+    );
+  });
+
   test('refuses to encrypt before a key is established (no fallback)', async () => {
     await assert.rejects(
       encryptMessage(nextConversation(), 'plaintext must not leak'),

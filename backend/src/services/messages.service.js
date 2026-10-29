@@ -1,6 +1,7 @@
 import * as messagesRepo from '../repositories/messages.repository.js';
 import * as convRepo from '../repositories/conversations.repository.js';
 import * as receiptsRepo from '../repositories/receipts.repository.js';
+import * as securityEventsRepo from '../repositories/security-events.repository.js';
 import AppError from '../errors/AppError.js';
 import {
   FORBIDDEN,
@@ -59,13 +60,31 @@ export async function update(userId, messageId, { bodyCiphertext, nonce }) {
     throw new AppError('Message not found', 404, MESSAGE_NOT_FOUND);
   }
   if (msg.sender_id !== userId) {
+    await securityEventsRepo.create({
+      userId,
+      eventType: 'MESSAGE_EDIT_FORBIDDEN',
+      metadata: { messageId, conversationId: msg.conversation_id },
+    });
     throw new AppError('Cannot edit another user\'s message', 403, NOT_MESSAGE_OWNER);
   }
+
+  const isMember = await convRepo.isMember(userId, msg.conversation_id);
+  if (!isMember) {
+    throw new AppError('Not a member of this conversation', 403, NOT_CONVERSATION_MEMBER);
+  }
+
   if (!bodyCiphertext || !nonce) {
     throw new AppError('bodyCiphertext and nonce are required', 400, VALIDATION_ERROR);
   }
 
-  return messagesRepo.update(messageId, { bodyCiphertext, nonce });
+  const updated = await messagesRepo.update(messageId, { bodyCiphertext, nonce });
+  await securityEventsRepo.create({
+    userId,
+    eventType: 'MESSAGE_EDITED',
+    metadata: { messageId, conversationId: msg.conversation_id },
+  });
+
+  return updated;
 }
 
 export async function remove(userId, messageId) {
@@ -74,10 +93,31 @@ export async function remove(userId, messageId) {
     throw new AppError('Message not found', 404, MESSAGE_NOT_FOUND);
   }
   if (msg.sender_id !== userId) {
+    await securityEventsRepo.create({
+      userId,
+      eventType: 'MESSAGE_DELETE_FORBIDDEN',
+      metadata: { messageId, conversationId: msg.conversation_id },
+    });
     throw new AppError('Cannot delete another user\'s message', 403, NOT_MESSAGE_OWNER);
   }
 
-  await messagesRepo.softDelete(messageId);
+  const isMember = await convRepo.isMember(userId, msg.conversation_id);
+  if (!isMember) {
+    throw new AppError('Not a member of this conversation', 403, NOT_CONVERSATION_MEMBER);
+  }
+
+  const deleted = await messagesRepo.softDelete(messageId);
+  await securityEventsRepo.create({
+    userId,
+    eventType: 'MESSAGE_DELETED',
+    metadata: { messageId, conversationId: msg.conversation_id },
+  });
+
+  return {
+    messageId,
+    conversationId: msg.conversation_id,
+    deletedAt: deleted?.deletedAt || new Date().toISOString(),
+  };
 }
 
 export async function markReceipt(userId, messageId, status) {

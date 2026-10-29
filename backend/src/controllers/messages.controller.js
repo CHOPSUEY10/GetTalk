@@ -1,4 +1,6 @@
 import * as messagesService from '../services/messages.service.js';
+import * as events from '../socket/events.js';
+import * as rooms from '../socket/rooms.js';
 
 export async function list(req, res, next) {
   try {
@@ -24,6 +26,11 @@ export async function create(req, res, next) {
       clientMessageId,
     });
 
+    const io = req.app.get('io');
+    if (io) {
+      io.to(rooms.conversationRoom(conversationId)).emit(events.MESSAGE_NEW, { message });
+    }
+
     return res.status(201).json({ message });
   } catch (err) {
     return next(err);
@@ -40,6 +47,18 @@ export async function update(req, res, next) {
       nonce,
     });
 
+    const io = req.app.get('io');
+    if (io && message?.conversationId) {
+      io.to(rooms.conversationRoom(message.conversationId)).emit(events.MESSAGE_UPDATED, {
+        message,
+        messageId: message.id,
+        conversationId: message.conversationId,
+        bodyCiphertext: message.bodyCiphertext,
+        nonce: message.nonce,
+        updatedAt: message.editedAt,
+      });
+    }
+
     return res.json({ message });
   } catch (err) {
     return next(err);
@@ -49,7 +68,17 @@ export async function update(req, res, next) {
 export async function remove(req, res, next) {
   try {
     const { messageId } = req.params;
-    await messagesService.remove(req.user.id, messageId);
+    const deleted = await messagesService.remove(req.user.id, messageId);
+
+    const io = req.app.get('io');
+    if (io && deleted?.conversationId) {
+      io.to(rooms.conversationRoom(deleted.conversationId)).emit(events.MESSAGE_DELETED, {
+        messageId: deleted.messageId,
+        conversationId: deleted.conversationId,
+        deletedAt: deleted.deletedAt,
+      });
+    }
+
     return res.status(204).send();
   } catch (err) {
     return next(err);

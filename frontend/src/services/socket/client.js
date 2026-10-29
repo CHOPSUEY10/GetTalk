@@ -42,16 +42,52 @@ export function leaveConversation(conversationId) {
 /**
  * Send encrypted message payload to server room.
  * @param {{ conversationId: string, bodyCiphertext: string, nonce: string, clientMessageId?: string }} payload
- * @returns {Promise<{ success?: boolean, message?: any, error?: string }>}
+ * @returns {Promise<{ success?: boolean, message?: any, error?: string, code?: string, disconnected?: boolean }>}
  */
 export function sendEncryptedMessage(payload) {
   return new Promise((resolve) => {
     if (!socket.connected) {
-      resolve({ error: 'Socket is not connected' });
+      resolve({ error: 'Socket is not connected', disconnected: true });
       return;
     }
 
     socket.emit(events.MESSAGE_SEND, payload, (response) => {
+      resolve(response || { success: true });
+    });
+  });
+}
+
+/**
+ * Edit an existing message via Socket.IO (FR-11).
+ * @param {{ messageId: string, bodyCiphertext: string, nonce: string }} payload
+ * @returns {Promise<{ success?: boolean, message?: any, error?: string, code?: string, disconnected?: boolean }>}
+ */
+export function editEncryptedMessage(payload) {
+  return new Promise((resolve) => {
+    if (!socket.connected) {
+      resolve({ error: 'Socket is not connected', disconnected: true });
+      return;
+    }
+
+    socket.emit(events.MESSAGE_EDIT, payload, (response) => {
+      resolve(response || { success: true });
+    });
+  });
+}
+
+/**
+ * Soft-delete an existing message via Socket.IO (FR-12).
+ * @param {{ messageId: string }} payload
+ * @returns {Promise<{ success?: boolean, deletedAt?: string, error?: string, code?: string, disconnected?: boolean }>}
+ */
+export function deleteEncryptedMessage(payload) {
+  return new Promise((resolve) => {
+    if (!socket.connected) {
+      resolve({ error: 'Socket is not connected', disconnected: true });
+      return;
+    }
+
+    socket.emit(events.MESSAGE_DELETE, payload, (response) => {
       resolve(response || { success: true });
     });
   });
