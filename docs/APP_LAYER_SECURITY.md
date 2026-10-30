@@ -7,7 +7,12 @@ aturan jaringan, atau konfigurasi server live.
 
 ## Kontrol yang diterapkan
 
-- CORS tetap membatasi origin sesuai `CORS_ORIGIN`.
+- CORS memvalidasi daftar `CORS_ORIGIN` melalui `backend/src/config/cors.js`:
+  menolak wildcard (`*`) saat `credentials: true`, memastikan protokol valid
+  (`http://` atau `https://`), memvalidasi origin yang masuk terhadap allowlist
+  multi-origin, hanya memberikan `Access-Control-Allow-Credentials: true` pada
+  origin sah, serta mengizinkan header kustom E2EE (`X-Message-Id`,
+  `X-Metadata-Ciphertext`, `X-Metadata-Nonce`) pada preflight (`OPTIONS`).
 - Header respons menetapkan `nosniff`, mencegah framing, membatasi referrer,
   serta menonaktifkan akses kamera, mikrofon, dan geolokasi.
 - Header `X-Powered-By` dinonaktifkan.

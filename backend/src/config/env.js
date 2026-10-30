@@ -64,6 +64,10 @@ function validateEnvironment() {
   const host = requiredEnv('HOST');
   const port = positiveIntegerEnv('PORT', 3000);
   const corsOrigin = requiredEnv('CORS_ORIGIN');
+  const corsOrigins = corsOrigin
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
   const databaseUrl = requiredEnv('DATABASE_URL');
   const sessionSecret = requiredEnv('SESSION_SECRET');
   const mfaEncryptionKey = process.env.MFA_ENCRYPTION_KEY?.trim() || sessionSecret;
@@ -91,6 +95,7 @@ function validateEnvironment() {
     host,
     port,
     corsOrigin,
+    corsOrigins,
     databaseUrl,
     sessionSecret,
     mfaEncryptionKey,

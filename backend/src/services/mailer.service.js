@@ -1,6 +1,8 @@
 import nodemailer from 'nodemailer';
 import env from '../config/env.js';
 import logger from '../utils/logger.js';
+import AppError from '../errors/AppError.js';
+import { INTERNAL_ERROR, VALIDATION_ERROR } from '../errors/error-codes.js';
 
 /**
  * Mailer Service for password reset OTP and notifications.
@@ -86,16 +88,32 @@ async function getTransporter() {
   }
 
   logger.error('SMTP_HOST, SMTP_USER, atau SMTP_PASS belum dikonfigurasi di environment');
-  return null;
+  throw new AppError(
+    'Layanan pengiriman email belum dikonfigurasi',
+    500,
+    INTERNAL_ERROR
+  );
 }
 
 /**
  * Send password reset email with 6-digit OTP.
  * @param {{ email: string, token: string }} param0
  */
-export async function sendPasswordResetEmail({ email, token }) {
-  const verifyUrl = `${env.corsOrigin}/#/forgot-password/verify?email=${encodeURIComponent(email)}`;
-  const resetUrl = `${env.corsOrigin}/#/reset-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`;
+export async function sendPasswordResetEmail({ email, token } = {}) {
+  if (!email || typeof email !== 'string' || !email.trim()) {
+    throw new AppError('Email penerima wajib diisi', 400, VALIDATION_ERROR);
+  }
+
+  if (!token || typeof token !== 'string' || !token.trim()) {
+    throw new AppError('Kode OTP wajib diisi', 400, VALIDATION_ERROR);
+  }
+
+  const primaryOrigin =
+    Array.isArray(env.corsOrigins) && env.corsOrigins.length > 0
+      ? env.corsOrigins[0]
+      : env.corsOrigin;
+  const verifyUrl = `${primaryOrigin}/#/forgot-password/verify?email=${encodeURIComponent(email)}`;
+  const resetUrl = `${primaryOrigin}/#/reset-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`;
 
   // Store in memory for non-production test assertions
   if (env.nodeEnv !== 'production') {
@@ -111,7 +129,7 @@ export async function sendPasswordResetEmail({ email, token }) {
   const transportInfo = await getTransporter();
   if (transportInfo) {
     const { transporter, isEthereal } = transportInfo;
-    const isLocalhostOrigin = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(env.corsOrigin);
+    const isLocalhostOrigin = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(primaryOrigin);
     try {
       const info = await transporter.sendMail({
         from: env.smtpFrom,
@@ -173,6 +191,16 @@ export async function sendPasswordResetEmail({ email, token }) {
         recipient: maskEmail(email),
         error: err.message,
       });
+
+      if (err instanceof AppError) {
+        throw err;
+      }
+
+      throw new AppError(
+        'Gagal mengirim email kode OTP pemulihan kata sandi',
+        500,
+        INTERNAL_ERROR
+      );
     }
   } else {
     logger.info('Password reset OTP email dispatched (in-memory test sink)', {

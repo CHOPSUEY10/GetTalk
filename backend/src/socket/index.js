@@ -1,15 +1,13 @@
 import { Server } from 'socket.io';
 import { socketAuth } from './middleware.js';
 import { registerHandlers } from './handlers.js';
+import { createCorsOptions } from '../config/cors.js';
 import sessionMiddleware from '../config/session.js';
 import logger from '../utils/logger.js';
 
 export function createSocketServer(httpServer, env) {
   const io = new Server(httpServer, {
-    cors: {
-      origin: env.corsOrigin,
-      credentials: true,
-    },
+    cors: createCorsOptions(env.corsOrigins ?? env.corsOrigin),
   });
 
   // Share session middleware with Socket.IO

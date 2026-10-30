@@ -1,7 +1,7 @@
 import express from 'express';
-import cors from 'cors';
 
 import env from './src/config/env.js';
+import corsMiddleware from './src/config/cors.js';
 import sessionMiddleware from './src/config/session.js';
 import healthRouter from './src/routes/health.route.js';
 import apiRoutes from './src/routes/index.js';
@@ -13,13 +13,7 @@ const app = express();
 
 app.disable('x-powered-by');
 app.use(securityHeaders);
-
-app.use(
-  cors({
-    origin: env.corsOrigin,
-    credentials: true,
-  })
-);
+app.use(corsMiddleware);
 
 app.use(express.json({ limit: '100kb' }));
 app.use(sessionMiddleware);
