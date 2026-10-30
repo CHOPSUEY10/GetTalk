@@ -1,9 +1,11 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import express from 'express';
 import app from '../app.js';
 import { query } from '../src/config/database.js';
 import { closeRedis } from '../src/config/redis.js';
+import { createSecurityHeadersMiddleware } from '../src/middleware/security-headers.middleware.js';
 
 let server;
 let baseUrl;
@@ -40,7 +42,7 @@ describe('Health and System Endpoints', () => {
     assert.equal(body.status, 'running');
   });
 
-  test('responses include security headers and hide the Express signature', async () => {
+  test('responses include security headers (Helmet) and hide the Express signature', async () => {
     const res = await fetch(`${baseUrl}/health`);
 
     assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
@@ -48,6 +50,43 @@ describe('Health and System Endpoints', () => {
     assert.equal(res.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
     assert.equal(res.headers.get('permissions-policy'), 'camera=(), microphone=(), geolocation=()');
     assert.equal(res.headers.get('x-powered-by'), null);
+
+    // Content-Security-Policy must be present and allow WebSocket/Socket.IO & Svelte styles
+    const csp = res.headers.get('content-security-policy');
+    assert.ok(csp, 'content-security-policy header must be present');
+    assert.match(csp, /default-src 'self'/);
+    assert.match(csp, /connect-src[^;]*'self'[^;]*ws:[^;]*wss:/);
+    assert.match(csp, /style-src[^;]*'unsafe-inline'/);
+    assert.match(csp, /frame-ancestors 'none'/);
+    assert.equal(res.headers.get('strict-transport-security'), null);
+  });
+
+  test('Strict-Transport-Security (HSTS) is active in production mode', async () => {
+    const prodApp = express();
+    prodApp.use(
+      createSecurityHeadersMiddleware({
+        nodeEnv: 'production',
+        corsOrigins: ['https://app.gettalk.local'],
+      })
+    );
+    prodApp.get('/health', (_req, r) => r.json({ status: 'ok' }));
+
+    const prodServer = http.createServer(prodApp);
+    await new Promise((resolve) => prodServer.listen(0, '127.0.0.1', resolve));
+    const prodUrl = `http://127.0.0.1:${prodServer.address().port}`;
+
+    try {
+      const prodRes = await fetch(`${prodUrl}/health`);
+      const hsts = prodRes.headers.get('strict-transport-security');
+      assert.ok(hsts, 'strict-transport-security header must be active in production');
+      assert.match(hsts, /max-age=31536000/);
+      assert.match(hsts, /includeSubDomains/);
+
+      const prodCsp = prodRes.headers.get('content-security-policy');
+      assert.match(prodCsp, /wss:\/\/app\.gettalk\.local/);
+    } finally {
+      await new Promise((resolve) => prodServer.close(resolve));
+    }
   });
 
   test('JSON request bodies under 500KB are processed normally', async () => {
