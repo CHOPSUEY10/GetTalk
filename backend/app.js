@@ -15,7 +15,7 @@ app.disable('x-powered-by');
 app.use(securityHeaders);
 app.use(corsMiddleware);
 
-app.use(express.json({ limit: '100kb' }));
+app.use(express.json({ limit: '500kb' }));
 app.use(sessionMiddleware);
 
 app.get('/', (req, res) => {

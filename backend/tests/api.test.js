@@ -50,11 +50,23 @@ describe('Health and System Endpoints', () => {
     assert.equal(res.headers.get('x-powered-by'), null);
   });
 
-  test('oversized JSON request bodies are rejected with 413', async () => {
+  test('JSON request bodies under 500KB are processed normally', async () => {
     const res = await fetch(`${baseUrl}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ padding: 'x'.repeat(110 * 1024) }),
+      body: JSON.stringify({ padding: 'x'.repeat(400 * 1024) }),
+    });
+
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.error.code, 'VALIDATION_ERROR');
+  });
+
+  test('oversized JSON request bodies (> 500KB) are rejected with 413', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ padding: 'x'.repeat(550 * 1024) }),
     });
 
     assert.equal(res.status, 413);
@@ -64,6 +76,17 @@ describe('Health and System Endpoints', () => {
         message: 'Request body too large.',
       },
     });
+  });
+
+  test('encrypted attachment uploads (application/octet-stream) > 500KB are not rejected by JSON limit', async () => {
+    const res = await fetch(`${baseUrl}/api/attachments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: Buffer.alloc(600 * 1024, 0x41),
+    });
+
+    assert.notEqual(res.status, 413);
+    assert.equal(res.status, 401);
   });
 
   test('GET /unknown-route returns 404 with standard error envelope', async () => {
