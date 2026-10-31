@@ -1,6 +1,7 @@
 <script>
     import PublicLayout from "../components/layout/PublicLayout.svelte";
     import { authStore } from "../stores/auth.store.js";
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../errors/pageerror.js";
     import { replace } from "svelte-spa-router";
 
     let email = "";
@@ -15,7 +16,7 @@
 
     const handleLogin = async () => {
         if (!email.trim() || !password) {
-            localError = "Silakan masukkan email dan password.";
+            localError = getPageErrorMessage(PAGE_ERROR_CODES.LOGIN_REQUIRED_FIELDS, "login");
             return;
         }
 
@@ -29,8 +30,10 @@
             }
             replace("/");
         } catch (err) {
-            const e = /** @type {any} */ (err);
-            localError = e.message || "Email atau password salah. Silakan coba lagi.";
+            localError = getPageErrorMessage(err, {
+                context: "login",
+                fallbackCode: PAGE_ERROR_CODES.INVALID_CREDENTIALS
+            });
         } finally {
             submitting = false;
         }
@@ -38,7 +41,7 @@
 
     const handleMfaVerify = async () => {
         if (!mfaCode.trim() || !mfaChallengeId) {
-            localError = "Masukkan kode autentikator atau kode pemulihan.";
+            localError = getPageErrorMessage(PAGE_ERROR_CODES.MFA_CODE_REQUIRED, "mfa");
             return;
         }
         localError = null;
@@ -47,8 +50,10 @@
             await authStore.verifyMfa({ challengeId: mfaChallengeId, code: mfaCode.trim() });
             replace("/");
         } catch (err) {
-            const e = /** @type {any} */ (err);
-            localError = e.message || "Kode MFA tidak valid.";
+            localError = getPageErrorMessage(err, {
+                context: "mfa",
+                fallbackCode: PAGE_ERROR_CODES.INVALID_MFA_CODE
+            });
         } finally {
             submitting = false;
         }

@@ -14,7 +14,9 @@ import {
 import { registerSocketListeners } from '../services/socket/handlers.js';
 import { encryptMessage, decryptMessage } from '../services/crypto/message-crypto.js';
 import { conversationsStore } from './conversations.store.js';
-import logger from '../lib/logger.js';
+import { ApiError, API_ERROR_CODES, handleApiError } from '../errors/apierror.js';
+import { ENCRYPTION_ERROR_CODES, EncryptionError } from '../errors/encryptionerror.js';
+import { PAGE_ERROR_CODES, resolvePageError } from '../errors/pageerror.js';
 
 /**
  * @typedef {Object} MessageItem
@@ -26,6 +28,7 @@ import logger from '../lib/logger.js';
  * @property {string} nonce
  * @property {string | null} [plaintext] Decrypted locally; never plaintext from the server
  * @property {boolean} [decryptError]
+ * @property {string | null} [errorCode]
  * @property {'sending' | 'sent' | 'delivered' | 'read' | 'failed'} [status]
  * @property {string} [client_message_id]
  * @property {string} created_at
@@ -76,20 +79,30 @@ function normalizeMessage(message, conversationId) {
  * @param {string} conversationId
  * @param {string | undefined} ciphertext
  * @param {string | undefined} nonce
- * @returns {Promise<{ plaintext: string | null, decryptError: boolean }>}
+ * @returns {Promise<{ plaintext: string | null, decryptError: boolean, errorCode: string | null }>}
  */
 async function decryptPayload(conversationId, ciphertext, nonce) {
   if (!ciphertext || !nonce) {
-    return { plaintext: null, decryptError: true };
+    return {
+      plaintext: null,
+      decryptError: true,
+      errorCode: ENCRYPTION_ERROR_CODES.INVALID_CIPHERTEXT
+    };
   }
 
   try {
     return {
       plaintext: await decryptMessage(conversationId, ciphertext, nonce),
-      decryptError: false
+      decryptError: false,
+      errorCode: null
     };
-  } catch {
-    return { plaintext: null, decryptError: true };
+  } catch (err) {
+    const anyErr = /** @type {any} */ (err);
+    return {
+      plaintext: null,
+      decryptError: true,
+      errorCode: anyErr?.code || ENCRYPTION_ERROR_CODES.DECRYPTION_FAILED
+    };
   }
 }
 
@@ -98,13 +111,15 @@ async function decryptPayload(conversationId, ciphertext, nonce) {
  * @property {Record<string, MessageItem[]>} messagesByConversation
  * @property {Record<string, boolean>} loadingByConversation
  * @property {Record<string, string | null>} errorByConversation
+ * @property {Record<string, string | null>} [errorCodeByConversation]
  */
 
 /** @type {MessagesState} */
 const initialState = {
   messagesByConversation: {},
   loadingByConversation: {},
-  errorByConversation: {}
+  errorByConversation: {},
+  errorCodeByConversation: {}
 };
 
 function createMessagesStore() {
@@ -162,7 +177,8 @@ function createMessagesStore() {
       update((s) => ({
         ...s,
         loadingByConversation: { ...s.loadingByConversation, [conversationId]: true },
-        errorByConversation: { ...s.errorByConversation, [conversationId]: null }
+        errorByConversation: { ...s.errorByConversation, [conversationId]: null },
+        errorCodeByConversation: { ...(s.errorCodeByConversation || {}), [conversationId]: null }
       }));
 
       try {
@@ -204,13 +220,24 @@ function createMessagesStore() {
 
         return formatted;
       } catch (err) {
-        const error = /** @type {any} */ (err);
+        const normalized = handleApiError(err, {
+          endpoint: '/api/conversations/messages',
+          method: 'GET'
+        });
+        const pageErr = resolvePageError(normalized, {
+          context: 'chat',
+          fallbackCode: PAGE_ERROR_CODES.MESSAGE_LOAD_FAILED
+        });
         update((s) => ({
           ...s,
           loadingByConversation: { ...s.loadingByConversation, [conversationId]: false },
           errorByConversation: {
             ...s.errorByConversation,
-            [conversationId]: error.message || 'Gagal memuat pesan'
+            [conversationId]: pageErr.userMessage
+          },
+          errorCodeByConversation: {
+            ...(s.errorCodeByConversation || {}),
+            [conversationId]: pageErr.code
           }
         }));
         return [];
@@ -273,9 +300,11 @@ function createMessagesStore() {
         });
 
         if (socketRes?.error && !socketRes?.disconnected) {
-          const error = /** @type {any} */ (new Error(socketRes.error));
-          error.code = socketRes.code;
-          throw error;
+          throw handleApiError(new Error(socketRes.error), {
+            code: socketRes.code || API_ERROR_CODES.BAD_REQUEST,
+            endpoint: 'socket:message:send',
+            method: 'SOCKET'
+          });
         }
 
         const serverMessage = socketRes?.message;
@@ -320,13 +349,24 @@ function createMessagesStore() {
 
         return confirmed;
       } catch (err) {
-        logger.error('Send message failed', err);
+        const normalized =
+          err instanceof EncryptionError
+            ? err
+            : handleApiError(err, {
+              endpoint: '/api/conversations/messages',
+              method: 'POST'
+            });
+
         // Mark as failed
         update((s) => {
           const list = s.messagesByConversation[conversationId] || [];
           const failed = list.map((m) =>
             m.client_message_id === clientMessageId || m.id === clientMessageId
-              ? { ...m, status: /** @type {MessageItem['status']} */ ('failed') }
+              ? {
+                ...m,
+                status: /** @type {MessageItem['status']} */ ('failed'),
+                errorCode: normalized.code
+              }
               : m
           );
           return {
@@ -334,7 +374,7 @@ function createMessagesStore() {
             messagesByConversation: { ...s.messagesByConversation, [conversationId]: failed }
           };
         });
-        throw err;
+        throw normalized;
       }
     },
 
@@ -354,7 +394,12 @@ function createMessagesStore() {
      */
     editMessage: async (conversationId, messageId, params) => {
       if (!conversationId || !messageId) {
-        throw new Error('conversationId dan messageId diperlukan untuk mengedit pesan.');
+        throw new ApiError({
+          code: API_ERROR_CODES.VALIDATION_ERROR,
+          status: 400,
+          message: 'conversationId and messageId are required to edit a message.',
+          logged: true
+        });
       }
 
       let bodyCiphertext = params?.bodyCiphertext;
@@ -363,7 +408,14 @@ function createMessagesStore() {
 
       if (!bodyCiphertext || !nonce) {
         if (!params?.plaintext || !params.plaintext.trim()) {
-          throw new Error('Isi pesan baru tidak boleh kosong.');
+          const emptyErr = new ApiError({
+            code: API_ERROR_CODES.VALIDATION_ERROR,
+            status: 400,
+            message: 'Message content cannot be empty.',
+            logged: true
+          });
+          emptyErr.code = PAGE_ERROR_CODES.EMPTY_MESSAGE;
+          throw emptyErr;
         }
         const encrypted = await encryptMessage(conversationId, params.plaintext.trim());
         bodyCiphertext = encrypted.bodyCiphertext;
@@ -378,9 +430,11 @@ function createMessagesStore() {
         });
 
         if (socketRes?.error && !socketRes?.disconnected) {
-          const error = /** @type {any} */ (new Error(socketRes.error));
-          error.code = socketRes.code;
-          throw error;
+          throw handleApiError(new Error(socketRes.error), {
+            code: socketRes.code || API_ERROR_CODES.BAD_REQUEST,
+            endpoint: 'socket:message:edit',
+            method: 'SOCKET'
+          });
         }
 
         let serverMessage = socketRes?.message;
@@ -411,13 +465,13 @@ function createMessagesStore() {
           const updatedList = list.map((m) =>
             m.id === messageId
               ? {
-                  ...m,
-                  ...confirmed,
-                  plaintext: preview !== null ? preview.trim() : m.plaintext,
-                  decryptError: false,
-                  edited_at: editedIso,
-                  updated_at: editedIso
-                }
+                ...m,
+                ...confirmed,
+                plaintext: preview !== null ? preview.trim() : m.plaintext,
+                decryptError: false,
+                edited_at: editedIso,
+                updated_at: editedIso
+              }
               : m
           );
           return {
@@ -431,8 +485,13 @@ function createMessagesStore() {
 
         return confirmed;
       } catch (err) {
-        logger.error('Edit message failed', err);
-        throw err;
+        if (err instanceof EncryptionError) {
+          throw err;
+        }
+        throw handleApiError(err, {
+          endpoint: '/api/messages',
+          method: 'PATCH'
+        });
       }
     },
 
@@ -444,16 +503,23 @@ function createMessagesStore() {
      */
     deleteMessage: async (conversationId, messageId) => {
       if (!conversationId || !messageId) {
-        throw new Error('conversationId dan messageId diperlukan untuk menghapus pesan.');
+        throw new ApiError({
+          code: API_ERROR_CODES.VALIDATION_ERROR,
+          status: 400,
+          message: 'conversationId and messageId are required to delete a message.',
+          logged: true
+        });
       }
 
       try {
         const socketRes = await deleteEncryptedMessage({ messageId });
 
         if (socketRes?.error && !socketRes?.disconnected) {
-          const error = /** @type {any} */ (new Error(socketRes.error));
-          error.code = socketRes.code;
-          throw error;
+          throw handleApiError(new Error(socketRes.error), {
+            code: socketRes.code || API_ERROR_CODES.BAD_REQUEST,
+            endpoint: 'socket:message:delete',
+            method: 'SOCKET'
+          });
         }
 
         if (socketRes?.disconnected || !socketRes?.success) {
@@ -463,8 +529,10 @@ function createMessagesStore() {
         // Remove from local state so original body is never shown after deletion (RB-05, AC-08)
         messagesStore.handleMessageDeleted(messageId);
       } catch (err) {
-        logger.error('Delete message failed', err);
-        throw err;
+        throw handleApiError(err, {
+          endpoint: '/api/messages',
+          method: 'DELETE'
+        });
       }
     },
 
@@ -491,7 +559,7 @@ function createMessagesStore() {
         if (alreadyExists) {
           const updated = list.map((m) =>
             m.id === normalized.id ||
-            (normalized.client_message_id && m.client_message_id === normalized.client_message_id)
+              (normalized.client_message_id && m.client_message_id === normalized.client_message_id)
               ? { ...normalized, plaintext: m.plaintext ?? null, decryptError: false }
               : m
           );
@@ -544,7 +612,12 @@ function createMessagesStore() {
                   ...s.messagesByConversation,
                   [convId]: list.map((m) =>
                     m.id === normalized.id
-                      ? { ...m, plaintext: null, decryptError: true }
+                      ? {
+                        ...m,
+                        plaintext: null,
+                        decryptError: true,
+                        errorCode: ENCRYPTION_ERROR_CODES.DECRYPTION_FAILED
+                      }
                       : m
                   )
                 }
@@ -584,11 +657,11 @@ function createMessagesStore() {
         const updated = list.map((m) =>
           m.id === targetId
             ? {
-                ...m,
-                ...normalized,
-                edited_at: editedIso,
-                updated_at: editedIso
-              }
+              ...m,
+              ...normalized,
+              edited_at: editedIso,
+              updated_at: editedIso
+            }
             : m
         );
         return {
@@ -623,7 +696,12 @@ function createMessagesStore() {
                 ...s.messagesByConversation,
                 [convId]: list.map((m) =>
                   m.id === targetId
-                    ? { ...m, plaintext: null, decryptError: true }
+                    ? {
+                      ...m,
+                      plaintext: null,
+                      decryptError: true,
+                      errorCode: ENCRYPTION_ERROR_CODES.DECRYPTION_FAILED
+                    }
                     : m
                 )
               }

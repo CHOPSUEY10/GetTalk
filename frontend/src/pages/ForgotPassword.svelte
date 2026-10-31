@@ -3,6 +3,7 @@
     import { push } from "svelte-spa-router";
     import PublicLayout from "../components/layout/PublicLayout.svelte";
     import { authStore } from "../stores/auth.store.js";
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../errors/pageerror.js";
 
     let email = "";
     /** @type {string | null} */
@@ -19,12 +20,12 @@
     const handleSubmit = async () => {
         const trimmedEmail = email.trim();
         if (!trimmedEmail) {
-            localError = "Silakan masukkan alamat email Anda.";
+            localError = getPageErrorMessage(PAGE_ERROR_CODES.EMAIL_REQUIRED, "forgot-password");
             return;
         }
 
         if (!EMAIL_REGEX.test(trimmedEmail)) {
-            localError = "Format email tidak valid. Masukkan email yang benar.";
+            localError = getPageErrorMessage(PAGE_ERROR_CODES.INVALID_EMAIL_FORMAT, "forgot-password");
             return;
         }
 
@@ -48,8 +49,10 @@
                 }
             }, 1000);
         } catch (err) {
-            const e = /** @type {any} */ (err);
-            localError = e.message || "Gagal mengirimkan kode OTP. Silakan coba lagi nanti.";
+            localError = getPageErrorMessage(err, {
+                context: "forgot-password",
+                fallbackCode: PAGE_ERROR_CODES.OTP_SEND_FAILED
+            });
         } finally {
             isSubmitting = false;
         }

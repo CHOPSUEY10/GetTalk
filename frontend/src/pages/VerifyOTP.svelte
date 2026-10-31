@@ -3,6 +3,7 @@
     import { push } from "svelte-spa-router";
     import PublicLayout from "../components/layout/PublicLayout.svelte";
     import { authStore } from "../stores/auth.store.js";
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../errors/pageerror.js";
 
     let email = "";
     /** @type {string[]} */
@@ -127,12 +128,12 @@
         const otpCode = otpDigits.join("").trim();
 
         if (!email.trim()) {
-            localError = "Alamat email tidak ditemukan. Silakan kembali ke halaman lupa kata sandi.";
+            localError = getPageErrorMessage(PAGE_ERROR_CODES.EMAIL_REQUIRED, "verify-otp");
             return;
         }
 
         if (!/^\d{6}$/.test(otpCode)) {
-            localError = "Silakan masukkan 6 digit angka kode OTP lengkap.";
+            localError = getPageErrorMessage(PAGE_ERROR_CODES.INVALID_OTP_CODE, "verify-otp");
             return;
         }
 
@@ -143,8 +144,10 @@
             const target = `/reset-password?email=${encodeURIComponent(email.trim())}&token=${encodeURIComponent(otpCode)}`;
             push(target);
         } catch (err) {
-            const e = /** @type {any} */ (err);
-            localError = e.message || "Gagal memverifikasi kode OTP. Silakan periksa kembali kode Anda.";
+            localError = getPageErrorMessage(err, {
+                context: "verify-otp",
+                fallbackCode: PAGE_ERROR_CODES.OTP_VERIFY_FAILED
+            });
         } finally {
             isVerifying = false;
         }
@@ -165,8 +168,10 @@
             otpDigits = ["", "", "", "", "", ""];
             inputRefs[0]?.focus();
         } catch (err) {
-            const e = /** @type {any} */ (err);
-            localError = e.message || "Gagal mengirim ulang kode OTP. Silakan coba lagi.";
+            localError = getPageErrorMessage(err, {
+                context: "verify-otp",
+                fallbackCode: PAGE_ERROR_CODES.OTP_SEND_FAILED
+            });
         } finally {
             isResending = false;
         }

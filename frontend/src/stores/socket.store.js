@@ -1,6 +1,8 @@
 import { writable } from 'svelte/store';
 import { socket, joinConversation as apiJoin, leaveConversation as apiLeave } from '../services/socket/client.js';
 import { friendsStore } from './friends.store.js';
+import { API_ERROR_CODES, handleApiError } from '../errors/apierror.js';
+import { getPageErrorMessage } from '../errors/pageerror.js';
 
 /**
  * @typedef {Object} SocketState
@@ -10,6 +12,7 @@ import { friendsStore } from './friends.store.js';
  * @property {string | null} activeConversationId
  * @property {string[]} joinedRooms
  * @property {string | null} error
+ * @property {string | null} [errorCode]
  */
 
 /** @type {SocketState} */
@@ -19,7 +22,8 @@ const initialState = {
   id: null,
   activeConversationId: null,
   joinedRooms: [],
-  error: null
+  error: null,
+  errorCode: null
 };
 
 function createSocketStore() {
@@ -32,7 +36,8 @@ function createSocketStore() {
       status: 'connected',
       connected: true,
       id: socket.id || null,
-      error: null
+      error: null,
+      errorCode: null
     }));
 
     // Register real-time listeners globally so friends and notifications
@@ -49,17 +54,24 @@ function createSocketStore() {
       id: null,
       activeConversationId: null,
       joinedRooms: [],
-      error: null
+      error: null,
+      errorCode: null
     }));
   });
 
   socket.on('connect_error', (err) => {
+    const normalized = handleApiError(err, {
+      code: API_ERROR_CODES.NETWORK_ERROR,
+      endpoint: 'socket:connect',
+      method: 'SOCKET'
+    });
     update((state) => ({
       ...state,
       status: 'error',
       connected: false,
       id: null,
-      error: err?.message || 'Socket connection error'
+      error: getPageErrorMessage(normalized.code),
+      errorCode: normalized.code
     }));
   });
 
@@ -74,7 +86,7 @@ function createSocketStore() {
     subscribe,
     connect: () => {
       if (!socket.connected) {
-        update((state) => ({ ...state, status: 'connecting', error: null }));
+        update((state) => ({ ...state, status: 'connecting', error: null, errorCode: null }));
         socket.connect();
       }
     },
@@ -87,9 +99,16 @@ function createSocketStore() {
     /**
      * Join conversation room
      * @param {string} conversationId
+     * @returns {Promise<{ success?: boolean, error?: string, code?: string }>}
      */
     joinRoom: async (conversationId) => {
-      if (!conversationId) return { error: 'conversationId is required' };
+      if (!conversationId) {
+        return {
+          success: false,
+          error: 'conversationId is required',
+          code: API_ERROR_CODES.VALIDATION_ERROR
+        };
+      }
 
       const res = await apiJoin(conversationId);
       if (res?.success) {

@@ -15,6 +15,10 @@ import { getOrCreateIdentityKeyPair } from './message-crypto.js';
 import { publishIdentityKey, fetchIdentityKey } from '../api/identity-keys.api.js';
 import { storeTrustedFingerprint, getTrustedFingerprint } from './key-store.js';
 import { toBase64Url, fromBase64Url } from './aes-gcm.js';
+import {
+  ENCRYPTION_ERROR_CODES,
+  handleEncryptionError,
+} from '../../errors/encryptionerror.js';
 
 export class IdentityKeyChangedError extends Error {
   /**
@@ -27,9 +31,13 @@ export class IdentityKeyChangedError extends Error {
       `Identity key for ${userId} changed. Verify the new fingerprint before continuing.`
     );
     this.name = 'IdentityKeyChangedError';
+    this.code = ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED;
+    this.category = ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED;
+    this.source = 'encryption';
     this.userId = userId;
     this.previousFingerprint = previousFingerprint;
     this.fingerprint = fingerprint;
+    this.logged = false;
   }
 }
 
@@ -53,7 +61,13 @@ async function fetchPeerIdentityKey(userId) {
   const identityKey = response?.identityKey || response;
 
   if (!identityKey?.publicKey) {
-    throw new Error('Identity key response is missing publicKey');
+    throw handleEncryptionError(
+      new Error('Identity key response is missing publicKey'),
+      {
+        code: ENCRYPTION_ERROR_CODES.KEY_UNAVAILABLE,
+        operation: 'identity-verify',
+      }
+    );
   }
 
   // Recompute locally: the server-provided fingerprint is not trusted.
@@ -78,7 +92,13 @@ export async function getTrustedPeerKey(userId) {
   }
 
   if (pinned !== identityKey.fingerprint) {
-    throw new IdentityKeyChangedError(userId, pinned, identityKey.fingerprint);
+    const changedErr = new IdentityKeyChangedError(userId, pinned, identityKey.fingerprint);
+    handleEncryptionError(changedErr, {
+      code: ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED,
+      operation: 'identity-verify',
+    });
+    changedErr.logged = true;
+    throw changedErr;
   }
 
   return { ...identityKey, trust: 'trusted' };

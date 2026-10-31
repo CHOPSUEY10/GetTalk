@@ -12,8 +12,8 @@
     import { decryptFile, createDownloadUrl } from "../services/crypto/file-crypto.js";
     import { establishConversationSession } from "../services/crypto/conversation-session.js";
     import { IdentityKeyChangedError, acceptChangedPeerKey } from "../services/crypto/identity-trust.js";
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../errors/pageerror.js";
     import { push } from "svelte-spa-router";
-    import logger from "../lib/logger.js";
 
     /** @type {{ conversationId?: string, [key: string]: any }} */
     export let params = {};
@@ -57,7 +57,7 @@
 
         if (!currentUserId || !peerId) {
             e2eeStatus = "error";
-            e2eeError = "Percakapan ini belum mendukung E2EE (lawan bicara tidak ditemukan).";
+            e2eeError = getPageErrorMessage(PAGE_ERROR_CODES.E2EE_PEER_UNAVAILABLE, "e2ee");
         } else {
             try {
                 await establishConversationSession({
@@ -74,12 +74,13 @@
                         previousFingerprint: err.previousFingerprint,
                         fingerprint: err.fingerprint
                     };
-                    e2eeError = "Kunci keamanan lawan bicara berubah. Verifikasi fingerprint sebelum melanjutkan.";
+                    e2eeError = getPageErrorMessage(PAGE_ERROR_CODES.IDENTITY_KEY_CHANGED, "e2ee");
                 } else {
-                    const e = /** @type {any} */ (err);
-                    e2eeError = e?.message || "Gagal menyiapkan sesi E2EE.";
+                    e2eeError = getPageErrorMessage(err, {
+                        context: "e2ee",
+                        fallbackCode: PAGE_ERROR_CODES.KEY_EXCHANGE_FAILED
+                    });
                 }
-                logger.error("E2EE session setup failed", err);
             }
         }
 
@@ -114,7 +115,10 @@
             });
             scrollToBottom();
         } catch (err) {
-            logger.error("Gagal mengirim pesan", err);
+            attachmentError = getPageErrorMessage(err, {
+                context: "send-message",
+                fallbackCode: PAGE_ERROR_CODES.MESSAGE_SEND_FAILED
+            });
         } finally {
             isSending = false;
         }
@@ -127,7 +131,7 @@
     const handleEditMessage = async (e) => {
         const { messageId, plaintext, done } = e.detail;
         if (!conversationId || e2eeStatus !== "ready" || mutatingMessageId) {
-            done?.("Sesi E2EE belum siap atau operasi lain sedang berjalan.");
+            done?.(getPageErrorMessage(PAGE_ERROR_CODES.E2EE_NOT_READY, "edit-message"));
             return;
         }
 
@@ -136,9 +140,12 @@
             await messagesStore.editMessage(conversationId, messageId, { plaintext });
             done?.(null);
         } catch (err) {
-            const error = /** @type {any} */ (err);
-            logger.error("Gagal mengedit pesan", error);
-            done?.(error?.message || "Gagal memperbarui pesan.");
+            done?.(
+                getPageErrorMessage(err, {
+                    context: "edit-message",
+                    fallbackCode: PAGE_ERROR_CODES.MESSAGE_EDIT_FAILED
+                })
+            );
         } finally {
             mutatingMessageId = null;
         }
@@ -151,7 +158,7 @@
     const handleDeleteMessage = async (e) => {
         const { messageId, done } = e.detail;
         if (!conversationId || mutatingMessageId) {
-            done?.("Operasi lain sedang berjalan.");
+            done?.(getPageErrorMessage(PAGE_ERROR_CODES.OPERATION_BUSY, "delete-message"));
             return;
         }
 
@@ -160,9 +167,12 @@
             await messagesStore.deleteMessage(conversationId, messageId);
             done?.(null);
         } catch (err) {
-            const error = /** @type {any} */ (err);
-            logger.error("Gagal menghapus pesan", error);
-            done?.(error?.message || "Gagal menghapus pesan.");
+            done?.(
+                getPageErrorMessage(err, {
+                    context: "delete-message",
+                    fallbackCode: PAGE_ERROR_CODES.MESSAGE_DELETE_FAILED
+                })
+            );
         } finally {
             mutatingMessageId = null;
         }
@@ -180,8 +190,10 @@
             await acceptChangedPeerKey(keyChange.userId);
             await initConversation(conversationId);
         } catch (err) {
-            logger.error("Gagal menerima kunci baru", err);
-            e2eeError = "Gagal menerima kunci baru. Coba lagi.";
+            e2eeError = getPageErrorMessage(err, {
+                context: "e2ee",
+                fallbackCode: PAGE_ERROR_CODES.KEY_EXCHANGE_FAILED
+            });
         }
     };
 
@@ -191,6 +203,7 @@
         if (!conversationId || e2eeStatus !== "ready" || isSending) return;
 
         isSending = true;
+        attachmentError = null;
         try {
             const sizeStr = (fileSize / 1024).toFixed(1);
             const text = `📎 [Berkas Terenkripsi] ${fileName} (${sizeStr} KB)`;
@@ -217,7 +230,10 @@
 
             scrollToBottom();
         } catch (err) {
-            logger.error("Gagal mengirim lampiran", err);
+            attachmentError = getPageErrorMessage(err, {
+                context: "attachment",
+                fallbackCode: PAGE_ERROR_CODES.FILE_ENCRYPTION_FAILED
+            });
         } finally {
             isSending = false;
         }
@@ -244,8 +260,10 @@
             link.remove();
             URL.revokeObjectURL(url);
         } catch (err) {
-            logger.error("Gagal mengunduh lampiran", err);
-            attachmentError = "Gagal mengunduh atau mendekripsi lampiran.";
+            attachmentError = getPageErrorMessage(err, {
+                context: "attachment",
+                fallbackCode: PAGE_ERROR_CODES.FILE_DECRYPTION_FAILED
+            });
         }
     };
 
@@ -363,7 +381,7 @@
                 {#if e2eeStatus === 'ready'}
                     Pesan dan data hanya dapat dibaca oleh Anda dan lawan bicara.
                 {:else if e2eeStatus === 'error'}
-                    <p>{e2eeError || "Kunci tidak dapat diverifikasi."} Pengiriman pesan diblokir.</p>
+                    <p>{e2eeError || getPageErrorMessage(PAGE_ERROR_CODES.KEY_EXCHANGE_FAILED, "e2ee")} Pengiriman pesan diblokir.</p>
                     {#if keyChange}
                         <div class="mt-2 p-2.5 rounded-lg bg-white/70 border border-rose-100 text-left font-mono text-[10px] leading-relaxed break-all text-slate-700">
                             <div>

@@ -1,6 +1,7 @@
 import { writable, get } from 'svelte/store';
 import { listConversations, getConversation, createConversation } from '../services/api/conversations.api.js';
-import logger from '../lib/logger.js';
+import { handleApiError } from '../errors/apierror.js';
+import { PAGE_ERROR_CODES, resolvePageError } from '../errors/pageerror.js';
 
 /**
  * @typedef {Object} ConversationState
@@ -9,6 +10,7 @@ import logger from '../lib/logger.js';
  * @property {any | null} activeConversation
  * @property {boolean} loading
  * @property {string | null} error
+ * @property {string | null} [errorCode]
  */
 
 /** @type {ConversationState} */
@@ -17,7 +19,8 @@ const initialState = {
   activeConversationId: null,
   activeConversation: null,
   loading: false,
-  error: null
+  error: null,
+  errorCode: null,
 };
 
 function createConversationsStore() {
@@ -30,7 +33,7 @@ function createConversationsStore() {
      * Load all conversations from REST API.
      */
     loadConversations: async () => {
-      update((s) => ({ ...s, loading: true, error: null }));
+      update((s) => ({ ...s, loading: true, error: null, errorCode: null }));
       try {
         const res = await listConversations();
         const list = Array.isArray(res) ? res : res?.conversations || [];
@@ -38,15 +41,24 @@ function createConversationsStore() {
           ...s,
           conversations: list,
           loading: false,
-          error: null
+          error: null,
+          errorCode: null,
         }));
         return list;
       } catch (err) {
-        const error = /** @type {any} */ (err);
+        const normalized = handleApiError(err, {
+          endpoint: '/api/conversations',
+          method: 'GET',
+        });
+        const pageErr = resolvePageError(normalized, {
+          context: 'chat',
+          fallbackCode: PAGE_ERROR_CODES.CONVERSATION_LOAD_FAILED,
+        });
         update((s) => ({
           ...s,
           loading: false,
-          error: error.message || 'Gagal memuat percakapan'
+          error: pageErr.userMessage,
+          errorCode: pageErr.code,
         }));
         return [];
       }
@@ -61,7 +73,7 @@ function createConversationsStore() {
 
       update((s) => ({
         ...s,
-        activeConversationId: conversationId
+        activeConversationId: conversationId,
       }));
 
       // Check if already in cache
@@ -78,11 +90,14 @@ function createConversationsStore() {
         const conv = res?.conversation || res;
         update((s) => ({
           ...s,
-          activeConversation: conv
+          activeConversation: conv,
         }));
         return conv;
       } catch (err) {
-        logger.error('Failed to get conversation details', err);
+        handleApiError(err, {
+          endpoint: '/api/conversations',
+          method: 'GET',
+        });
         return null;
       }
     },
@@ -94,7 +109,7 @@ function createConversationsStore() {
      */
     createOrOpenDirectChat: async (targetUserId) => {
       if (!targetUserId) return null;
-      update((s) => ({ ...s, loading: true, error: null }));
+      update((s) => ({ ...s, loading: true, error: null, errorCode: null }));
 
       try {
         const res = await createConversation({ userId: targetUserId });
@@ -108,19 +123,27 @@ function createConversationsStore() {
             conversations: exists ? s.conversations : [conv, ...s.conversations],
             activeConversationId: convId,
             activeConversation: conv,
-            loading: false
+            loading: false,
           };
         });
 
         return convId;
       } catch (err) {
-        const error = /** @type {any} */ (err);
+        const normalized = handleApiError(err, {
+          endpoint: '/api/conversations',
+          method: 'POST',
+        });
+        const pageErr = resolvePageError(normalized, {
+          context: 'chat',
+          fallbackCode: PAGE_ERROR_CODES.CONVERSATION_CREATE_FAILED,
+        });
         update((s) => ({
           ...s,
           loading: false,
-          error: error.message || 'Gagal membuat percakapan'
+          error: pageErr.userMessage,
+          errorCode: pageErr.code,
         }));
-        throw err;
+        throw normalized;
       }
     },
 
@@ -136,7 +159,7 @@ function createConversationsStore() {
             return {
               ...c,
               last_message: message,
-              updated_at: message.created_at || new Date().toISOString()
+              updated_at: message.created_at || new Date().toISOString(),
             };
           }
           return c;
@@ -144,14 +167,14 @@ function createConversationsStore() {
 
         return {
           ...s,
-          conversations: updated
+          conversations: updated,
         };
       });
     },
 
     reset: () => {
       set(initialState);
-    }
+    },
   };
 }
 

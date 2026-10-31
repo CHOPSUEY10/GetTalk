@@ -1,5 +1,6 @@
 <script>
     import { createEventDispatcher } from "svelte";
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../../errors/pageerror.js";
 
     /** @type {any} */
     export let msg;
@@ -50,7 +51,7 @@
     const submitEdit = () => {
         const trimmed = editDraft.trim();
         if (!trimmed) {
-            localError = "Isi pesan tidak boleh kosong.";
+            localError = getPageErrorMessage(PAGE_ERROR_CODES.EMPTY_MESSAGE, "edit-message");
             return;
         }
         if (trimmed === (msg.plaintext || "").trim()) {
@@ -164,7 +165,9 @@
                 {#if msg.plaintext != null}
                     {msg.plaintext}
                 {:else if msg.decryptError}
-                    <span class="italic opacity-70">Tidak dapat didekripsi</span>
+                    <span class="italic opacity-70" title={getPageErrorMessage(msg.errorCode || PAGE_ERROR_CODES.DECRYPTION_FAILED, "chat")}>
+                        {getPageErrorMessage(msg.errorCode || PAGE_ERROR_CODES.DECRYPTION_FAILED, "chat")}
+                    </span>
                 {:else}
                     <span class="italic opacity-70">Mendekripsi...</span>
                 {/if}
@@ -275,4 +278,3 @@
         </div>
     {/if}
 </div>
-

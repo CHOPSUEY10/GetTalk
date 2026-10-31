@@ -19,6 +19,11 @@
 
 import { encrypt, decrypt, toBase64Url, fromBase64Url, nonceToBase64Url, nonceFromBase64Url } from './aes-gcm.js';
 import { getConversationKey } from './message-crypto.js';
+import {
+  ENCRYPTION_ERROR_CODES,
+  EncryptionError,
+  handleEncryptionError,
+} from '../../errors/encryptionerror.js';
 
 /**
  * @returns {Promise<CryptoKey>}
@@ -71,37 +76,49 @@ async function importKeyRaw(raw) {
 export async function encryptFile(file, conversationId) {
   const conversationKey = await getConversationKey(conversationId);
 
-  const fileData = await file.arrayBuffer();
-  const fileKey = await generateFileKey();
+  try {
+    const fileData = await file.arrayBuffer();
+    const fileKey = await generateFileKey();
 
-  // Encrypt file content with the per-file key.
-  const { ciphertext: encryptedContent, nonce: fileNonce } = await encrypt(fileKey, fileData);
+    // Encrypt file content with the per-file key.
+    const { ciphertext: encryptedContent, nonce: fileNonce } = await encrypt(fileKey, fileData);
 
-  // Wrap the file key with the conversation key.
-  const rawFileKey = await exportKeyRaw(fileKey);
-  const { ciphertext: wrappedKey, nonce: keyNonce } = await encrypt(conversationKey, rawFileKey);
+    // Wrap the file key with the conversation key.
+    const rawFileKey = await exportKeyRaw(fileKey);
+    const { ciphertext: wrappedKey, nonce: keyNonce } = await encrypt(conversationKey, rawFileKey);
 
-  // One encrypted metadata blob carries the filename, MIME type, size, and
-  // everything needed to unwrap/decrypt the file.
-  const metadata = JSON.stringify({
-    name: file.name,
-    type: file.type || 'application/octet-stream',
-    size: file.size,
-    fileNonce: nonceToBase64Url(fileNonce),
-    encryptedFileKey: toBase64Url(wrappedKey),
-    keyNonce: nonceToBase64Url(keyNonce),
-  });
-  const { ciphertext: encryptedMetadata, nonce: metadataNonce } = await encrypt(
-    conversationKey,
-    new TextEncoder().encode(metadata)
-  );
+    // One encrypted metadata blob carries the filename, MIME type, size, and
+    // everything needed to unwrap/decrypt the file.
+    const metadata = JSON.stringify({
+      name: file.name,
+      type: file.type || 'application/octet-stream',
+      size: file.size,
+      fileNonce: nonceToBase64Url(fileNonce),
+      encryptedFileKey: toBase64Url(wrappedKey),
+      keyNonce: nonceToBase64Url(keyNonce),
+    });
+    const { ciphertext: encryptedMetadata, nonce: metadataNonce } = await encrypt(
+      conversationKey,
+      new TextEncoder().encode(metadata)
+    );
 
-  return {
-    encryptedBlob: new Blob([encryptedContent], { type: 'application/octet-stream' }),
-    metadataCiphertext: toBase64Url(encryptedMetadata),
-    metadataNonce: nonceToBase64Url(metadataNonce),
-    encryptedSize: encryptedContent.byteLength,
-  };
+    return {
+      encryptedBlob: new Blob([encryptedContent], { type: 'application/octet-stream' }),
+      metadataCiphertext: toBase64Url(encryptedMetadata),
+      metadataNonce: nonceToBase64Url(metadataNonce),
+      encryptedSize: encryptedContent.byteLength,
+    };
+  } catch (err) {
+    if (err instanceof EncryptionError) {
+      throw err;
+    }
+    throw handleEncryptionError(err, {
+      code: ENCRYPTION_ERROR_CODES.ENCRYPTION_FAILED,
+      operation: 'file-encrypt',
+      conversationId,
+      message: 'Failed to encrypt file attachment',
+    });
+  }
 }
 
 /**
@@ -121,35 +138,47 @@ export async function decryptFile(
 ) {
   const conversationKey = await getConversationKey(conversationId);
 
-  // Decrypt the metadata (filename, MIME type, wrapped file key, nonces).
-  const metadataBytes = await decrypt(
-    conversationKey,
-    fromBase64Url(metadataCiphertextBase64),
-    nonceFromBase64Url(metadataNonceBase64)
-  );
-  const metadata = JSON.parse(new TextDecoder().decode(metadataBytes));
+  try {
+    // Decrypt the metadata (filename, MIME type, wrapped file key, nonces).
+    const metadataBytes = await decrypt(
+      conversationKey,
+      fromBase64Url(metadataCiphertextBase64),
+      nonceFromBase64Url(metadataNonceBase64)
+    );
+    const metadata = JSON.parse(new TextDecoder().decode(metadataBytes));
 
-  // Unwrap and import the per-file key.
-  const rawFileKey = await decrypt(
-    conversationKey,
-    fromBase64Url(metadata.encryptedFileKey),
-    nonceFromBase64Url(metadata.keyNonce)
-  );
-  const fileKey = await importKeyRaw(rawFileKey);
+    // Unwrap and import the per-file key.
+    const rawFileKey = await decrypt(
+      conversationKey,
+      fromBase64Url(metadata.encryptedFileKey),
+      nonceFromBase64Url(metadata.keyNonce)
+    );
+    const fileKey = await importKeyRaw(rawFileKey);
 
-  // Decrypt the file content.
-  const decryptedContent = await decrypt(
-    fileKey,
-    encryptedContent,
-    nonceFromBase64Url(metadata.fileNonce)
-  );
+    // Decrypt the file content.
+    const decryptedContent = await decrypt(
+      fileKey,
+      encryptedContent,
+      nonceFromBase64Url(metadata.fileNonce)
+    );
 
-  return {
-    blob: new Blob([decryptedContent], { type: metadata.type || 'application/octet-stream' }),
-    name: metadata.name,
-    type: metadata.type || 'application/octet-stream',
-    size: metadata.size,
-  };
+    return {
+      blob: new Blob([decryptedContent], { type: metadata.type || 'application/octet-stream' }),
+      name: metadata.name,
+      type: metadata.type || 'application/octet-stream',
+      size: metadata.size,
+    };
+  } catch (err) {
+    if (err instanceof EncryptionError) {
+      throw err;
+    }
+    throw handleEncryptionError(err, {
+      code: ENCRYPTION_ERROR_CODES.DECRYPTION_FAILED,
+      operation: 'file-decrypt',
+      conversationId,
+      message: 'Failed to decrypt file attachment',
+    });
+  }
 }
 
 /**

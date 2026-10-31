@@ -9,7 +9,9 @@ import {
 } from '../services/api/auth.api.js';
 import { publishOwnIdentityKey } from '../services/crypto/identity-trust.js';
 import { userStore } from './user.store.js';
-import logger from '../lib/logger.js';
+import { API_ERROR_CODES, handleApiError, normalizeApiError } from '../errors/apierror.js';
+import { handleEncryptionError } from '../errors/encryptionerror.js';
+import { PAGE_ERROR_CODES, resolvePageError } from '../errors/pageerror.js';
 
 /**
  * Publish the E2EE identity public key once the session is known.
@@ -19,7 +21,7 @@ import logger from '../lib/logger.js';
 function publishIdentityKey(user) {
   if (!user?.id) return;
   publishOwnIdentityKey(user.id).catch((err) => {
-    logger.error('Failed to publish E2EE identity key', err);
+    handleEncryptionError(err, { operation: 'publish-identity-key' });
   });
 }
 
@@ -38,6 +40,7 @@ function publishIdentityKey(user) {
  * @property {boolean} authenticated
  * @property {boolean} loading
  * @property {string | null} error
+ * @property {string | null} [errorCode]
  */
 
 function createAuthStore() {
@@ -47,31 +50,37 @@ function createAuthStore() {
     authenticated: false,
     loading: true,
     error: null,
+    errorCode: null,
   });
 
   return {
     subscribe,
     initialize: async () => {
-      update(state => ({ ...state, loading: true, error: null }));
+      update((state) => ({ ...state, loading: true, error: null, errorCode: null }));
       try {
         const response = await getSession();
         const user = response?.user || response;
-        
-        set({ user, authenticated: true, loading: false, error: null });
+
+        set({ user, authenticated: true, loading: false, error: null, errorCode: null });
         userStore.set(user);
         publishIdentityKey(user);
       } catch (err) {
-        const error = /** @type {any} */ (err);
+        const normalized = normalizeApiError(err);
         // Only treat as error if it's a server/network error, not a standard unauthenticated response
-        // Usually 401 means unauthenticated, while others might be actual errors.
-        const isAuthFailure = error.status === 401 || error.status === 403;
-        const errorMessage = isAuthFailure ? null : error.message;
+        const isAuthFailure =
+          normalized.status === 401 ||
+          normalized.status === 403 ||
+          normalized.code === API_ERROR_CODES.UNAUTHORIZED ||
+          normalized.code === API_ERROR_CODES.FORBIDDEN;
 
-        set({ 
-          user: null, 
-          authenticated: false, 
-          loading: false, 
-          error: errorMessage 
+        const pageErr = isAuthFailure ? null : resolvePageError(normalized);
+
+        set({
+          user: null,
+          authenticated: false,
+          loading: false,
+          error: pageErr ? pageErr.userMessage : null,
+          errorCode: pageErr ? pageErr.code : null,
         });
         userStore.set(null);
       }
@@ -79,94 +88,122 @@ function createAuthStore() {
     /** @param {any} payload */
     login: async (payload) => {
       // NOTE: Do NOT set loading:true here. The global `loading` flag controls
-      // the splash-screen vs Router toggle in App.svelte. Setting it to true
-      // would unmount the Router (destroying Login.svelte and its local MFA
-      // challenge state) and remount it when loading returns to false, causing
-      // the mfaChallengeId to be lost.
-      update(state => ({ ...state, error: null }));
+      // the splash-screen vs Router toggle in App.svelte.
+      update((state) => ({ ...state, error: null, errorCode: null }));
       try {
         const response = await apiLogin(payload);
         if (response?.mfaRequired) {
-          update(state => ({ ...state, user: null, authenticated: false, error: null }));
+          update((state) => ({
+            ...state,
+            user: null,
+            authenticated: false,
+            error: null,
+            errorCode: null,
+          }));
           userStore.set(null);
           return response;
         }
         const user = response?.user || response;
-        
-        set({ user, authenticated: true, loading: false, error: null });
+
+        set({ user, authenticated: true, loading: false, error: null, errorCode: null });
         userStore.set(user);
         publishIdentityKey(user);
         return response;
       } catch (err) {
-        const error = /** @type {any} */ (err);
-        update(state => ({
+        const normalized = handleApiError(err, { endpoint: '/api/auth/login', method: 'POST' });
+        const pageErr = resolvePageError(normalized, {
+          context: 'login',
+          fallbackCode: PAGE_ERROR_CODES.INVALID_CREDENTIALS,
+        });
+        update((state) => ({
           ...state,
-          user: null, 
-          authenticated: false, 
-          error: error.message 
+          user: null,
+          authenticated: false,
+          error: pageErr.userMessage,
+          errorCode: pageErr.code,
         }));
         userStore.set(null);
-        throw error;
+        throw normalized;
       }
     },
     /** @param {{ challengeId: string, code: string }} payload */
     verifyMfa: async (payload) => {
       // Same as login: avoid toggling the global loading flag.
-      update(state => ({ ...state, error: null }));
+      update((state) => ({ ...state, error: null, errorCode: null }));
       try {
         const response = await apiVerifyMfa(payload);
         const user = response?.user || response;
-        set({ user, authenticated: true, loading: false, error: null });
+        set({ user, authenticated: true, loading: false, error: null, errorCode: null });
         userStore.set(user);
         publishIdentityKey(user);
         return response;
       } catch (err) {
-        const error = /** @type {any} */ (err);
-        update(state => ({
+        const normalized = handleApiError(err, {
+          endpoint: '/api/auth/mfa/verify',
+          method: 'POST',
+        });
+        const pageErr = resolvePageError(normalized, {
+          context: 'mfa',
+          fallbackCode: PAGE_ERROR_CODES.INVALID_MFA_CODE,
+        });
+        update((state) => ({
           ...state,
           user: null,
           authenticated: false,
-          error: error.message,
+          error: pageErr.userMessage,
+          errorCode: pageErr.code,
         }));
         userStore.set(null);
-        throw error;
+        throw normalized;
       }
     },
     logout: async () => {
       try {
         await apiLogout();
       } catch (error) {
-        logger.error('Logout failed on the server', error);
+        handleApiError(error, { endpoint: '/api/auth/logout', method: 'POST' });
       } finally {
-        set({ user: null, authenticated: false, loading: false, error: null });
+        set({ user: null, authenticated: false, loading: false, error: null, errorCode: null });
         userStore.set(null);
       }
     },
     /** @param {any} userData */
     updateUser: (userData) => {
-      update(state => ({ ...state, user: userData }));
+      update((state) => ({ ...state, user: userData }));
       userStore.set(userData);
     },
     setUnauthenticated: () => {
-      set({ user: null, authenticated: false, loading: false, error: null });
+      set({ user: null, authenticated: false, loading: false, error: null, errorCode: null });
       userStore.set(null);
     },
     /** @param {{ email: string }} payload */
     forgotPassword: async (payload) => {
       // Avoid setting global `loading: true` which would unmount the Router in App.svelte
-      update(state => ({ ...state, loading: false, error: null }));
+      update((state) => ({ ...state, loading: false, error: null, errorCode: null }));
       try {
         const response = await apiForgotPassword(payload);
         return response;
       } catch (err) {
-        const error = /** @type {any} */ (err);
-        update(state => ({ ...state, loading: false, error: error.message }));
-        throw error;
+        const normalized = handleApiError(err, {
+          endpoint: '/api/auth/password/forgot',
+          method: 'POST',
+        });
+        const pageErr = resolvePageError(normalized, {
+          context: 'forgot-password',
+          fallbackCode: PAGE_ERROR_CODES.OTP_SEND_FAILED,
+        });
+        update((state) => ({
+          ...state,
+          loading: false,
+          error: pageErr.userMessage,
+          errorCode: pageErr.code,
+        }));
+        throw normalized;
       }
     },
     /** @param {{ email: string, token: string, password?: string, newPassword?: string }} payload */
     resetPassword: async (payload) => {
-      update(state => ({ ...state, loading: false, error: null }));
+      update((state) => ({ ...state, loading: false, error: null, errorCode: null }));
       try {
         const resolvedPassword = payload.newPassword ?? payload.password;
         const response = await apiResetPassword({
@@ -177,11 +214,23 @@ function createAuthStore() {
         });
         return response;
       } catch (err) {
-        const error = /** @type {any} */ (err);
-        update(state => ({ ...state, loading: false, error: error.message }));
-        throw error;
+        const normalized = handleApiError(err, {
+          endpoint: '/api/auth/password/reset',
+          method: 'POST',
+        });
+        const pageErr = resolvePageError(normalized, {
+          context: 'reset-password',
+          fallbackCode: PAGE_ERROR_CODES.INVALID_RESET_TOKEN,
+        });
+        update((state) => ({
+          ...state,
+          loading: false,
+          error: pageErr.userMessage,
+          errorCode: pageErr.code,
+        }));
+        throw normalized;
       }
-    }
+    },
   };
 }
 

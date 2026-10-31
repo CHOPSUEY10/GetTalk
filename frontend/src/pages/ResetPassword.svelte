@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
     import PublicLayout from "../components/layout/PublicLayout.svelte";
     import { authStore } from "../stores/auth.store.js";
+    import { PAGE_ERROR_CODES, resolvePageError } from "../errors/pageerror.js";
 
     let email = "";
     let token = "";
@@ -14,9 +15,21 @@
     /** @type {string | null} */
     let localError = null;
     /** @type {string | null} */
+    let errorCode = null;
+    /** @type {string | null} */
     let successMessage = null;
     let isSubmitting = false;
     let tokenMissing = false;
+
+    /** @type {Set<string>} */
+    const TOKEN_RENEWAL_CODES = new Set([
+        PAGE_ERROR_CODES.OTP_TOKEN_MISSING,
+        PAGE_ERROR_CODES.INVALID_OTP_CODE,
+        PAGE_ERROR_CODES.INVALID_RESET_TOKEN,
+        PAGE_ERROR_CODES.RESET_TOKEN_EXPIRED,
+        PAGE_ERROR_CODES.VALIDATION_ERROR,
+        PAGE_ERROR_CODES.BAD_REQUEST,
+    ]);
 
     function extractQueryParams() {
         const hash = window.location.hash || "";
@@ -42,28 +55,38 @@
 
         if (!token || !email || !/^\d{6}$/.test(token)) {
             tokenMissing = true;
-            localError = "Kode OTP 6-digit atau informasi email tidak ditemukan. Silakan lakukan verifikasi ulang melalui halaman lupa kata sandi.";
+            const resolved = resolvePageError(PAGE_ERROR_CODES.OTP_TOKEN_MISSING, "reset-password");
+            errorCode = resolved.code;
+            localError = resolved.userMessage;
         }
     });
 
     $: hasMinLength = password.length >= 8;
     $: passwordsMatch = password && confirmPassword && password === confirmPassword;
+    $: showRequestNewCodeLink = tokenMissing || (errorCode !== null && TOKEN_RENEWAL_CODES.has(errorCode));
 
     const handleReset = async () => {
         localError = null;
+        errorCode = null;
 
         if (!email || !/^\d{6}$/.test(token)) {
-            localError = "Informasi kode OTP 6-digit atau email tidak valid. Silakan minta kode baru.";
+            const resolved = resolvePageError(PAGE_ERROR_CODES.INVALID_OTP_CODE, "reset-password");
+            errorCode = resolved.code;
+            localError = resolved.userMessage;
             return;
         }
 
         if (!hasMinLength) {
-            localError = "Kata sandi baru harus minimal 8 karakter.";
+            const resolved = resolvePageError(PAGE_ERROR_CODES.PASSWORD_TOO_SHORT, "reset-password");
+            errorCode = resolved.code;
+            localError = resolved.userMessage;
             return;
         }
 
         if (password !== confirmPassword) {
-            localError = "Konfirmasi kata sandi tidak cocok.";
+            const resolved = resolvePageError(PAGE_ERROR_CODES.PASSWORD_MISMATCH, "reset-password");
+            errorCode = resolved.code;
+            localError = resolved.userMessage;
             return;
         }
 
@@ -78,10 +101,12 @@
             successMessage =
                 res?.message || "Kata sandi berhasil diatur ulang. Silakan masuk kembali.";
         } catch (err) {
-            const e = /** @type {any} */ (err);
-            localError =
-                e.message ||
-                "Kode OTP pengaturan ulang kata sandi tidak valid atau telah kedaluwarsa.";
+            const resolved = resolvePageError(err, {
+                context: "reset-password",
+                fallbackCode: PAGE_ERROR_CODES.INVALID_RESET_TOKEN,
+            });
+            errorCode = resolved.code;
+            localError = resolved.userMessage;
         } finally {
             isSubmitting = false;
         }
@@ -104,7 +129,7 @@
                 </svg>
                 <div class="flex-1">
                     <span>{localError}</span>
-                    {#if tokenMissing || localError.includes("tidak valid") || localError.includes("kedaluwarsa") || localError.includes("expired") || localError.includes("Invalid")}
+                    {#if showRequestNewCodeLink}
                         <div class="mt-2">
                             <a
                                 href="#/forgot-password"

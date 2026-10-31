@@ -1,4 +1,4 @@
-import { writable, get } from 'svelte/store';
+import { writable } from 'svelte/store';
 import {
   friendLists,
   friendRequestList,
@@ -10,6 +10,8 @@ import {
 import { searchUsers } from '../services/api/users.api.js';
 import { socket } from '../services/socket/client.js';
 import * as events from '../services/socket/events.js';
+import { ApiError, API_ERROR_CODES, handleApiError } from '../errors/apierror.js';
+import { PAGE_ERROR_CODES, resolvePageError } from '../errors/pageerror.js';
 
 /**
  * @typedef {Object} FriendsState
@@ -17,6 +19,7 @@ import * as events from '../services/socket/events.js';
  * @property {any[]} requests
  * @property {boolean} loading
  * @property {string | null} error
+ * @property {string | null} [errorCode]
  */
 
 /** @type {FriendsState} */
@@ -25,6 +28,7 @@ const initialState = {
   requests: [],
   loading: false,
   error: null,
+  errorCode: null,
 };
 
 function createFriendsStore() {
@@ -40,7 +44,7 @@ function createFriendsStore() {
      * Load friends list and pending requests from REST API.
      */
     loadAll: async () => {
-      update((s) => ({ ...s, loading: true, error: null }));
+      update((s) => ({ ...s, loading: true, error: null, errorCode: null }));
       try {
         const [friendsRes, requestsRes] = await Promise.allSettled([
           friendLists(),
@@ -61,13 +65,37 @@ function createFriendsStore() {
           requests = Array.isArray(data) ? data : data?.requests || [];
         }
 
-        set({ friends, requests, loading: false, error: null });
+        if (friendsRes.status === 'rejected' && requestsRes.status === 'rejected') {
+          const normalized = handleApiError(friendsRes.reason, {
+            endpoint: '/api/friends',
+            method: 'GET',
+          });
+          const pageErr = resolvePageError(normalized, {
+            context: 'friends',
+            fallbackCode: PAGE_ERROR_CODES.FRIENDS_LOAD_FAILED,
+          });
+          set({
+            friends: [],
+            requests: [],
+            loading: false,
+            error: pageErr.userMessage,
+            errorCode: pageErr.code,
+          });
+          return;
+        }
+
+        set({ friends, requests, loading: false, error: null, errorCode: null });
       } catch (err) {
-        const e = /** @type {any} */ (err);
+        const normalized = handleApiError(err, { endpoint: '/api/friends', method: 'GET' });
+        const pageErr = resolvePageError(normalized, {
+          context: 'friends',
+          fallbackCode: PAGE_ERROR_CODES.FRIENDS_LOAD_FAILED,
+        });
         update((s) => ({
           ...s,
           loading: false,
-          error: e.message || 'Failed to load friends data',
+          error: pageErr.userMessage,
+          errorCode: pageErr.code,
         }));
       }
     },
@@ -92,14 +120,28 @@ function createFriendsStore() {
         );
 
         if (!match) {
-          throw new Error(`Pengguna "${username}" tidak ditemukan.`);
+          throw new ApiError({
+            code: API_ERROR_CODES.USER_NOT_FOUND,
+            status: 404,
+            message: 'User not found',
+            endpoint: '/api/users/search',
+            method: 'GET',
+            logged: true,
+          });
         }
 
         userId = match.id;
       }
 
       if (!userId) {
-        throw new Error('userId or username is required');
+        throw new ApiError({
+          code: API_ERROR_CODES.VALIDATION_ERROR,
+          status: 400,
+          message: 'userId or username is required',
+          endpoint: '/api/friends/requests',
+          method: 'POST',
+          logged: true,
+        });
       }
 
       return friendRequest({ userId });

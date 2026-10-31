@@ -1,7 +1,7 @@
 <script>
     import { createEventDispatcher } from 'svelte';
     import { encryptFile } from '../../services/crypto/file-crypto.js';
-    import logger from '../../lib/logger.js';
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from '../../errors/pageerror.js';
 
     export let conversationId = '';
     export let disabled = false;
@@ -30,7 +30,7 @@
         target.value = '';
 
         if (file.size > MAX_FILE_SIZE) {
-            errorMessage = 'Ukuran file melebihi batas 25MB';
+            errorMessage = getPageErrorMessage(PAGE_ERROR_CODES.FILE_TOO_LARGE, 'attachment');
             setTimeout(() => (errorMessage = ''), 4000);
             return;
         }
@@ -50,9 +50,10 @@
                 fileType: file.type,
             });
         } catch (err) {
-            const error = /** @type {any} */ (err);
-            logger.error('Client-side file encryption failed', error);
-            errorMessage = error.message || 'Gagal mengenkripsi file';
+            errorMessage = getPageErrorMessage(err, {
+                context: 'attachment',
+                fallbackCode: PAGE_ERROR_CODES.FILE_ENCRYPTION_FAILED,
+            });
             setTimeout(() => (errorMessage = ''), 4000);
         } finally {
             isEncrypting = false;

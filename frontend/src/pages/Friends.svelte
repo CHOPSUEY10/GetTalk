@@ -1,10 +1,10 @@
 <script>
-    import { onMount, onDestroy } from "svelte";
+    import { onMount } from "svelte";
     import ProtectedLayout from "../components/layout/ProtectedLayout.svelte";
     import { friendsStore } from "../stores/friends.store.js";
     import { conversationsStore } from "../stores/conversations.store.js";
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../errors/pageerror.js";
     import { push } from "svelte-spa-router";
-    import logger from "../lib/logger.js";
 
     let activeTab = "friends"; // 'friends' | 'requests' | 'add'
     let searchQuery = "";
@@ -14,9 +14,6 @@
     let message = null;
     /** @type {'success' | 'error' | null} */
     let messageType = null;
-
-    /** @type {(() => void) | null} */
-    let cleanupSocket = null;
 
     // Subscribe to the store reactively
     $: friends = $friendsStore.friends;
@@ -34,8 +31,10 @@
             addUsername = "";
             await friendsStore.loadAll();
         } catch (err) {
-            const e = /** @type {any} */ (err);
-            message = e.message || "Gagal mengirim permintaan pertemanan.";
+            message = getPageErrorMessage(err, {
+                context: "friends",
+                fallbackCode: PAGE_ERROR_CODES.FRIEND_REQUEST_FAILED
+            });
             messageType = "error";
         } finally {
             actionLoading = false;
@@ -50,8 +49,10 @@
             message = "Permintaan pertemanan diterima.";
             messageType = "success";
         } catch (err) {
-            const e = /** @type {any} */ (err);
-            message = e.message || "Gagal menerima permintaan.";
+            message = getPageErrorMessage(err, {
+                context: "friends",
+                fallbackCode: PAGE_ERROR_CODES.FRIEND_ACCEPT_FAILED
+            });
             messageType = "error";
         } finally {
             actionLoading = false;
@@ -66,8 +67,10 @@
             message = "Permintaan pertemanan ditolak.";
             messageType = "success";
         } catch (err) {
-            const e = /** @type {any} */ (err);
-            message = e.message || "Gagal menolak permintaan.";
+            message = getPageErrorMessage(err, {
+                context: "friends",
+                fallbackCode: PAGE_ERROR_CODES.FRIEND_REJECT_FAILED
+            });
             messageType = "error";
         } finally {
             actionLoading = false;
@@ -83,8 +86,10 @@
             message = "Teman berhasil dihapus.";
             messageType = "success";
         } catch (err) {
-            const e = /** @type {any} */ (err);
-            message = e.message || "Gagal menghapus teman.";
+            message = getPageErrorMessage(err, {
+                context: "friends",
+                fallbackCode: PAGE_ERROR_CODES.FRIEND_REMOVE_FAILED
+            });
             messageType = "error";
         } finally {
             actionLoading = false;
@@ -108,8 +113,10 @@
                 push(`/chat/${conversationId}`);
             }
         } catch (err) {
-            logger.error("Gagal membuka percakapan", err);
-            message = err?.message || "Gagal membuka percakapan.";
+            message = getPageErrorMessage(err, {
+                context: "chat",
+                fallbackCode: PAGE_ERROR_CODES.CONVERSATION_CREATE_FAILED
+            });
             messageType = "error";
         }
     };
@@ -164,7 +171,7 @@
         </div>
 
         <!-- Alert Notification -->
-        {#if message}
+        {#if message || $friendsStore.error}
             <div class="p-3.5 rounded-xl text-sm flex items-center justify-between gap-3 animate-fadeIn {messageType === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-rose-50 border border-rose-200 text-rose-800'}">
                 <div class="flex items-center gap-2">
                     {#if messageType === 'success'}
@@ -176,7 +183,7 @@
                             <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                         </svg>
                     {/if}
-                    <span>{message}</span>
+                    <span>{message || $friendsStore.error}</span>
                 </div>
                 <button type="button" class="text-xs font-semibold opacity-70 hover:opacity-100" on:click={() => (message = null)}>✕</button>
             </div>

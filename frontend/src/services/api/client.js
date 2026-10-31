@@ -1,18 +1,7 @@
 import env from '../../config/env.js';
+import { ApiError, API_ERROR_CODES, handleApiError } from '../../errors/apierror.js';
 
-export class ApiError extends Error {
-  /**
-   * @param {number} status
-   * @param {string} message
-   * @param {any} [data]
-   */
-  constructor(status, message, data) {
-    super(message);
-    this.status = status;
-    this.data = data;
-    this.name = 'ApiError';
-  }
-}
+export { ApiError };
 
 /**
  * @typedef {RequestInit & { body?: any, suppressUnauthorizedEvent?: boolean }} CustomRequestInit
@@ -26,6 +15,7 @@ export class ApiError extends Error {
 async function fetchClient(endpoint, options = {}) {
   const url = `${env.apiUrl}${endpoint}`;
   const { suppressUnauthorizedEvent = false, ...requestOptions } = options;
+  const method = String(requestOptions.method || 'GET').toUpperCase();
 
   const headers = {
     'Content-Type': 'application/json',
@@ -35,6 +25,7 @@ async function fetchClient(endpoint, options = {}) {
   /** @type {RequestInit & { body?: any }} */
   const fetchOptions = {
     ...requestOptions,
+    method,
     headers,
     credentials: 'include',
   };
@@ -47,17 +38,31 @@ async function fetchClient(endpoint, options = {}) {
   try {
     response = await fetch(url, fetchOptions);
   } catch (error) {
-    // Network error or fetch failure
-    throw new Error('Network error or unable to reach the server.');
+    const anyErr = /** @type {any} */ (error);
+    const isTimeout = anyErr?.name === 'AbortError' || anyErr?.name === 'TimeoutError';
+    throw handleApiError(anyErr, {
+      endpoint,
+      method,
+      status: isTimeout ? 408 : 0,
+      code: isTimeout ? API_ERROR_CODES.REQUEST_TIMEOUT : API_ERROR_CODES.NETWORK_ERROR,
+    });
   }
 
   const isJson = response.headers.get('content-type')?.includes('application/json');
   let data = null;
-  
+
   if (isJson) {
     try {
       data = await response.json();
-    } catch {
+    } catch (parseError) {
+      if (response.ok && response.status !== 204) {
+        throw handleApiError(parseError, {
+          endpoint,
+          method,
+          status: response.status,
+          code: API_ERROR_CODES.INVALID_RESPONSE,
+        });
+      }
       data = null;
     }
   } else {
@@ -65,16 +70,20 @@ async function fetchClient(endpoint, options = {}) {
   }
 
   if (!response.ok) {
-    const errorMessage =
-      data?.error?.message ||
-      (typeof data?.error === 'string' ? data.error : null) ||
-      data?.message ||
-      response.statusText ||
-      'Unknown API Error';
-    if (response.status === 401 && !suppressUnauthorizedEvent) {
+    if (response.status === 401 && !suppressUnauthorizedEvent && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('api:unauthorized'));
     }
-    throw new ApiError(response.status, errorMessage, data);
+
+    const isExpectedAnonymousSessionCheck =
+      suppressUnauthorizedEvent && response.status === 401 && endpoint === '/api/auth/session';
+
+    throw handleApiError(null, {
+      endpoint,
+      method,
+      status: response.status,
+      data,
+      silent: isExpectedAnonymousSessionCheck,
+    });
   }
 
   return data;
@@ -89,26 +98,38 @@ async function fetchClient(endpoint, options = {}) {
  */
 async function fetchBinary(endpoint, options = {}) {
   const url = `${env.apiUrl}${endpoint}`;
+  const method = String(options.method || 'GET').toUpperCase();
 
   let response;
   try {
     response = await fetch(url, { credentials: 'include', ...options });
-  } catch {
-    throw new Error('Network error or unable to reach the server.');
+  } catch (error) {
+    const anyErr = /** @type {any} */ (error);
+    const isTimeout = anyErr?.name === 'AbortError' || anyErr?.name === 'TimeoutError';
+    throw handleApiError(anyErr, {
+      endpoint,
+      method,
+      status: isTimeout ? 408 : 0,
+      code: isTimeout ? API_ERROR_CODES.REQUEST_TIMEOUT : API_ERROR_CODES.NETWORK_ERROR,
+    });
   }
 
   if (!response.ok) {
-    let message = response.statusText || 'Unknown API Error';
+    let data = null;
     try {
-      const data = await response.json();
-      message = data?.error?.message || message;
+      data = await response.json();
     } catch {
       // Binary/non-JSON error body.
     }
-    if (response.status === 401) {
+    if (response.status === 401 && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('api:unauthorized'));
     }
-    throw new ApiError(response.status, message);
+    throw handleApiError(null, {
+      endpoint,
+      method,
+      status: response.status,
+      data,
+    });
   }
 
   return response.arrayBuffer();

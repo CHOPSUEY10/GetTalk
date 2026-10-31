@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test tests/crypto.test.js tests/auth-flow.test.js",
+    "test": "node --test tests/crypto.test.js tests/auth-flow.test.js tests/error-handling.test.js",
     "preview": "vite preview",
     "dev:staging": "vite --mode staging",
     "build:staging": "vite --mode staging"
