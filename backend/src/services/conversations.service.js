@@ -1,29 +1,32 @@
 import * as convRepo from '../repositories/conversations.repository.js';
 import * as usersRepo from '../repositories/users.repository.js';
 import AppError from '../errors/AppError.js';
+import { buildPage, DEFAULT_PAGE_LIMIT } from '../utils/pagination.js';
 import {
   CONVERSATION_NOT_FOUND,
   FORBIDDEN,
   USER_NOT_FOUND,
 } from '../errors/error-codes.js';
 
-export async function list(userId) {
-  const conversations = await convRepo.findAllByUserId(userId);
+/**
+ * @param {string} userId
+ * @param {{ limit?: number, before?: string | null }} [options]
+ * @returns {Promise<{ conversations: any[], nextCursor: string | null }>}
+ */
+export async function list(userId, { limit = DEFAULT_PAGE_LIMIT, before = null } = {}) {
+  // Fetch one extra row to know whether another page exists.
+  const rows = await convRepo.findAllByUserId(userId, { limit: limit + 1, before });
+  const { items, nextCursor } = buildPage(rows, limit);
 
-  // Enrich each conversation with peer info for direct conversations
-  const results = [];
-  for (const conv of conversations) {
-    const members = await convRepo.getMembers(conv.id);
-    const peer = members.find(m => m.id !== userId);
+  // Explicit DTO; the peer is resolved by the repository query (no N+1).
+  const conversations = items.map((conv) => ({
+    id: conv.id,
+    type: conv.type,
+    peer: conv.peerId ? { id: conv.peerId, username: conv.peerUsername } : null,
+    lastMessageAt: conv.lastMessageAt,
+  }));
 
-    results.push({
-      id: conv.id,
-      type: conv.type,
-      peer: peer ? { id: peer.id, username: peer.username } : null,
-      lastMessageAt: conv.lastMessageAt,
-    });
-  }
-  return results;
+  return { conversations, nextCursor };
 }
 
 export async function getById(userId, conversationId) {

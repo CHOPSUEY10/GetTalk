@@ -1,9 +1,11 @@
 import * as conversationsService from '../services/conversations.service.js';
+import { parsePaginationQuery } from '../utils/pagination.js';
 
 export async function list(req, res, next) {
   try {
-    const conversations = await conversationsService.list(req.user.id);
-    return res.json({ conversations });
+    const { limit, cursor: before } = parsePaginationQuery(req.query, 'before');
+    const { conversations, nextCursor } = await conversationsService.list(req.user.id, { limit, before });
+    return res.json({ conversations, nextCursor });
   } catch (err) {
     return next(err);
   }

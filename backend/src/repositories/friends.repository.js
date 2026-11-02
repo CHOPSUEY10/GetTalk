@@ -1,6 +1,33 @@
 import { query } from '../config/database.js';
 
-export async function findAllByUserId(userId) {
+/**
+ * Accepted friends ordered alphabetically, keyset-paginated on
+ * (username, id). `after` is the last friend userId of the previous page and
+ * must itself be a friend of the user.
+ *
+ * @param {string} userId
+ * @param {{ limit?: number, after?: string | null }} [options]
+ *   `limit` is the number of rows to fetch (callers pass page size + 1).
+ */
+export async function findAllByUserId(userId, { limit = 51, after = null } = {}) {
+  const params = [userId];
+  let cursorSql = '';
+
+  if (after) {
+    params.push(after);
+    cursorSql = `AND (u.username, u.id) > (
+                   SELECT cu.username, cu.id
+                   FROM users cu
+                   JOIN friendships cf
+                     ON cf.status = 'accepted'
+                    AND ((cf.from_user_id = $1 AND cf.to_user_id = cu.id)
+                      OR (cf.to_user_id = $1 AND cf.from_user_id = cu.id))
+                   WHERE cu.id = $${params.length}
+                 )`;
+  }
+
+  params.push(limit);
+
   const result = await query(
     `SELECT u.id AS "userId", u.username
      FROM friendships f
@@ -10,8 +37,10 @@ export async function findAllByUserId(userId) {
      ) = u.id
      WHERE (f.from_user_id = $1 OR f.to_user_id = $1)
        AND f.status = 'accepted'
-     ORDER BY u.username`,
-    [userId]
+       ${cursorSql}
+     ORDER BY u.username, u.id
+     LIMIT $${params.length}`,
+    params
   );
   return result.rows;
 }

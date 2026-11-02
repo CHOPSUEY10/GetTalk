@@ -1,7 +1,17 @@
 import { api } from './client.js';
 
-export const friendLists = () => {
-    return api.get('/api/friends');
+/**
+ * Fetch accepted friends for the authenticated user (cursor-paginated).
+ * @param {{ limit?: number, after?: string }} [params]
+ * @returns {Promise<{ friends: any[], nextCursor: string | null }>}
+ */
+export const friendLists = (params = {}) => {
+    const query = new URLSearchParams();
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.after) query.set('after', params.after);
+    const qs = query.toString() ? `?${query.toString()}` : '';
+
+    return api.get(`/api/friends${qs}`);
 };
 
 export const friendRequestList = () => {

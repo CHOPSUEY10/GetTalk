@@ -1,11 +1,13 @@
 import * as friendsService from '../services/friends.service.js';
+import { parsePaginationQuery } from '../utils/pagination.js';
 import * as events from '../socket/events.js';
 import * as rooms from '../socket/rooms.js';
 
 export async function list(req, res, next) {
   try {
-    const friends = await friendsService.list(req.user.id);
-    return res.json({ friends });
+    const { limit, cursor: after } = parsePaginationQuery(req.query, 'after');
+    const { friends, nextCursor } = await friendsService.list(req.user.id, { limit, after });
+    return res.json({ friends, nextCursor });
   } catch (err) {
     return next(err);
   }

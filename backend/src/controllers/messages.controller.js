@@ -1,12 +1,13 @@
 import * as messagesService from '../services/messages.service.js';
 import * as events from '../socket/events.js';
 import * as rooms from '../socket/rooms.js';
+import { parsePaginationQuery } from '../utils/pagination.js';
 
 export async function list(req, res, next) {
   try {
     const { conversationId } = req.params;
-    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
-    const before = req.query.before || null;
+    const { limit, cursor: before } = parsePaginationQuery(req.query, 'before');
+    // `before` is validated (UUID) by validateListMessagesQuery.
 
     const result = await messagesService.list(req.user.id, conversationId, { limit, before });
     return res.json(result);

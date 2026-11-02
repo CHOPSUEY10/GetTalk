@@ -7,6 +7,20 @@
  * - senderId / conversationId not repeated in body
  */
 
+import { UUID_REGEX, validatePaginationQuery } from '../utils/pagination.js';
+
+/**
+ * GET /api/conversations/:conversationId/messages?limit=&before=
+ * Rejects malformed IDs/limits with 400 instead of letting them reach SQL.
+ */
+export function validateListMessagesQuery(body, req) {
+  const conversationId = req?.params?.conversationId;
+  if (!conversationId || !UUID_REGEX.test(conversationId)) {
+    return { valid: false, errors: ['conversationId must be a valid id'] };
+  }
+  return validatePaginationQuery(req?.query, 'before');
+}
+
 export function validateSendMessage(body) {
   const errors = [];
 
