@@ -5,6 +5,13 @@ import http from 'node:http';
 import app from '../app.js';
 import { query } from '../src/config/database.js';
 import { closeRedis } from '../src/config/redis.js';
+import {
+  validateSendMessage,
+  validateEditMessage,
+  MAX_MESSAGE_TEXT_BYTES,
+  GCM_TAG_BYTES,
+  MAX_CIPHERTEXT_BYTES,
+} from '../src/validators/messages.validator.js';
 
 let server;
 let baseUrl;
@@ -68,8 +75,42 @@ async function registerUser(label) {
   return { user, cookie };
 }
 
-describe('Message Edit (FR-11) and Soft Delete (FR-12)', () => {
-  test('owner can edit and soft-delete own message; non-owner is rejected with 403 (AC-07, AC-08, AC-09)', async (t) => {
+describe('Message Edit (FR-11), Soft Delete (FR-12), and 10 KB Payload Limit (Rule #26)', () => {
+  test('validator enforces 10 KB plaintext limit (10,256 ciphertext bytes with GCM tag) and nonce bounds', () => {
+    assert.equal(MAX_MESSAGE_TEXT_BYTES, 10240);
+    assert.equal(GCM_TAG_BYTES, 16);
+    assert.equal(MAX_CIPHERTEXT_BYTES, 10256);
+
+    const exact10KbCipher = Buffer.alloc(MAX_CIPHERTEXT_BYTES, 0x41).toString('base64url');
+    const validSend = validateSendMessage({
+      bodyCiphertext: exact10KbCipher,
+      nonce: 'valid-nonce-1234',
+    });
+    assert.equal(validSend.valid, true);
+
+    const over10KbCipher = Buffer.alloc(MAX_CIPHERTEXT_BYTES + 1, 0x41).toString('base64url');
+    const invalidSend = validateSendMessage({
+      bodyCiphertext: over10KbCipher,
+      nonce: 'valid-nonce-1234',
+    });
+    assert.equal(invalidSend.valid, false);
+    assert.ok(invalidSend.errors.some((e) => e.includes('10 KB')));
+
+    const invalidEdit = validateEditMessage({
+      bodyCiphertext: over10KbCipher,
+      nonce: 'valid-nonce-1234',
+    });
+    assert.equal(invalidEdit.valid, false);
+    assert.ok(invalidEdit.errors.some((e) => e.includes('10 KB')));
+
+    const overNonce = validateSendMessage({
+      bodyCiphertext: 'valid-cipher',
+      nonce: 'n'.repeat(65),
+    });
+    assert.equal(overNonce.valid, false);
+  });
+
+  test('owner can edit and soft-delete own message; non-owner is rejected with 403; >10 KB rejected with 400 VALIDATION_ERROR', async (t) => {
     if (!dbAvailable) return t.skip('PostgreSQL is not reachable');
 
     const alice = await registerUser('editdelA');
@@ -85,6 +126,20 @@ describe('Message Edit (FR-11) and Soft Delete (FR-12)', () => {
       assert.equal(convRes.status, 201);
       conversationId = (await convRes.json()).conversation.id;
 
+      // 0. Reject > 10 KB message on POST with 400 VALIDATION_ERROR (Rule #26)
+      const over10KbCipher = Buffer.alloc(MAX_CIPHERTEXT_BYTES + 1, 0x42).toString('base64url');
+      const overSendRes = await api(`/api/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        cookie: alice.cookie,
+        body: {
+          bodyCiphertext: over10KbCipher,
+          nonce: 'initial-nonce-base64',
+        },
+      });
+      assert.equal(overSendRes.status, 400);
+      const overSendErr = await overSendRes.json();
+      assert.equal(overSendErr.error.code, 'VALIDATION_ERROR');
+
       // 1. Alice sends an encrypted message
       const createRes = await api(`/api/conversations/${conversationId}/messages`, {
         method: 'POST',
@@ -98,6 +153,19 @@ describe('Message Edit (FR-11) and Soft Delete (FR-12)', () => {
       assert.equal(createRes.status, 201);
       const createdMsg = (await createRes.json()).message;
       assert.ok(createdMsg.id);
+
+      // 1b. Reject > 10 KB message on PATCH edit with 400 VALIDATION_ERROR (Rule #26)
+      const overEditRes = await api(`/api/messages/${createdMsg.id}`, {
+        method: 'PATCH',
+        cookie: alice.cookie,
+        body: {
+          bodyCiphertext: over10KbCipher,
+          nonce: 'updated-nonce-base64',
+        },
+      });
+      assert.equal(overEditRes.status, 400);
+      const overEditErr = await overEditRes.json();
+      assert.equal(overEditErr.error.code, 'VALIDATION_ERROR');
 
       // 2. Reject plaintext edit attempt (FR-15, NFR-07)
       const plainEditRes = await api(`/api/messages/${createdMsg.id}`, {
@@ -199,4 +267,3 @@ describe('Message Edit (FR-11) and Soft Delete (FR-12)', () => {
     }
   });
 });
-

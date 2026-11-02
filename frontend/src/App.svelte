@@ -1,15 +1,15 @@
 <script>
   import { onMount } from "svelte";
   import Router from "svelte-spa-router";
-  import { routes } from "./router/index.js";
+  import { routes } from "./routes/index.js";
   import { authStore } from "./stores/auth.store.js";
-  import { connectSocket, disconnectSocket } from "./lib/socket.js";
+  import { socketStore } from "./stores/socket.store.js";
 
   // Manage socket connection lifecycle based on authentication state
   $: if ($authStore.authenticated) {
-    connectSocket();
+    socketStore.connect();
   } else {
-    disconnectSocket();
+    socketStore.disconnect();
   }
 
   onMount(() => {

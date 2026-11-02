@@ -1,6 +1,7 @@
 <script>
     import PublicLayout from "../components/layout/PublicLayout.svelte";
-    import { register } from "../services/api/auth.api.js";
+    import { authStore } from "../stores/auth.store.js";
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../lib/errors/pageerror.js";
     import { push } from "svelte-spa-router";
 
     let username = "";
@@ -17,23 +18,23 @@
         error = null;
 
         if (!username.trim() || !email.trim() || !password) {
-            error = "Semua kolom wajib diisi.";
+            error = getPageErrorMessage(PAGE_ERROR_CODES.REQUIRED_FIELDS, "register");
             return;
         }
 
         if (password.length < 8) {
-            error = "Password minimal terdiri dari 8 karakter.";
+            error = getPageErrorMessage(PAGE_ERROR_CODES.PASSWORD_TOO_SHORT, "register");
             return;
         }
 
         if (password !== confirmPassword) {
-            error = "Konfirmasi password tidak cocok.";
+            error = getPageErrorMessage(PAGE_ERROR_CODES.PASSWORD_MISMATCH, "register");
             return;
         }
 
         try {
             loading = true;
-            await register({
+            await authStore.register({
                 username: username.trim(),
                 email: email.trim(),
                 password
@@ -43,8 +44,10 @@
                 push("/login");
             }, 1500);
         } catch (err) {
-            const e = /** @type {any} */ (err);
-            error = e.message || "Pendaftaran akun gagal. Silakan coba lagi.";
+            error = getPageErrorMessage(err, {
+                context: "register",
+                fallbackCode: PAGE_ERROR_CODES.VALIDATION_ERROR
+            });
         } finally {
             loading = false;
         }

@@ -1,27 +1,25 @@
 <script>
     import { createEventDispatcher } from 'svelte';
-    import { encryptFile } from '../../services/crypto/file-crypto.js';
-    import logger from '../../lib/logger.js';
+    import { validateAttachmentFile } from '../../lib/validators.js';
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from '../../lib/errors/pageerror.js';
 
     export let conversationId = '';
     export let disabled = false;
+    export let loading = false;
 
     const dispatch = createEventDispatcher();
 
     /** @type {HTMLInputElement | null} */
     let fileInput = null;
-    let isEncrypting = false;
     let errorMessage = '';
 
-    const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
-
     const triggerFileInput = () => {
-        if (disabled || isEncrypting) return;
+        if (disabled || loading) return;
         fileInput?.click();
     };
 
     /** @param {Event} e */
-    const handleFileChange = async (e) => {
+    const handleFileChange = (e) => {
         const target = /** @type {HTMLInputElement} */ (e.target);
         const file = target.files?.[0];
         if (!file || !conversationId) return;
@@ -29,34 +27,23 @@
         // Reset input value for re-selection
         target.value = '';
 
-        if (file.size > MAX_FILE_SIZE) {
-            errorMessage = 'Ukuran file melebihi batas 25MB';
+        const validation = validateAttachmentFile(file);
+        if (!validation.valid) {
+            errorMessage = getPageErrorMessage(
+                validation.code || PAGE_ERROR_CODES.FILE_TOO_LARGE,
+                'attachment'
+            );
             setTimeout(() => (errorMessage = ''), 4000);
             return;
         }
 
-        try {
-            isEncrypting = true;
-            errorMessage = '';
-
-            // Encrypt content + metadata client-side. Upload happens after the
-            // owning message exists, so it can carry a valid messageId (issue #14).
-            const encrypted = await encryptFile(file, conversationId);
-
-            dispatch('attached', {
-                encryptedFile: encrypted,
-                fileName: file.name,
-                fileSize: file.size,
-                fileType: file.type,
-            });
-        } catch (err) {
-            const error = /** @type {any} */ (err);
-            logger.error('Client-side file encryption failed', error);
-            errorMessage = error.message || 'Gagal mengenkripsi file';
-            setTimeout(() => (errorMessage = ''), 4000);
-        } finally {
-            isEncrypting = false;
-        }
+        errorMessage = '';
+        dispatch('attached', {
+            file,
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: validation.mimeType,
+        });
     };
 </script>
 
@@ -66,17 +53,17 @@
         class="hidden"
         bind:this={fileInput}
         on:change={handleFileChange}
-        disabled={disabled || isEncrypting}
+        disabled={disabled || loading}
     />
 
     <button
         type="button"
         class="p-2 text-slate-500 hover:text-indigo-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
-        title={isEncrypting ? 'Mengenkripsi file...' : 'Lampirkan file (Terenkripsi E2EE)'}
+        title={loading ? 'Mengenkripsi file...' : 'Lampirkan file (Terenkripsi E2EE)'}
         on:click={triggerFileInput}
-        disabled={disabled || isEncrypting}
+        disabled={disabled || loading}
     >
-        {#if isEncrypting}
+        {#if loading}
             <div class="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
         {:else}
             <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">

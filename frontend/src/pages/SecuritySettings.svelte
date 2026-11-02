@@ -1,13 +1,11 @@
 <script>
     import { onMount } from "svelte";
     import ProtectedLayout from "../components/layout/ProtectedLayout.svelte";
-    import {
-        disableMfa,
-        enableMfa,
-        getMfaStatus,
-        setupMfa,
-    } from "../services/api/auth.api.js";
     import { authStore } from "../stores/auth.store.js";
+    import {
+        PAGE_ERROR_CODES,
+        getPageErrorMessage,
+    } from "../lib/errors/pageerror.js";
 
     let loading = true;
     let saving = false;
@@ -15,16 +13,20 @@
     let password = "";
     let code = "";
     let secret = "";
+    /** @type {string[]} */
     let recoveryCodes = [];
     let errorMessage = "";
     let successMessage = "";
 
     onMount(async () => {
         try {
-            const status = await getMfaStatus();
+            const status = await authStore.getMfaStatus();
             enabled = status.enabled;
         } catch (error) {
-            errorMessage = error.message || "Status MFA tidak dapat dimuat.";
+            errorMessage = getPageErrorMessage(error, {
+                context: "security-settings",
+                fallbackCode: PAGE_ERROR_CODES.MFA_STATUS_LOAD_FAILED,
+            });
         } finally {
             loading = false;
         }
@@ -35,11 +37,14 @@
         successMessage = "";
         saving = true;
         try {
-            const result = await setupMfa({ password });
+            const result = await authStore.setupMfa({ password });
             secret = result.secret;
             password = "";
         } catch (error) {
-            errorMessage = error.message || "Setup MFA gagal dimulai.";
+            errorMessage = getPageErrorMessage(error, {
+                context: "security-settings",
+                fallbackCode: PAGE_ERROR_CODES.MFA_SETUP_FAILED,
+            });
         } finally {
             saving = false;
         }
@@ -50,22 +55,27 @@
         successMessage = "";
         const verificationCode = code.trim();
         if (!/^\d{6}$/.test(verificationCode)) {
-            errorMessage = "Masukkan tepat 6 digit dari aplikasi autentikator.";
+            errorMessage = getPageErrorMessage(
+                PAGE_ERROR_CODES.MFA_SETUP_CODE_INVALID,
+                "security-settings",
+            );
             return;
         }
 
         saving = true;
         try {
-            const result = await enableMfa({ code: verificationCode });
+            const result = await authStore.enableMfa({ code: verificationCode });
             enabled = true;
             secret = "";
             code = "";
             recoveryCodes = result.recoveryCodes;
             successMessage =
                 "MFA aktif. Simpan kode pemulihan ini di tempat yang aman.";
-            authStore.updateUser({ ...$authStore.user, mfaEnabled: true });
         } catch (error) {
-            errorMessage = error.message || "Kode autentikator tidak valid.";
+            errorMessage = getPageErrorMessage(error, {
+                context: "security-settings",
+                fallbackCode: PAGE_ERROR_CODES.INVALID_MFA_CODE,
+            });
         } finally {
             saving = false;
         }
@@ -76,15 +86,17 @@
         successMessage = "";
         saving = true;
         try {
-            await disableMfa({ password, code: code.trim() });
+            await authStore.disableMfa({ password, code: code.trim() });
             enabled = false;
             password = "";
             code = "";
             recoveryCodes = [];
             successMessage = "MFA telah dinonaktifkan.";
-            authStore.updateUser({ ...$authStore.user, mfaEnabled: false });
         } catch (error) {
-            errorMessage = error.message || "MFA tidak dapat dinonaktifkan.";
+            errorMessage = getPageErrorMessage(error, {
+                context: "security-settings",
+                fallbackCode: PAGE_ERROR_CODES.MFA_DISABLE_FAILED,
+            });
         } finally {
             saving = false;
         }
