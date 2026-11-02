@@ -34,3 +34,4 @@ export function checkGuard(config, detail) {
     
     return true;
 }
+

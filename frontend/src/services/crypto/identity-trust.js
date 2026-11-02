@@ -18,7 +18,7 @@ import { toBase64Url, fromBase64Url } from './aes-gcm.js';
 import {
   ENCRYPTION_ERROR_CODES,
   handleEncryptionError,
-} from '../../errors/encryptionerror.js';
+} from '../../lib/errors/encryptionerror.js';
 
 export class IdentityKeyChangedError extends Error {
   /**

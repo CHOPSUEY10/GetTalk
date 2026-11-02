@@ -2,7 +2,7 @@
     import { onMount } from "svelte";
     import PublicLayout from "../components/layout/PublicLayout.svelte";
     import { authStore } from "../stores/auth.store.js";
-    import { PAGE_ERROR_CODES, resolvePageError } from "../errors/pageerror.js";
+    import { PAGE_ERROR_CODES, resolvePageError } from "../lib/errors/pageerror.js";
 
     let email = "";
     let token = "";

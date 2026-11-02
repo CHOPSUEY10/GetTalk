@@ -1,6 +1,7 @@
 <script>
     import { createEventDispatcher } from "svelte";
-    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../../errors/pageerror.js";
+    import { validateMessageText } from "../../lib/validators.js";
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../../lib/errors/pageerror.js";
 
     /** @type {any} */
     export let msg;
@@ -49,19 +50,22 @@
     };
 
     const submitEdit = () => {
-        const trimmed = editDraft.trim();
-        if (!trimmed) {
-            localError = getPageErrorMessage(PAGE_ERROR_CODES.EMPTY_MESSAGE, "edit-message");
+        const validation = validateMessageText(editDraft);
+        if (!validation.valid) {
+            localError = getPageErrorMessage(
+                validation.code || PAGE_ERROR_CODES.EMPTY_MESSAGE,
+                "edit-message"
+            );
             return;
         }
-        if (trimmed === (msg.plaintext || "").trim()) {
+        if (validation.trimmed === (msg.plaintext || "").trim()) {
             cancelEdit();
             return;
         }
         localError = null;
         dispatch("edit", {
             messageId: msg.id,
-            plaintext: trimmed,
+            plaintext: validation.trimmed,
             done: (/** @type {string | null} */ errMessage) => {
                 if (errMessage) {
                     localError = errMessage;
@@ -132,7 +136,6 @@
                     bind:value={editDraft}
                     on:keydown={handleEditKeydown}
                     disabled={isBusy}
-                    maxlength="4000"
                     class="w-full px-3 py-1.5 rounded-lg bg-white text-slate-900 text-sm border border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-300 disabled:opacity-60"
                     placeholder="Tulis perubahan pesan..."
                 />

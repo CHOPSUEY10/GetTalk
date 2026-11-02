@@ -6,6 +6,10 @@ import {
   deleteMessage as apiDeleteMessage
 } from '../services/api/messages.api.js';
 import {
+  uploadAttachment,
+  downloadAttachmentContent
+} from '../services/api/attachments.api.js';
+import {
   sendEncryptedMessage,
   editEncryptedMessage,
   deleteEncryptedMessage,
@@ -13,10 +17,12 @@ import {
 } from '../services/socket/client.js';
 import { registerSocketListeners } from '../services/socket/handlers.js';
 import { encryptMessage, decryptMessage } from '../services/crypto/message-crypto.js';
+import { encryptFile, decryptFile, createDownloadUrl } from '../services/crypto/file-crypto.js';
 import { conversationsStore } from './conversations.store.js';
-import { ApiError, API_ERROR_CODES, handleApiError } from '../errors/apierror.js';
-import { ENCRYPTION_ERROR_CODES, EncryptionError } from '../errors/encryptionerror.js';
-import { PAGE_ERROR_CODES, resolvePageError } from '../errors/pageerror.js';
+import { validateMessageText, validateAttachmentFile } from '../lib/validators.js';
+import { ApiError, API_ERROR_CODES, handleApiError } from '../lib/errors/apierror.js';
+import { ENCRYPTION_ERROR_CODES, EncryptionError } from '../lib/errors/encryptionerror.js';
+import { PAGE_ERROR_CODES, resolvePageError } from '../lib/errors/pageerror.js';
 
 /**
  * @typedef {Object} MessageItem
@@ -104,6 +110,23 @@ async function decryptPayload(conversationId, ciphertext, nonce) {
       errorCode: anyErr?.code || ENCRYPTION_ERROR_CODES.DECRYPTION_FAILED
     };
   }
+}
+
+/**
+ * Helper to create a normalized client-side validation error with a specific page error code.
+ * @param {string} pageErrorCode
+ * @param {string} technicalMessage
+ * @returns {ApiError}
+ */
+function buildValidationError(pageErrorCode, technicalMessage) {
+  const err = new ApiError({
+    code: API_ERROR_CODES.VALIDATION_ERROR,
+    status: 400,
+    message: technicalMessage,
+    logged: true
+  });
+  err.code = pageErrorCode;
+  return err;
 }
 
 /**
@@ -245,18 +268,62 @@ function createMessagesStore() {
     },
 
     /**
-     * Send an encrypted message to a conversation.
+     * Validate (<= 10 KB UTF-8), encrypt locally, and send a message to a conversation
+     * (Rule #3, #14, #20, #25, #26).
+     *
      * @param {string} conversationId
      * @param {{
-     *   bodyCiphertext: string,
-     *   nonce: string,
-     *   senderId: string,
+     *   plaintext?: string,
+     *   bodyCiphertext?: string,
+     *   nonce?: string,
+     *   senderId?: string,
      *   senderUsername?: string,
      *   plaintextPreview?: string
      * }} params
      */
-    sendMessage: async (conversationId, { bodyCiphertext, nonce, senderId, senderUsername, plaintextPreview }) => {
-      if (!conversationId || !bodyCiphertext || !nonce) return null;
+    sendMessage: async (
+      conversationId,
+      {
+        plaintext,
+        bodyCiphertext: preEncryptedCiphertext,
+        nonce: preEncryptedNonce,
+        senderId = 'me',
+        senderUsername = 'Me',
+        plaintextPreview
+      } = {}
+    ) => {
+      if (!conversationId) return null;
+
+      let bodyCiphertext = preEncryptedCiphertext;
+      let nonce = preEncryptedNonce;
+      let resolvedPlaintext = plaintext !== undefined ? plaintext : plaintextPreview;
+
+      if (!bodyCiphertext || !nonce) {
+        const validation = validateMessageText(resolvedPlaintext);
+        if (!validation.valid) {
+          throw buildValidationError(
+            validation.code || PAGE_ERROR_CODES.VALIDATION_ERROR,
+            validation.code === PAGE_ERROR_CODES.MESSAGE_TOO_LONG
+              ? 'Message content exceeds maximum size of 10 KB.'
+              : 'Message content cannot be empty.'
+          );
+        }
+        resolvedPlaintext = validation.trimmed;
+        const encrypted = await encryptMessage(conversationId, resolvedPlaintext);
+        bodyCiphertext = encrypted.bodyCiphertext;
+        nonce = encrypted.nonce;
+      } else if (resolvedPlaintext !== undefined && resolvedPlaintext !== null) {
+        const validation = validateMessageText(resolvedPlaintext);
+        if (!validation.valid) {
+          throw buildValidationError(
+            validation.code || PAGE_ERROR_CODES.VALIDATION_ERROR,
+            validation.code === PAGE_ERROR_CODES.MESSAGE_TOO_LONG
+              ? 'Message content exceeds maximum size of 10 KB.'
+              : 'Message content cannot be empty.'
+          );
+        }
+        resolvedPlaintext = validation.trimmed;
+      }
 
       const clientMessageId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const nowIso = new Date().toISOString();
@@ -269,7 +336,7 @@ function createMessagesStore() {
         sender_username: senderUsername || 'Me',
         body_ciphertext: bodyCiphertext,
         nonce,
-        plaintext: plaintextPreview || null,
+        plaintext: resolvedPlaintext || null,
         decryptError: false,
         status: 'sending',
         client_message_id: clientMessageId,
@@ -310,12 +377,17 @@ function createMessagesStore() {
         const serverMessage = socketRes?.message;
 
         if (serverMessage) {
-          const confirmed = normalizeMessage(serverMessage, conversationId);
+          const confirmed = {
+            ...normalizeMessage(serverMessage, conversationId),
+            plaintext: resolvedPlaintext || null,
+            decryptError: false,
+            status: /** @type {MessageItem['status']} */ ('sent')
+          };
           update((s) => {
             const list = s.messagesByConversation[conversationId] || [];
             const replaced = list.map((m) =>
               m.client_message_id === clientMessageId || m.id === clientMessageId
-                ? { ...confirmed, plaintext: plaintextPreview || null, decryptError: false, status: 'sent' }
+                ? confirmed
                 : m
             );
             return {
@@ -333,12 +405,17 @@ function createMessagesStore() {
           clientMessageId
         });
 
-        const confirmed = normalizeMessage(restRes?.message || restRes, conversationId);
+        const confirmed = {
+          ...normalizeMessage(restRes?.message || restRes, conversationId),
+          plaintext: resolvedPlaintext || null,
+          decryptError: false,
+          status: /** @type {MessageItem['status']} */ ('sent')
+        };
         update((s) => {
           const list = s.messagesByConversation[conversationId] || [];
           const replaced = list.map((m) =>
             m.client_message_id === clientMessageId || m.id === clientMessageId
-              ? { ...confirmed, plaintext: plaintextPreview || null, decryptError: false, status: 'sent' }
+              ? confirmed
               : m
           );
           return {
@@ -379,9 +456,118 @@ function createMessagesStore() {
     },
 
     /**
-     * Edit an existing message owned by the current user (FR-11, AC-07, AC-09).
-     * Re-encrypts with a fresh AES-GCM nonce if plaintext is provided, or accepts
-     * pre-encrypted { bodyCiphertext, nonce, plaintextPreview }.
+     * Validate (< 25 MB, MIME type), encrypt file locally, send owning message,
+     * and upload encrypted attachment bytes + metadata (Rule #3, #21, #25, #26).
+     *
+     * @param {string} conversationId
+     * @param {{
+     *   file: File,
+     *   senderId?: string,
+     *   senderUsername?: string
+     * }} params
+     */
+    sendAttachmentMessage: async (
+      conversationId,
+      { file, senderId = 'me', senderUsername = 'Me' } = /** @type {any} */ ({})
+    ) => {
+      if (!conversationId) {
+        throw buildValidationError(
+          PAGE_ERROR_CODES.VALIDATION_ERROR,
+          'conversationId is required to send an attachment.'
+        );
+      }
+
+      const fileValidation = validateAttachmentFile(file);
+      if (!fileValidation.valid) {
+        throw buildValidationError(
+          fileValidation.code || PAGE_ERROR_CODES.FILE_TOO_LARGE,
+          fileValidation.code === PAGE_ERROR_CODES.FILE_TOO_LARGE
+            ? 'Attachment file exceeds maximum size of 25 MB.'
+            : 'Invalid attachment file.'
+        );
+      }
+
+      // 1. Encrypt file content + metadata client-side
+      const encryptedFile = await encryptFile(file, conversationId);
+
+      // 2. Send the owning E2EE message first so the upload is authorized against its messageId
+      const sizeStr = (file.size / 1024).toFixed(1);
+      const caption = `📎 [Berkas Terenkripsi] ${file.name} (${sizeStr} KB)`;
+
+      const confirmed = await messagesStore.sendMessage(conversationId, {
+        plaintext: caption,
+        senderId,
+        senderUsername
+      });
+
+      // 3. Upload encrypted attachment payload
+      let uploadedAttachment = null;
+      if (confirmed?.id) {
+        const uploadRes = await uploadAttachment({
+          messageId: confirmed.id,
+          metadataCiphertext: encryptedFile.metadataCiphertext,
+          metadataNonce: encryptedFile.metadataNonce,
+          encryptedBlob: encryptedFile.encryptedBlob
+        });
+        uploadedAttachment = uploadRes?.attachment || uploadRes || null;
+        if (uploadedAttachment?.id) {
+          messagesStore.handleAttachmentNew({
+            ...uploadedAttachment,
+            messageId: uploadedAttachment.messageId || confirmed.id
+          });
+        }
+      }
+
+      return {
+        message: confirmed,
+        attachment: uploadedAttachment
+      };
+    },
+
+    /**
+     * Download encrypted attachment content, decrypt locally, and trigger browser download
+     * (Rule #3, #21, #25).
+     *
+     * @param {string} conversationId
+     * @param {any} attachment
+     */
+    downloadAttachment: async (conversationId, attachment) => {
+      if (!conversationId || !attachment?.id) {
+        throw buildValidationError(
+          PAGE_ERROR_CODES.VALIDATION_ERROR,
+          'conversationId and attachment.id are required to download an attachment.'
+        );
+      }
+
+      const content = await downloadAttachmentContent(attachment.id);
+      const decryptedFile = await decryptFile(
+        content,
+        conversationId,
+        attachment.metadataCiphertext,
+        attachment.metadataNonce
+      );
+
+      const url = createDownloadUrl(decryptedFile.blob);
+
+      if (typeof document !== 'undefined') {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = decryptedFile.name || 'attachment';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      return {
+        ...decryptedFile,
+        url
+      };
+    },
+
+    /**
+     * Edit an existing message owned by the current user (FR-11, AC-07, AC-09, Rule #26).
+     * Validates plaintext size <= 10 KB and re-encrypts with a fresh AES-GCM nonce.
      *
      * @param {string} conversationId
      * @param {string} messageId
@@ -402,24 +588,35 @@ function createMessagesStore() {
         });
       }
 
-      let bodyCiphertext = params?.bodyCiphertext;
-      let nonce = params?.nonce;
-      const preview = params?.plaintextPreview ?? params?.plaintext ?? null;
+      const normalizedParams =
+        typeof params === 'string' ? { plaintext: params } : (params || {});
+      let bodyCiphertext = normalizedParams?.bodyCiphertext;
+      let nonce = normalizedParams?.nonce;
+      const preview = normalizedParams?.plaintextPreview ?? normalizedParams?.plaintext ?? null;
 
       if (!bodyCiphertext || !nonce) {
-        if (!params?.plaintext || !params.plaintext.trim()) {
-          const emptyErr = new ApiError({
-            code: API_ERROR_CODES.VALIDATION_ERROR,
-            status: 400,
-            message: 'Message content cannot be empty.',
-            logged: true
-          });
-          emptyErr.code = PAGE_ERROR_CODES.EMPTY_MESSAGE;
-          throw emptyErr;
+        const validation = validateMessageText(normalizedParams?.plaintext);
+        if (!validation.valid) {
+          throw buildValidationError(
+            validation.code || PAGE_ERROR_CODES.EMPTY_MESSAGE,
+            validation.code === PAGE_ERROR_CODES.MESSAGE_TOO_LONG
+              ? 'Message content exceeds maximum size of 10 KB.'
+              : 'Message content cannot be empty.'
+          );
         }
-        const encrypted = await encryptMessage(conversationId, params.plaintext.trim());
+        const encrypted = await encryptMessage(conversationId, validation.trimmed);
         bodyCiphertext = encrypted.bodyCiphertext;
         nonce = encrypted.nonce;
+      } else if (preview !== null) {
+        const validation = validateMessageText(preview);
+        if (!validation.valid) {
+          throw buildValidationError(
+            validation.code || PAGE_ERROR_CODES.EMPTY_MESSAGE,
+            validation.code === PAGE_ERROR_CODES.MESSAGE_TOO_LONG
+              ? 'Message content exceeds maximum size of 10 KB.'
+              : 'Message content cannot be empty.'
+          );
+        }
       }
 
       try {

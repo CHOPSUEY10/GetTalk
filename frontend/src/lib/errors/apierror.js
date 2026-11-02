@@ -1,4 +1,4 @@
-import logger, { sanitize, sanitizeString, sanitizeUrl, isSafeErrorCode } from '../lib/logger.js';
+import logger, { sanitize, sanitizeString, sanitizeUrl, isSafeErrorCode } from '../logger.js';
 
 export { sanitizeUrl };
 
@@ -603,3 +603,4 @@ export default {
   logApiError,
   handleApiError
 };
+

@@ -1,7 +1,16 @@
 import { writable, get } from 'svelte/store';
 import { listConversations, getConversation, createConversation } from '../services/api/conversations.api.js';
-import { handleApiError } from '../errors/apierror.js';
-import { PAGE_ERROR_CODES, resolvePageError } from '../errors/pageerror.js';
+import { establishConversationSession } from '../services/crypto/conversation-session.js';
+import { IdentityKeyChangedError, acceptChangedPeerKey } from '../services/crypto/identity-trust.js';
+import { handleApiError } from '../lib/errors/apierror.js';
+import { PAGE_ERROR_CODES, resolvePageError, getPageErrorMessage } from '../lib/errors/pageerror.js';
+
+/**
+ * @typedef {Object} KeyChangeInfo
+ * @property {string} userId
+ * @property {string} previousFingerprint
+ * @property {string} fingerprint
+ */
 
 /**
  * @typedef {Object} ConversationState
@@ -11,6 +20,9 @@ import { PAGE_ERROR_CODES, resolvePageError } from '../errors/pageerror.js';
  * @property {boolean} loading
  * @property {string | null} error
  * @property {string | null} [errorCode]
+ * @property {'initializing' | 'ready' | 'error' | 'keyChange'} e2eeStatus
+ * @property {string | null} e2eeError
+ * @property {KeyChangeInfo | null} keyChange
  */
 
 /** @type {ConversationState} */
@@ -21,12 +33,15 @@ const initialState = {
   loading: false,
   error: null,
   errorCode: null,
+  e2eeStatus: 'initializing',
+  e2eeError: null,
+  keyChange: null,
 };
 
 function createConversationsStore() {
   const { subscribe, set, update } = writable(initialState);
 
-  return {
+  const conversationsStore = {
     subscribe,
 
     /**
@@ -99,6 +114,145 @@ function createConversationsStore() {
           method: 'GET',
         });
         return null;
+      }
+    },
+
+    /**
+     * Initialize E2EE session for a conversation (Rule #3, #17, #20).
+     * Wraps `establishConversationSession` and records session status in the store.
+     *
+     * @param {string} conversationId
+     * @param {string | undefined} currentUserId
+     * @returns {Promise<{
+     *   status: 'initializing' | 'ready' | 'error' | 'keyChange',
+     *   error: string | null,
+     *   keyChange: KeyChangeInfo | null,
+     *   conversation: any | null
+     * }>}
+     */
+    initE2EESession: async (conversationId, currentUserId) => {
+      if (!conversationId) {
+        return {
+          status: 'error',
+          error: getPageErrorMessage(PAGE_ERROR_CODES.E2EE_PEER_UNAVAILABLE, 'e2ee'),
+          keyChange: null,
+          conversation: null,
+        };
+      }
+
+      update((s) => ({
+        ...s,
+        e2eeStatus: 'initializing',
+        e2eeError: null,
+        keyChange: null,
+      }));
+
+      const conv = await conversationsStore.selectConversation(conversationId);
+      const peerId = conv?.peer?.id;
+
+      if (!currentUserId || !peerId) {
+        const errMsg = getPageErrorMessage(PAGE_ERROR_CODES.E2EE_PEER_UNAVAILABLE, 'e2ee');
+        update((s) => ({
+          ...s,
+          e2eeStatus: 'error',
+          e2eeError: errMsg,
+          keyChange: null,
+        }));
+        return {
+          status: 'error',
+          error: errMsg,
+          keyChange: null,
+          conversation: conv,
+        };
+      }
+
+      try {
+        await establishConversationSession({
+          conversationId,
+          currentUserId,
+          peerUserId: peerId,
+        });
+        update((s) => ({
+          ...s,
+          e2eeStatus: 'ready',
+          e2eeError: null,
+          keyChange: null,
+        }));
+        return {
+          status: 'ready',
+          error: null,
+          keyChange: null,
+          conversation: conv,
+        };
+      } catch (err) {
+        if (err instanceof IdentityKeyChangedError) {
+          /** @type {KeyChangeInfo} */
+          const keyChange = {
+            userId: err.userId,
+            previousFingerprint: err.previousFingerprint,
+            fingerprint: err.fingerprint,
+          };
+          const errMsg = getPageErrorMessage(PAGE_ERROR_CODES.IDENTITY_KEY_CHANGED, 'e2ee');
+          update((s) => ({
+            ...s,
+            e2eeStatus: 'keyChange',
+            e2eeError: errMsg,
+            keyChange,
+          }));
+          return {
+            status: 'keyChange',
+            error: errMsg,
+            keyChange,
+            conversation: conv,
+          };
+        }
+
+        const errMsg = getPageErrorMessage(err, {
+          context: 'e2ee',
+          fallbackCode: PAGE_ERROR_CODES.KEY_EXCHANGE_FAILED,
+        });
+        update((s) => ({
+          ...s,
+          e2eeStatus: 'error',
+          e2eeError: errMsg,
+          keyChange: null,
+        }));
+        return {
+          status: 'error',
+          error: errMsg,
+          keyChange: null,
+          conversation: conv,
+        };
+      }
+    },
+
+    /**
+     * Accept a peer's changed identity key after out-of-band fingerprint verification (Rule #17)
+     * and re-initialize the E2EE session.
+     *
+     * @param {string} conversationId
+     * @param {string | undefined} currentUserId
+     * @param {string} [peerUserId]
+     */
+    acceptPeerKeyChange: async (conversationId, currentUserId, peerUserId) => {
+      const current = get({ subscribe });
+      const targetUserId = peerUserId || current.keyChange?.userId;
+      if (!targetUserId) return null;
+
+      try {
+        await acceptChangedPeerKey(targetUserId);
+        return await conversationsStore.initE2EESession(conversationId, currentUserId);
+      } catch (err) {
+        const errMsg = getPageErrorMessage(err, {
+          context: 'e2ee',
+          fallbackCode: PAGE_ERROR_CODES.KEY_EXCHANGE_FAILED,
+        });
+        update((s) => ({
+          ...s,
+          e2eeStatus: 'error',
+          e2eeError: errMsg,
+        }));
+        throw err;
       }
     },
 
@@ -176,6 +330,8 @@ function createConversationsStore() {
       set(initialState);
     },
   };
+
+  return conversationsStore;
 }
 
 export const conversationsStore = createConversationsStore();

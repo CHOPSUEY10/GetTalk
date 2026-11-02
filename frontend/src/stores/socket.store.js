@@ -1,8 +1,8 @@
 import { writable } from 'svelte/store';
 import { socket, joinConversation as apiJoin, leaveConversation as apiLeave } from '../services/socket/client.js';
 import { friendsStore } from './friends.store.js';
-import { API_ERROR_CODES, handleApiError } from '../errors/apierror.js';
-import { getPageErrorMessage } from '../errors/pageerror.js';
+import { API_ERROR_CODES, handleApiError } from '../lib/errors/apierror.js';
+import { getPageErrorMessage } from '../lib/errors/pageerror.js';
 
 /**
  * @typedef {Object} SocketState

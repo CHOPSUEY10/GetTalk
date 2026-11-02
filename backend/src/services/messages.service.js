@@ -11,6 +11,7 @@ import {
   NOT_MESSAGE_OWNER,
   VALIDATION_ERROR,
 } from '../errors/error-codes.js';
+import { validateSendMessage, validateEditMessage } from '../validators/messages.validator.js';
 
 export async function list(userId, conversationId, { limit = 50, before } = {}) {
   // Verify membership
@@ -36,8 +37,9 @@ export async function create(userId, conversationId, { bodyCiphertext, nonce, cl
     throw new AppError('Not a member of this conversation', 403, NOT_CONVERSATION_MEMBER);
   }
 
-  if (!bodyCiphertext || !nonce) {
-    throw new AppError('bodyCiphertext and nonce are required', 400, VALIDATION_ERROR);
+  const validation = validateSendMessage({ bodyCiphertext, nonce, clientMessageId });
+  if (!validation.valid) {
+    throw new AppError(validation.errors[0], 400, VALIDATION_ERROR);
   }
 
   const message = await messagesRepo.create({
@@ -73,8 +75,9 @@ export async function update(userId, messageId, { bodyCiphertext, nonce }) {
     throw new AppError('Not a member of this conversation', 403, NOT_CONVERSATION_MEMBER);
   }
 
-  if (!bodyCiphertext || !nonce) {
-    throw new AppError('bodyCiphertext and nonce are required', 400, VALIDATION_ERROR);
+  const validation = validateEditMessage({ bodyCiphertext, nonce });
+  if (!validation.valid) {
+    throw new AppError(validation.errors[0], 400, VALIDATION_ERROR);
   }
 
   const updated = await messagesRepo.update(messageId, { bodyCiphertext, nonce });

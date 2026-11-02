@@ -16,7 +16,7 @@ import {
   ENCRYPTION_ERROR_CODES,
   EncryptionError,
   handleEncryptionError,
-} from '../../errors/encryptionerror.js';
+} from '../../lib/errors/encryptionerror.js';
 
 /**
  * @param {{ conversationId: string, currentUserId: string, peerUserId: string }} params

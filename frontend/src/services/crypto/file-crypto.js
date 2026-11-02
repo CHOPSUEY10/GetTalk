@@ -23,7 +23,7 @@ import {
   ENCRYPTION_ERROR_CODES,
   EncryptionError,
   handleEncryptionError,
-} from '../../errors/encryptionerror.js';
+} from '../../lib/errors/encryptionerror.js';
 
 /**
  * @returns {Promise<CryptoKey>}

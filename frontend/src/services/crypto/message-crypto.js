@@ -14,7 +14,7 @@ import {
   ENCRYPTION_ERROR_CODES,
   EncryptionError,
   handleEncryptionError,
-} from '../../errors/encryptionerror.js';
+} from '../../lib/errors/encryptionerror.js';
 
 /**
  * Active derived-key id per conversation.

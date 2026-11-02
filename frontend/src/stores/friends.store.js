@@ -10,8 +10,8 @@ import {
 import { searchUsers } from '../services/api/users.api.js';
 import { socket } from '../services/socket/client.js';
 import * as events from '../services/socket/events.js';
-import { ApiError, API_ERROR_CODES, handleApiError } from '../errors/apierror.js';
-import { PAGE_ERROR_CODES, resolvePageError } from '../errors/pageerror.js';
+import { ApiError, API_ERROR_CODES, handleApiError } from '../lib/errors/apierror.js';
+import { PAGE_ERROR_CODES, resolvePageError } from '../lib/errors/pageerror.js';
 
 /**
  * @typedef {Object} FriendsState

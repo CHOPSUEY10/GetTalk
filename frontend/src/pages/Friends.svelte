@@ -3,7 +3,7 @@
     import ProtectedLayout from "../components/layout/ProtectedLayout.svelte";
     import { friendsStore } from "../stores/friends.store.js";
     import { conversationsStore } from "../stores/conversations.store.js";
-    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../errors/pageerror.js";
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../lib/errors/pageerror.js";
     import { push } from "svelte-spa-router";
 
     let activeTab = "friends"; // 'friends' | 'requests' | 'add'

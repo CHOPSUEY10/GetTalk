@@ -1,5 +1,5 @@
 import env from '../../config/env.js';
-import { ApiError, API_ERROR_CODES, handleApiError } from '../../errors/apierror.js';
+import { ApiError, API_ERROR_CODES, handleApiError } from '../../lib/errors/apierror.js';
 
 export { ApiError };
 

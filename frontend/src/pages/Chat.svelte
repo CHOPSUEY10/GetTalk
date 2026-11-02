@@ -5,33 +5,25 @@
     import { socketStore } from "../stores/socket.store.js";
     import { conversationsStore } from "../stores/conversations.store.js";
     import { messagesStore } from "../stores/messages.store.js";
-    import AttachmentPicker from "../components/attachments/AttachmentPicker.svelte";
     import MessageItem from "../components/chat/MessageItem.svelte";
-    import { uploadAttachment, downloadAttachmentContent } from "../services/api/attachments.api.js";
-    import { encryptMessage } from "../services/crypto/message-crypto.js";
-    import { decryptFile, createDownloadUrl } from "../services/crypto/file-crypto.js";
-    import { establishConversationSession } from "../services/crypto/conversation-session.js";
-    import { IdentityKeyChangedError, acceptChangedPeerKey } from "../services/crypto/identity-trust.js";
-    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../errors/pageerror.js";
+    import MessageInput from "../components/chat/MessageInput.svelte";
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../lib/errors/pageerror.js";
     import { push } from "svelte-spa-router";
 
     /** @type {{ conversationId?: string, [key: string]: any }} */
     export let params = {};
 
     let conversationId = "";
-    let messageText = "";
-    let isSending = false;
     /** @type {string | null} */
     let mutatingMessageId = null;
     let roomStatus = "connecting";
-    /** @type {'initializing' | 'ready' | 'error'} */
-    let e2eeStatus = "initializing";
-    /** @type {string | null} */
-    let e2eeError = null;
     /** @type {string | null} */
     let attachmentError = null;
-    /** @type {null | { userId: string, previousFingerprint: string, fingerprint: string }} */
-    let keyChange = null;
+
+    $: e2eeStatus = $conversationsStore.e2eeStatus;
+    $: e2eeError = $conversationsStore.e2eeError;
+    $: keyChange = $conversationsStore.keyChange;
+    $: isE2EEError = e2eeStatus === "error" || e2eeStatus === "keyChange";
 
     $: if (params.conversationId && params.conversationId !== conversationId) {
         if (conversationId) {
@@ -45,44 +37,11 @@
     const initConversation = async (convId) => {
         if (!convId) return;
         roomStatus = "connecting";
-        e2eeStatus = "initializing";
-        e2eeError = null;
-        keyChange = null;
+        attachmentError = null;
 
-        // Establish the E2EE session before joining the room or loading history,
+        // Establish the E2EE session via store before joining the room or loading history,
         // so no message is displayed or sent without a verified key.
-        const conv = await conversationsStore.selectConversation(convId);
-        const peerId = conv?.peer?.id;
-        const currentUserId = $authStore.user?.id;
-
-        if (!currentUserId || !peerId) {
-            e2eeStatus = "error";
-            e2eeError = getPageErrorMessage(PAGE_ERROR_CODES.E2EE_PEER_UNAVAILABLE, "e2ee");
-        } else {
-            try {
-                await establishConversationSession({
-                    conversationId: convId,
-                    currentUserId,
-                    peerUserId: peerId
-                });
-                e2eeStatus = "ready";
-            } catch (err) {
-                e2eeStatus = "error";
-                if (err instanceof IdentityKeyChangedError) {
-                    keyChange = {
-                        userId: err.userId,
-                        previousFingerprint: err.previousFingerprint,
-                        fingerprint: err.fingerprint
-                    };
-                    e2eeError = getPageErrorMessage(PAGE_ERROR_CODES.IDENTITY_KEY_CHANGED, "e2ee");
-                } else {
-                    e2eeError = getPageErrorMessage(err, {
-                        context: "e2ee",
-                        fallbackCode: PAGE_ERROR_CODES.KEY_EXCHANGE_FAILED
-                    });
-                }
-            }
-        }
+        await conversationsStore.initE2EESession(convId, $authStore.user?.id);
 
         // Join WebSocket Room
         const joinRes = await socketStore.joinRoom(convId);
@@ -92,36 +51,6 @@
         await messagesStore.loadMessages(convId);
 
         scrollToBottom();
-    };
-
-    const handleSendMessage = async () => {
-        if (!messageText.trim() || !conversationId || isSending) return;
-        if (e2eeStatus !== "ready") return;
-
-        const textToSend = messageText.trim();
-        messageText = "";
-
-        try {
-            isSending = true;
-            // Never send plaintext: encrypt locally first.
-            const { bodyCiphertext, nonce } = await encryptMessage(conversationId, textToSend);
-
-            await messagesStore.sendMessage(conversationId, {
-                bodyCiphertext,
-                nonce,
-                senderId: $authStore.user?.id || "me",
-                senderUsername: $authStore.user?.username || "Me",
-                plaintextPreview: textToSend
-            });
-            scrollToBottom();
-        } catch (err) {
-            attachmentError = getPageErrorMessage(err, {
-                context: "send-message",
-                fallbackCode: PAGE_ERROR_CODES.MESSAGE_SEND_FAILED
-            });
-        } finally {
-            isSending = false;
-        }
     };
 
     /**
@@ -187,55 +116,15 @@
         if (!confirmed) return;
 
         try {
-            await acceptChangedPeerKey(keyChange.userId);
-            await initConversation(conversationId);
-        } catch (err) {
-            e2eeError = getPageErrorMessage(err, {
-                context: "e2ee",
-                fallbackCode: PAGE_ERROR_CODES.KEY_EXCHANGE_FAILED
-            });
-        }
-    };
-
-    /** @param {CustomEvent<{ encryptedFile: any, fileName: string, fileSize: number }>} e */
-    const handleAttached = async (e) => {
-        const { encryptedFile, fileName, fileSize } = e.detail;
-        if (!conversationId || e2eeStatus !== "ready" || isSending) return;
-
-        isSending = true;
-        attachmentError = null;
-        try {
-            const sizeStr = (fileSize / 1024).toFixed(1);
-            const text = `📎 [Berkas Terenkripsi] ${fileName} (${sizeStr} KB)`;
-            const { bodyCiphertext, nonce } = await encryptMessage(conversationId, text);
-
-            // The owning message must exist first so the upload is authorized
-            // against its conversation (issue #14).
-            const confirmed = await messagesStore.sendMessage(conversationId, {
-                bodyCiphertext,
-                nonce,
-                senderId: $authStore.user?.id || "me",
-                senderUsername: $authStore.user?.username || "Me",
-                plaintextPreview: text
-            });
-
-            if (confirmed?.id) {
-                await uploadAttachment({
-                    messageId: confirmed.id,
-                    metadataCiphertext: encryptedFile.metadataCiphertext,
-                    metadataNonce: encryptedFile.metadataNonce,
-                    encryptedBlob: encryptedFile.encryptedBlob
-                });
-            }
-
+            await conversationsStore.acceptPeerKeyChange(
+                conversationId,
+                $authStore.user?.id,
+                keyChange.userId
+            );
+            await messagesStore.loadMessages(conversationId);
             scrollToBottom();
-        } catch (err) {
-            attachmentError = getPageErrorMessage(err, {
-                context: "attachment",
-                fallbackCode: PAGE_ERROR_CODES.FILE_ENCRYPTION_FAILED
-            });
-        } finally {
-            isSending = false;
+        } catch {
+            // Error is already normalized and stored in conversationsStore.e2eeError
         }
     };
 
@@ -243,22 +132,7 @@
     const handleDownloadAttachment = async (attachment) => {
         try {
             attachmentError = null;
-            const content = await downloadAttachmentContent(attachment.id);
-            const file = await decryptFile(
-                content,
-                conversationId,
-                attachment.metadataCiphertext,
-                attachment.metadataNonce
-            );
-
-            const url = createDownloadUrl(file.blob);
-            const link = document.createElement("a");
-            link.href = url;
-            link.download = file.name || "attachment";
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
-            URL.revokeObjectURL(url);
+            await messagesStore.downloadAttachment(conversationId, attachment);
         } catch (err) {
             attachmentError = getPageErrorMessage(err, {
                 context: "attachment",
@@ -272,14 +146,6 @@
             const container = document.getElementById("chat-messages");
             if (container) container.scrollTop = container.scrollHeight;
         }, 60);
-    };
-
-    /** @param {KeyboardEvent} event */
-    const handleKeydown = (event) => {
-        if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            handleSendMessage();
-        }
     };
 
     $: currentMessages = $messagesStore.messagesByConversation[conversationId] || [];
@@ -348,7 +214,7 @@
                         </svg>
                         <span class="hidden sm:inline">E2EE Terproteksi</span>
                     </div>
-                {:else if e2eeStatus === 'error'}
+                {:else if isE2EEError}
                     <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium" title={e2eeError || 'Sesi E2EE gagal'}>
                         <svg class="w-3.5 h-3.5 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
@@ -367,20 +233,20 @@
         <!-- Messages Feed Container -->
         <div id="chat-messages" class="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50/50">
             <!-- E2EE Info Banner -->
-            <div class="max-w-md mx-auto p-3.5 rounded-2xl {e2eeStatus === 'error' ? 'bg-rose-50/70 border-rose-100 text-rose-800' : 'bg-indigo-50/70 border-indigo-100 text-indigo-800'} border text-center text-xs leading-relaxed shadow-xs">
-                <div class="flex items-center justify-center gap-1.5 font-semibold mb-1 {e2eeStatus === 'error' ? 'text-rose-900' : 'text-indigo-900'}">
-                    <svg class="w-4 h-4 {e2eeStatus === 'error' ? 'text-rose-600' : 'text-indigo-600'}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <div class="max-w-md mx-auto p-3.5 rounded-2xl {isE2EEError ? 'bg-rose-50/70 border-rose-100 text-rose-800' : 'bg-indigo-50/70 border-indigo-100 text-indigo-800'} border text-center text-xs leading-relaxed shadow-xs">
+                <div class="flex items-center justify-center gap-1.5 font-semibold mb-1 {isE2EEError ? 'text-rose-900' : 'text-indigo-900'}">
+                    <svg class="w-4 h-4 {isE2EEError ? 'text-rose-600' : 'text-indigo-600'}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                     </svg>
                     <span>
                         {#if e2eeStatus === 'ready'}Enkripsi End-to-End Aktif
-                        {:else if e2eeStatus === 'error'}Sesi E2EE Tidak Aman
+                        {:else if isE2EEError}Sesi E2EE Tidak Aman
                         {:else}Menyiapkan Sesi E2EE...{/if}
                     </span>
                 </div>
                 {#if e2eeStatus === 'ready'}
                     Pesan dan data hanya dapat dibaca oleh Anda dan lawan bicara.
-                {:else if e2eeStatus === 'error'}
+                {:else if isE2EEError}
                     <p>{e2eeError || getPageErrorMessage(PAGE_ERROR_CODES.KEY_EXCHANGE_FAILED, "e2ee")} Pengiriman pesan diblokir.</p>
                     {#if keyChange}
                         <div class="mt-2 p-2.5 rounded-lg bg-white/70 border border-rose-100 text-left font-mono text-[10px] leading-relaxed break-all text-slate-700">
@@ -433,41 +299,11 @@
         </div>
 
         <!-- Chat Input Bar -->
-        <div class="p-4 border-t border-slate-200 bg-white shrink-0">
-            {#if attachmentError}
-                <p class="mb-2 text-xs text-rose-600">{attachmentError}</p>
-            {/if}
-            <form on:submit|preventDefault={handleSendMessage} class="flex items-center gap-2">
-                <AttachmentPicker
-                    {conversationId}
-                    disabled={e2eeStatus !== 'ready' || isSending}
-                    on:attached={handleAttached}
-                />
-
-                <input
-                    type="text"
-                    bind:value={messageText}
-                    on:keydown={handleKeydown}
-                    placeholder={e2eeStatus === 'ready' ? "Ketik pesan terenkripsi..." : "Menunggu sesi E2EE siap..."}
-                    disabled={e2eeStatus !== 'ready' || isSending}
-                    class="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white transition-all shadow-inner disabled:opacity-60"
-                />
-
-                <button
-                    type="submit"
-                    disabled={!messageText.trim() || isSending || e2eeStatus !== 'ready'}
-                    class="p-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition-colors shadow-md shadow-indigo-200 flex items-center justify-center cursor-pointer"
-                    title="Kirim Pesan"
-                >
-                    {#if isSending}
-                        <div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                    {:else}
-                        <svg class="w-5 h-5 transform rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                        </svg>
-                    {/if}
-                </button>
-            </form>
-        </div>
+        <MessageInput
+            {conversationId}
+            disabled={e2eeStatus !== 'ready'}
+            externalError={attachmentError}
+            on:sent={scrollToBottom}
+        />
     </div>
 </ProtectedLayout>

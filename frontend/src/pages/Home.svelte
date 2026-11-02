@@ -1,7 +1,7 @@
 <script>
     import ProtectedLayout from "../components/layout/ProtectedLayout.svelte";
     import { authStore } from "../stores/auth.store.js";
-    import { socketState } from "../lib/socket.js";
+    import { socketStore } from "../stores/socket.store.js";
 </script>
 
 <ProtectedLayout>
@@ -15,12 +15,12 @@
                     class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/10 text-xs font-medium text-indigo-200 mb-4"
                 >
                     <span
-                        class="w-2 h-2 rounded-full {$socketState.connected
+                        class="w-2 h-2 rounded-full {$socketStore.connected
                             ? 'bg-emerald-400 animate-ping'
                             : 'bg-amber-400'}"
                     ></span>
                     <span
-                        >{$socketState.connected
+                        >{$socketStore.connected
                             ? "Terhubung"
                             : "Menghubungkan Jaringan..."}</span
                     >

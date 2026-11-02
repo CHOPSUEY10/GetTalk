@@ -1,4 +1,4 @@
-import logger, { sanitize, sanitizeString, isSafeErrorCode } from '../lib/logger.js';
+import logger, { sanitize, sanitizeString, isSafeErrorCode } from '../logger.js';
 
 /**
  * Standard encryption error categories and machine-readable codes.

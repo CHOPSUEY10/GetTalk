@@ -1,17 +1,22 @@
 import { writable } from 'svelte/store';
 import {
   getSession,
+  register as apiRegister,
   login as apiLogin,
   logout as apiLogout,
   verifyMfa as apiVerifyMfa,
+  getMfaStatus as apiGetMfaStatus,
+  setupMfa as apiSetupMfa,
+  enableMfa as apiEnableMfa,
+  disableMfa as apiDisableMfa,
   forgotPassword as apiForgotPassword,
   resetPassword as apiResetPassword,
 } from '../services/api/auth.api.js';
 import { publishOwnIdentityKey } from '../services/crypto/identity-trust.js';
 import { userStore } from './user.store.js';
-import { API_ERROR_CODES, handleApiError, normalizeApiError } from '../errors/apierror.js';
-import { handleEncryptionError } from '../errors/encryptionerror.js';
-import { PAGE_ERROR_CODES, resolvePageError } from '../errors/pageerror.js';
+import { API_ERROR_CODES, handleApiError, normalizeApiError } from '../lib/errors/apierror.js';
+import { handleEncryptionError } from '../lib/errors/encryptionerror.js';
+import { PAGE_ERROR_CODES, resolvePageError } from '../lib/errors/pageerror.js';
 
 /**
  * Publish the E2EE identity public key once the session is known.
@@ -85,6 +90,28 @@ function createAuthStore() {
         userStore.set(null);
       }
     },
+    /** @param {{ username: string, email: string, password: string }} payload */
+    register: async (payload) => {
+      update((state) => ({ ...state, error: null, errorCode: null }));
+      try {
+        return await apiRegister(payload);
+      } catch (err) {
+        const normalized = handleApiError(err, {
+          endpoint: '/api/auth/register',
+          method: 'POST',
+        });
+        const pageErr = resolvePageError(normalized, {
+          context: 'register',
+          fallbackCode: PAGE_ERROR_CODES.VALIDATION_ERROR,
+        });
+        update((state) => ({
+          ...state,
+          error: pageErr.userMessage,
+          errorCode: pageErr.code,
+        }));
+        throw normalized;
+      }
+    },
     /** @param {any} payload */
     login: async (payload) => {
       // NOTE: Do NOT set loading:true here. The global `loading` flag controls
@@ -155,6 +182,61 @@ function createAuthStore() {
         }));
         userStore.set(null);
         throw normalized;
+      }
+    },
+    getMfaStatus: async () => {
+      try {
+        return await apiGetMfaStatus();
+      } catch (err) {
+        throw handleApiError(err, {
+          endpoint: '/api/auth/mfa/status',
+          method: 'GET',
+        });
+      }
+    },
+    /** @param {{ password: string }} payload */
+    setupMfa: async (payload) => {
+      try {
+        return await apiSetupMfa(payload);
+      } catch (err) {
+        throw handleApiError(err, {
+          endpoint: '/api/auth/mfa/setup',
+          method: 'POST',
+        });
+      }
+    },
+    /** @param {{ code: string }} payload */
+    enableMfa: async (payload) => {
+      try {
+        const result = await apiEnableMfa(payload);
+        update((state) => {
+          const updatedUser = state.user ? { ...state.user, mfaEnabled: true } : state.user;
+          userStore.set(updatedUser);
+          return { ...state, user: updatedUser };
+        });
+        return result;
+      } catch (err) {
+        throw handleApiError(err, {
+          endpoint: '/api/auth/mfa/enable',
+          method: 'POST',
+        });
+      }
+    },
+    /** @param {{ password: string, code: string }} payload */
+    disableMfa: async (payload) => {
+      try {
+        const result = await apiDisableMfa(payload);
+        update((state) => {
+          const updatedUser = state.user ? { ...state.user, mfaEnabled: false } : state.user;
+          userStore.set(updatedUser);
+          return { ...state, user: updatedUser };
+        });
+        return result;
+      } catch (err) {
+        throw handleApiError(err, {
+          endpoint: '/api/auth/mfa',
+          method: 'DELETE',
+        });
       }
     },
     logout: async () => {

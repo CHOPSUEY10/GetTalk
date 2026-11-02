@@ -1,7 +1,7 @@
 <script>
     import PublicLayout from "../components/layout/PublicLayout.svelte";
-    import { register } from "../services/api/auth.api.js";
-    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../errors/pageerror.js";
+    import { authStore } from "../stores/auth.store.js";
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../lib/errors/pageerror.js";
     import { push } from "svelte-spa-router";
 
     let username = "";
@@ -34,7 +34,7 @@
 
         try {
             loading = true;
-            await register({
+            await authStore.register({
                 username: username.trim(),
                 email: email.trim(),
                 password

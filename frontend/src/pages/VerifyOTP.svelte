@@ -3,7 +3,7 @@
     import { push } from "svelte-spa-router";
     import PublicLayout from "../components/layout/PublicLayout.svelte";
     import { authStore } from "../stores/auth.store.js";
-    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../errors/pageerror.js";
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../lib/errors/pageerror.js";
 
     let email = "";
     /** @type {string[]} */

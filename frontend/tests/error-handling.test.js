@@ -16,7 +16,7 @@ import {
   handleApiError,
   sanitizeUrl,
   sanitizeApiMetadata,
-} from '../src/errors/apierror.js';
+} from '../src/lib/errors/apierror.js';
 import {
   ENCRYPTION_ERROR_CODES,
   EncryptionError,
@@ -24,14 +24,21 @@ import {
   logEncryptionError,
   handleEncryptionError,
   sanitizeEncryptionMetadata,
-} from '../src/errors/encryptionerror.js';
+} from '../src/lib/errors/encryptionerror.js';
 import {
   PAGE_ERROR_CODES,
   DEFAULT_USER_MESSAGES,
   resolvePageError,
   getPageErrorMessage,
   createValidationError,
-} from '../src/errors/pageerror.js';
+} from '../src/lib/errors/pageerror.js';
+import {
+  MAX_MESSAGE_TEXT_BYTES,
+  MAX_ATTACHMENT_SIZE_BYTES,
+  getUtf8ByteLength,
+  validateMessageText,
+  validateAttachmentFile,
+} from '../src/lib/validators.js';
 import { generateKeyPair, exportPublicKeyBase64 } from '../src/services/crypto/ecdh.js';
 import {
   establishConversationKey,
@@ -46,6 +53,7 @@ let authStore;
 let friendsStore;
 let conversationsStore;
 let messagesStore;
+let uiStore;
 
 before(async () => {
   ({ api } = await import('../src/services/api/client.js'));
@@ -53,6 +61,7 @@ before(async () => {
   ({ friendsStore } = await import('../src/stores/friends.store.js'));
   ({ conversationsStore } = await import('../src/stores/conversations.store.js'));
   ({ messagesStore } = await import('../src/stores/messages.store.js'));
+  ({ uiStore } = await import('../src/stores/ui.store.js'));
 });
 
 describe('Centralized Error Handling — Unit & Security Tests', () => {
@@ -79,6 +88,7 @@ describe('Centralized Error Handling — Unit & Security Tests', () => {
     };
 
     await clearCryptoState();
+    uiStore.reset();
   });
 
   afterEach(() => {
@@ -503,7 +513,7 @@ describe('Centralized Error Handling — Unit & Security Tests', () => {
       assert.equal(serializedLogs.includes(DUMMY_SECRETS.nonce), false);
       assert.equal(serializedLogs.includes(DUMMY_SECRETS.sharedSecretHex), false);
       assert.equal(serializedLogs.includes('raw-derived-key-secret'), false);
-      assert.equal( serializedLogs.includes('MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSk'), false);
+      assert.equal(serializedLogs.includes('MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSk'), false);
 
       assert.equal(uiMessage, 'Pesan ini tidak dapat dibuka dengan aman.');
     });
@@ -646,6 +656,135 @@ describe('Centralized Error Handling — Unit & Security Tests', () => {
       assert.equal(state.errorCode, API_ERROR_CODES.SERVER_ERROR);
       assert.equal(state.error, 'Terjadi masalah pada server. Silakan coba lagi nanti.');
       assert.equal(loggedErrors.length, 1);
+    });
+  });
+
+  // ── 6. UI Store & 10 KB Message Validation (Rule #24, #26) ─────────────────
+
+  describe('6. UI Store & 10 KB Message Payload Validation (Rule #24, #26)', () => {
+    test('uiStore manages notifications, activeModal, and sidebarOpen state', () => {
+      assert.deepEqual(get(uiStore), {
+        notifications: [],
+        activeModal: null,
+        sidebarOpen: false,
+      });
+
+      const id = uiStore.notify({
+        type: 'success',
+        message: 'Pesan terkirim',
+        timeout: 0,
+      });
+      assert.equal(get(uiStore).notifications.length, 1);
+      assert.equal(get(uiStore).notifications[0].id, id);
+      assert.equal(get(uiStore).notifications[0].type, 'success');
+
+      uiStore.dismissNotification(id);
+      assert.equal(get(uiStore).notifications.length, 0);
+
+      uiStore.openModal({ id: 'confirm-delete', title: 'Hapus Pesan' });
+      assert.equal(get(uiStore).activeModal?.id, 'confirm-delete');
+      uiStore.closeModal();
+      assert.equal(get(uiStore).activeModal, null);
+
+      uiStore.toggleSidebar();
+      assert.equal(get(uiStore).sidebarOpen, true);
+      uiStore.toggleSidebar();
+      assert.equal(get(uiStore).sidebarOpen, false);
+    });
+
+    test('validateMessageText enforces 10 KB UTF-8 byte limit and rejects empty or oversized messages', () => {
+      assert.equal(MAX_MESSAGE_TEXT_BYTES, 10240);
+      assert.equal(MAX_ATTACHMENT_SIZE_BYTES, 25 * 1024 * 1024);
+
+      assert.equal(validateMessageText('   ').valid, false);
+      assert.equal(validateMessageText('   ').errorCode, PAGE_ERROR_CODES.EMPTY_MESSAGE);
+
+      const exact10KbAscii = 'a'.repeat(10240);
+      const validExact = validateMessageText(exact10KbAscii);
+      assert.equal(validExact.valid, true);
+      assert.equal(validExact.byteLength, 10240);
+
+      const over10KbAscii = 'a'.repeat(10241);
+      const invalidOver = validateMessageText(over10KbAscii);
+      assert.equal(invalidOver.valid, false);
+      assert.equal(invalidOver.errorCode, PAGE_ERROR_CODES.MESSAGE_TOO_LONG);
+
+      // Multi-byte UTF-8 characters (emoji = 4 bytes each; 2561 * 4 = 10,244 bytes > 10,240)
+      const multiByteOver = '😀'.repeat(2561);
+      assert.equal(getUtf8ByteLength(multiByteOver), 10244);
+      assert.equal(validateMessageText(multiByteOver).valid, false);
+      assert.equal(validateMessageText(multiByteOver).errorCode, PAGE_ERROR_CODES.MESSAGE_TOO_LONG);
+    });
+
+    test('messagesStore.sendMessage and editMessage reject >10 KB plaintext before encryption and encrypt valid <=10 KB messages inside store', async () => {
+      const convId = `conv-10kb-${Date.now()}`;
+      const alice = await generateKeyPair();
+      const bob = await generateKeyPair();
+      await establishConversationKey(
+        convId,
+        alice.privateKey,
+        await exportPublicKeyBase64(bob.publicKey),
+        'bob-fp'
+      );
+
+      const oversizedText = 'x'.repeat(10241);
+
+      await assert.rejects(
+        () =>
+          messagesStore.sendMessage(convId, {
+            plaintext: oversizedText,
+            senderId: 'alice-id',
+            senderUsername: 'alice',
+          }),
+        (err) => {
+          assert.equal(err.code, PAGE_ERROR_CODES.MESSAGE_TOO_LONG);
+          assert.equal(
+            getPageErrorMessage(err, 'chat'),
+            'Pesan melebihi batas panjang maksimum (10 KB).'
+          );
+          return true;
+        }
+      );
+
+      await assert.rejects(
+        () => messagesStore.editMessage(convId, 'msg-1', oversizedText),
+        (err) => {
+          assert.equal(err.code, PAGE_ERROR_CODES.MESSAGE_TOO_LONG);
+          return true;
+        }
+      );
+
+      // Valid message <= 10 KB is encrypted inside messagesStore.sendMessage and sent via REST fallback
+      /** @type {any} */
+      let sentBody = null;
+      globalThis.fetch = async (_url, opts) => {
+        sentBody = JSON.parse(opts.body);
+        return new Response(
+          JSON.stringify({
+            message: {
+              id: 'msg-created-1',
+              conversationId: convId,
+              senderId: 'alice-id',
+              bodyCiphertext: sentBody.bodyCiphertext,
+              nonce: sentBody.nonce,
+              createdAt: new Date().toISOString(),
+            },
+          }),
+          { status: 201, headers: { 'Content-Type': 'application/json' } }
+        );
+      };
+
+      const sent = await messagesStore.sendMessage(convId, {
+        plaintext: 'Halo dunia terenkripsi!',
+        senderId: 'alice-id',
+        senderUsername: 'alice',
+      });
+      assert.ok(sentBody);
+      assert.ok(sentBody.bodyCiphertext);
+      assert.ok(sentBody.nonce);
+      assert.equal(sentBody.plaintext, undefined);
+      assert.equal(sentBody.body, undefined);
+      assert.equal(sent.plaintext, 'Halo dunia terenkripsi!');
     });
   });
 });
