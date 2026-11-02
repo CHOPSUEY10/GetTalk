@@ -1,6 +1,7 @@
 import * as friendsRepo from '../repositories/friends.repository.js';
 import * as usersRepo from '../repositories/users.repository.js';
 import AppError from '../errors/AppError.js';
+import { buildPage, DEFAULT_PAGE_LIMIT } from '../utils/pagination.js';
 import {
   RESOURCE_NOT_FOUND,
   FRIENDSHIP_ALREADY_EXISTS,
@@ -9,8 +10,16 @@ import {
   BAD_REQUEST,
 } from '../errors/error-codes.js';
 
-export async function list(userId) {
-  return friendsRepo.findAllByUserId(userId);
+/**
+ * @param {string} userId
+ * @param {{ limit?: number, after?: string | null }} [options]
+ * @returns {Promise<{ friends: any[], nextCursor: string | null }>}
+ */
+export async function list(userId, { limit = DEFAULT_PAGE_LIMIT, after = null } = {}) {
+  // Fetch one extra row to know whether another page exists.
+  const rows = await friendsRepo.findAllByUserId(userId, { limit: limit + 1, after });
+  const { items, nextCursor } = buildPage(rows, limit, (row) => row.userId);
+  return { friends: items, nextCursor };
 }
 
 export async function listRequests(userId) {

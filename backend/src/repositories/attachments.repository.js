@@ -7,7 +7,7 @@ export async function create({ messageId, uploaderId, storageKey, metadataCipher
      RETURNING id, message_id AS "messageId", size_bytes AS "sizeBytes",
                metadata_ciphertext AS "metadataCiphertext",
                metadata_nonce AS "metadataNonce", created_at AS "createdAt"`,
-    [messageId, uploaderId, storageKey, metadataCiphertext, metadataNonce, sizeBytes]
+    [messageId ?? null, uploaderId, storageKey, metadataCiphertext, metadataNonce, sizeBytes]
   );
   return result.rows[0];
 }
@@ -18,6 +18,19 @@ export async function findById(attachmentId) {
             metadata_ciphertext, metadata_nonce, size_bytes, created_at, deleted_at
      FROM attachments WHERE id = $1 AND deleted_at IS NULL`,
     [attachmentId]
+  );
+  return result.rows[0] || null;
+}
+
+export async function attachToMessage(attachmentId, messageId) {
+  const result = await query(
+    `UPDATE attachments
+     SET message_id = $2
+     WHERE id = $1 AND deleted_at IS NULL
+     RETURNING id, message_id AS "messageId", size_bytes AS "sizeBytes",
+               metadata_ciphertext AS "metadataCiphertext",
+               metadata_nonce AS "metadataNonce", created_at AS "createdAt"`,
+    [attachmentId, messageId]
   );
   return result.rows[0] || null;
 }

@@ -2,6 +2,16 @@
  * Conversations Validator
  */
 
+import { validatePaginationQuery } from '../utils/pagination.js';
+
+/**
+ * GET /api/conversations?limit=&before=
+ * Newest activity first; `before` is the last conversation id of the previous page.
+ */
+export function validateListConversationsQuery(body, req) {
+  return validatePaginationQuery(req?.query, 'before');
+}
+
 export function validateCreateConversation(body) {
   if (!body || typeof body !== 'object') {
     return { valid: false, errors: ['Request body is required'] };

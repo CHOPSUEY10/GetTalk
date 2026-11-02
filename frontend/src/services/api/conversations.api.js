@@ -1,11 +1,17 @@
 import { api } from './client.js';
 
 /**
- * Fetch all conversations for the authenticated user.
- * @returns {Promise<{ conversations: any[] }>}
+ * Fetch conversations for the authenticated user (cursor-paginated).
+ * @param {{ limit?: number, before?: string }} [params]
+ * @returns {Promise<{ conversations: any[], nextCursor: string | null }>}
  */
-export const listConversations = () => {
-  return api.get('/api/conversations');
+export const listConversations = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.limit) query.set('limit', String(params.limit));
+  if (params.before) query.set('before', params.before);
+  const qs = query.toString() ? `?${query.toString()}` : '';
+
+  return api.get(`/api/conversations${qs}`);
 };
 
 /**

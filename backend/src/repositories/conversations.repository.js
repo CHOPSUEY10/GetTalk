@@ -1,14 +1,52 @@
 import { query, getClient } from '../config/database.js';
 
-export async function findAllByUserId(userId) {
+/**
+ * Conversations of a user, most recent activity first, keyset-paginated on
+ * (updated_at, id). The direct-chat peer is resolved in the same query to
+ * avoid an N+1 lookup per conversation.
+ *
+ * @param {string} userId
+ * @param {{ limit?: number, before?: string | null }} [options]
+ *   `limit` is the number of rows to fetch (callers pass page size + 1).
+ */
+export async function findAllByUserId(userId, { limit = 51, before = null } = {}) {
+  const params = [userId];
+  let cursorSql = '';
+
+  if (before) {
+    params.push(before);
+    // The cursor must be a conversation the user belongs to.
+    cursorSql = `AND (c.updated_at, c.id) < (
+                   SELECT cc.updated_at, cc.id
+                   FROM conversations cc
+                   JOIN conversation_members ccm
+                     ON ccm.conversation_id = cc.id AND ccm.user_id = $1
+                   WHERE cc.id = $${params.length}
+                 )`;
+  }
+
+  params.push(limit);
+
   const result = await query(
     `SELECT c.id, c.type, c.created_at,
-            c.updated_at AS "lastMessageAt"
+            c.updated_at AS "lastMessageAt",
+            peer.id AS "peerId",
+            peer.username AS "peerUsername"
      FROM conversations c
      JOIN conversation_members cm ON cm.conversation_id = c.id
+     LEFT JOIN LATERAL (
+       SELECT u.id, u.username
+       FROM conversation_members pm
+       JOIN users u ON u.id = pm.user_id
+       WHERE pm.conversation_id = c.id AND pm.user_id <> $1
+       ORDER BY pm.user_id
+       LIMIT 1
+     ) peer ON TRUE
      WHERE cm.user_id = $1
-     ORDER BY c.updated_at DESC`,
-    [userId]
+     ${cursorSql}
+     ORDER BY c.updated_at DESC, c.id DESC
+     LIMIT $${params.length}`,
+    params
   );
   return result.rows;
 }

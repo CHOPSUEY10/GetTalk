@@ -3,13 +3,13 @@ import * as friendsController from '../controllers/friends.controller.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validation.middleware.js';
 import { rateLimiter } from '../middleware/rate-limit.middleware.js';
-import { validateSendRequest } from '../validators/friends.validator.js';
+import { validateSendRequest, validateListFriendsQuery } from '../validators/friends.validator.js';
 
 const router = Router();
 
 router.use(authenticate);
 
-router.get('/', friendsController.list);
+router.get('/', validate(validateListFriendsQuery), friendsController.list);
 router.get('/requests', friendsController.listRequests);
 router.post('/requests', rateLimiter({ name: 'friends:request', limit: 30, windowSeconds: 60 }), validate(validateSendRequest), friendsController.sendRequest);
 router.post('/requests/:requestId/accept', friendsController.acceptRequest);

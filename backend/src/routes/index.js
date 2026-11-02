@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import express from 'express';
 
 import authRoutes          from './auth.routes.js';
 import usersRoutes         from './users.routes.js';
@@ -9,6 +10,7 @@ import attachmentsRoutes   from './attachments.routes.js';
 
 // Standalone message operations (edit, delete, receipt)
 import * as messagesController from '../controllers/messages.controller.js';
+import * as attachmentsController from '../controllers/attachments.controller.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validation.middleware.js';
 import { validateEditMessage, validateReceipt } from '../validators/messages.validator.js';
@@ -21,6 +23,15 @@ router.use('/users',         usersRoutes);
 router.use('/friends',       friendsRoutes);
 router.use('/conversations', conversationsRoutes);
 router.use('/attachments',   attachmentsRoutes);
+
+// Local storage driver pre-signed object transfer endpoints (capability-token
+// authorized; mirrors S3/MinIO/Supabase pre-signed PUT/GET URLs).
+router.put(
+  '/storage/:token',
+  express.raw({ type: 'application/octet-stream', limit: '26mb' }),
+  attachmentsController.putSignedObject
+);
+router.get('/storage/:token', attachmentsController.getSignedObject);
 
 // Messages scoped under a conversation
 router.use('/conversations/:conversationId/messages', messagesRoutes);

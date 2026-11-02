@@ -10,12 +10,26 @@
  * - nonce length bounded to prevent abuse
  */
 
+import { UUID_REGEX, validatePaginationQuery } from '../utils/pagination.js';
+
 export const MAX_MESSAGE_TEXT_BYTES = 10 * 1024; // 10,240 bytes
 export const GCM_TAG_BYTES = 16;
 export const MAX_CIPHERTEXT_BYTES = MAX_MESSAGE_TEXT_BYTES + GCM_TAG_BYTES; // 10,256 bytes
 export const MAX_BODY_CIPHERTEXT_LENGTH = 13676; // Base64/Base64URL of 10,256 bytes
 export const MAX_NONCE_LENGTH = 64;
 export const MAX_CLIENT_MESSAGE_ID_LENGTH = 128;
+
+/**
+ * GET /api/conversations/:conversationId/messages?limit=&before=
+ * Rejects malformed IDs/limits with 400 instead of letting them reach SQL.
+ */
+export function validateListMessagesQuery(body, req) {
+  const conversationId = req?.params?.conversationId;
+  if (!conversationId || !UUID_REGEX.test(conversationId)) {
+    return { valid: false, errors: ['conversationId must be a valid id'] };
+  }
+  return validatePaginationQuery(req?.query, 'before');
+}
 
 /**
  * Compute decoded byte length of a Base64 / Base64URL string.

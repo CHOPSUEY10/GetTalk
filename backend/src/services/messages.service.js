@@ -3,6 +3,7 @@ import * as convRepo from '../repositories/conversations.repository.js';
 import * as receiptsRepo from '../repositories/receipts.repository.js';
 import * as securityEventsRepo from '../repositories/security-events.repository.js';
 import AppError from '../errors/AppError.js';
+import { buildPage } from '../utils/pagination.js';
 import {
   FORBIDDEN,
   CONVERSATION_NOT_FOUND,
@@ -20,12 +21,9 @@ export async function list(userId, conversationId, { limit = 50, before } = {}) 
     throw new AppError('Not a member of this conversation', 403, NOT_CONVERSATION_MEMBER);
   }
 
-  const messages = await messagesRepo.findByConversation(conversationId, { limit, before });
-
-  // Build nextCursor
-  const nextCursor = messages.length === limit
-    ? messages[messages.length - 1].id
-    : null;
+  // Fetch one extra row to know whether another page exists.
+  const rows = await messagesRepo.findByConversation(conversationId, { limit: limit + 1, before });
+  const { items: messages, nextCursor } = buildPage(rows, limit);
 
   return { messages, nextCursor };
 }

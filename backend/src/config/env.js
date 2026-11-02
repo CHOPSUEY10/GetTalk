@@ -52,6 +52,53 @@ function positiveIntegerEnv(name, defaultValue) {
   return parsed;
 }
 
+/**
+ * Encrypted-attachment object storage (pre-signed URLs).
+ *
+ * STORAGE_DRIVER=local  files on disk; pre-signed URLs are HMAC-signed,
+ *                       short-lived backend URLs (/api/storage/:token).
+ * STORAGE_DRIVER=s3     any S3-compatible store (MinIO, Supabase Storage,
+ *                       Cloudflare R2, AWS S3); browsers transfer bytes
+ *                       directly to the store with SigV4 pre-signed URLs.
+ */
+function storageConfig(sessionSecret) {
+  const driver = (process.env.STORAGE_DRIVER?.trim() || 'local').toLowerCase();
+  if (!['local', 's3'].includes(driver)) {
+    throw new Error(`STORAGE_DRIVER tidak valid: ${driver} (gunakan local atau s3)`);
+  }
+
+  const urlTtlSeconds = positiveIntegerEnv('ATTACHMENT_URL_TTL_SECONDS', 300);
+  if (urlTtlSeconds > 3600) {
+    throw new Error('ATTACHMENT_URL_TTL_SECONDS maksimal 3600 detik');
+  }
+
+  // Dedicated signing secret for local pre-signed URLs; falls back to the
+  // session secret (a domain-separated key is derived from it, see storage).
+  const urlSigningSecret = process.env.ATTACHMENT_URL_SECRET?.trim() || sessionSecret;
+
+  const config = { driver, urlTtlSeconds, urlSigningSecret, s3: null };
+
+  if (driver === 's3') {
+    const endpoint = process.env.S3_ENDPOINT?.trim() || undefined;
+    config.s3 = {
+      endpoint,
+      // Host reachable by browsers when it differs from the internal endpoint
+      // (e.g. backend talks to http://minio:9000, browser uses https://files.example.com).
+      publicEndpoint: process.env.S3_PUBLIC_ENDPOINT?.trim() || endpoint,
+      region: process.env.S3_REGION?.trim() || 'us-east-1',
+      bucket: requiredEnv('S3_BUCKET'),
+      accessKeyId: requiredEnv('S3_ACCESS_KEY_ID'),
+      secretAccessKey: requiredEnv('S3_SECRET_ACCESS_KEY'),
+      // MinIO/Supabase need path-style addressing; AWS S3 does not.
+      forcePathStyle: process.env.S3_FORCE_PATH_STYLE
+        ? process.env.S3_FORCE_PATH_STYLE === 'true'
+        : Boolean(endpoint),
+    };
+  }
+
+  return config;
+}
+
 function validateEnvironment() {
   const nodeEnv = requiredEnv('NODE_ENV');
 
@@ -77,6 +124,7 @@ function validateEnvironment() {
   // Local encrypted-attachment storage. Replace with object storage in
   // production if needed; the key is opaque and server-generated.
   const storageDir = resolve(backendRoot, process.env.STORAGE_DIR?.trim() || 'storage');
+  const storage = storageConfig(sessionSecret);
 
   // SMTP configuration for transactional emails (OTP / Password Reset)
   const smtpHost = process.env.SMTP_HOST?.trim() || '';
@@ -101,6 +149,7 @@ function validateEnvironment() {
     mfaEncryptionKey,
     redisUrl,
     storageDir,
+    storage,
     smtpHost,
     smtpPort,
     smtpSecure,

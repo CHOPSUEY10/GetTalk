@@ -28,11 +28,18 @@ export async function findByConversation(conversationId, { limit = 50, before } 
 
   if (before) {
     // cursor-based pagination: get messages created before the cursor message
-    sql += ` AND m.created_at < (SELECT created_at FROM messages WHERE id = $${params.length + 1})`;
+    // Keyset pagination on (created_at, id): messages sharing a timestamp are
+    // neither skipped nor duplicated. The cursor must belong to the same
+    // conversation, so a foreign message id cannot be used as a probe; an
+    // unknown cursor simply yields an empty page.
+    sql += ` AND (m.created_at, m.id) < (
+               SELECT c.created_at, c.id FROM messages c
+               WHERE c.id = $${params.length + 1} AND c.conversation_id = $1
+             )`;
     params.push(before);
   }
 
-  sql += ` ORDER BY m.created_at DESC LIMIT $${params.length + 1}`;
+  sql += ` ORDER BY m.created_at DESC, m.id DESC LIMIT $${params.length + 1}`;
   params.push(limit);
 
   const result = await query(sql, params);
