@@ -5,6 +5,8 @@ import { IdentityKeyChangedError, acceptChangedPeerKey } from '../services/crypt
 import { handleApiError } from '../lib/errors/apierror.js';
 import { PAGE_ERROR_CODES, resolvePageError, getPageErrorMessage } from '../lib/errors/pageerror.js';
 
+export const DEFAULT_CONVERSATIONS_PAGE_LIMIT = 20;
+
 /**
  * @typedef {Object} KeyChangeInfo
  * @property {string} userId
@@ -13,11 +15,22 @@ import { PAGE_ERROR_CODES, resolvePageError, getPageErrorMessage } from '../lib/
  */
 
 /**
+ * @typedef {Object} ConversationPaginationMeta
+ * @property {number} limit
+ * @property {string | null} nextCursor
+ * @property {boolean} hasMore
+ */
+
+/**
  * @typedef {Object} ConversationState
  * @property {any[]} conversations
  * @property {string | null} activeConversationId
  * @property {any | null} activeConversation
  * @property {boolean} loading
+ * @property {boolean} loadingMore
+ * @property {string | null} nextCursor
+ * @property {boolean} hasMore
+ * @property {ConversationPaginationMeta} pagination
  * @property {string | null} error
  * @property {string | null} [errorCode]
  * @property {'initializing' | 'ready' | 'error' | 'keyChange'} e2eeStatus
@@ -31,6 +44,14 @@ const initialState = {
   activeConversationId: null,
   activeConversation: null,
   loading: false,
+  loadingMore: false,
+  nextCursor: null,
+  hasMore: false,
+  pagination: {
+    limit: DEFAULT_CONVERSATIONS_PAGE_LIMIT,
+    nextCursor: null,
+    hasMore: false,
+  },
   error: null,
   errorCode: null,
   e2eeStatus: 'initializing',
@@ -45,16 +66,28 @@ function createConversationsStore() {
     subscribe,
 
     /**
-     * Load all conversations from REST API.
+     * Load initial page of conversations from REST API (cursor-paginated).
+     * @param {{ limit?: number }} [options]
      */
-    loadConversations: async () => {
+    loadConversations: async ({ limit = DEFAULT_CONVERSATIONS_PAGE_LIMIT } = {}) => {
       update((s) => ({ ...s, loading: true, error: null, errorCode: null }));
       try {
-        const res = await listConversations();
-        const list = Array.isArray(res) ? res : res?.conversations || [];
+        const res = await listConversations({ limit });
+        const list = Array.isArray(res) ? res : (res?.data || res?.conversations || []);
+        const nextCursor = res?.pagination?.nextCursor ?? res?.nextCursor ?? null;
+        const hasMore = res?.pagination?.hasMore ?? res?.hasMore ?? Boolean(nextCursor);
+        const pageLimit = res?.pagination?.limit ?? limit;
+
         update((s) => ({
           ...s,
           conversations: list,
+          nextCursor,
+          hasMore,
+          pagination: {
+            limit: pageLimit,
+            nextCursor,
+            hasMore,
+          },
           loading: false,
           error: null,
           errorCode: null,
@@ -72,6 +105,81 @@ function createConversationsStore() {
         update((s) => ({
           ...s,
           loading: false,
+          error: pageErr.userMessage,
+          errorCode: pageErr.code,
+        }));
+        return [];
+      }
+    },
+
+    /**
+     * Load next page of conversations using `nextCursor` (`before` cursor) and append without duplicates.
+     * @param {{ limit?: number }} [options]
+     * @returns {Promise<any[]>}
+     */
+    loadMoreConversations: async ({ limit } = {}) => {
+      const current = get({ subscribe });
+      if (
+        current.loading ||
+        current.loadingMore ||
+        !current.hasMore ||
+        !current.nextCursor
+      ) {
+        return [];
+      }
+
+      const pageLimit = limit || current.pagination?.limit || DEFAULT_CONVERSATIONS_PAGE_LIMIT;
+      const cursor = current.nextCursor;
+
+      update((s) => ({
+        ...s,
+        loadingMore: true,
+        error: null,
+        errorCode: null,
+      }));
+
+      try {
+        const res = await listConversations({ limit: pageLimit, before: cursor });
+        const incoming = Array.isArray(res) ? res : (res?.data || res?.conversations || []);
+        const nextCursor = res?.pagination?.nextCursor ?? res?.nextCursor ?? null;
+        const hasMore = res?.pagination?.hasMore ?? res?.hasMore ?? Boolean(nextCursor);
+        const resolvedLimit = res?.pagination?.limit ?? pageLimit;
+
+        /** @type {any[]} */
+        let added = [];
+
+        update((s) => {
+          const existingIds = new Set(s.conversations.map((c) => c.id));
+          added = incoming.filter((c) => !existingIds.has(c.id));
+          const merged = [...s.conversations, ...added];
+
+          return {
+            ...s,
+            conversations: merged,
+            nextCursor,
+            hasMore,
+            pagination: {
+              limit: resolvedLimit,
+              nextCursor,
+              hasMore,
+            },
+            loadingMore: false,
+          };
+        });
+
+        return added;
+      } catch (err) {
+        const normalized = handleApiError(err, {
+          endpoint: '/api/conversations',
+          method: 'GET',
+        });
+        const pageErr = resolvePageError(normalized, {
+          context: 'chat',
+          fallbackCode: PAGE_ERROR_CODES.CONVERSATION_LOAD_FAILED,
+        });
+        update((s) => ({
+          ...s,
+          loadingMore: false,
           error: pageErr.userMessage,
           errorCode: pageErr.code,
         }));

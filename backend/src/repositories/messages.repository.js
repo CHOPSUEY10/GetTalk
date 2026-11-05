@@ -1,4 +1,5 @@
 import { query } from '../config/database.js';
+import { UUID_REGEX } from '../validators/pagination.validator.js';
 
 export async function findByConversation(conversationId, { limit = 50, before } = {}) {
   let sql = `
@@ -27,16 +28,20 @@ export async function findByConversation(conversationId, { limit = 50, before } 
   const params = [conversationId];
 
   if (before) {
-    // cursor-based pagination: get messages created before the cursor message
-    // Keyset pagination on (created_at, id): messages sharing a timestamp are
-    // neither skipped nor duplicated. The cursor must belong to the same
-    // conversation, so a foreign message id cannot be used as a probe; an
-    // unknown cursor simply yields an empty page.
-    sql += ` AND (m.created_at, m.id) < (
-               SELECT c.created_at, c.id FROM messages c
-               WHERE c.id = $${params.length + 1} AND c.conversation_id = $1
-             )`;
-    params.push(before);
+    if (UUID_REGEX.test(before)) {
+      // Keyset pagination on (created_at, id): messages sharing a timestamp are
+      // neither skipped nor duplicated. The cursor must belong to the same
+      // conversation, so a foreign message id cannot be used as a probe; an
+      // unknown cursor simply yields an empty page.
+      sql += ` AND (m.created_at, m.id) < (
+                 SELECT c.created_at, c.id FROM messages c
+                 WHERE c.id = $${params.length + 1} AND c.conversation_id = $1
+               )`;
+      params.push(before);
+    } else {
+      sql += ` AND m.created_at < $${params.length + 1}::timestamptz`;
+      params.push(before);
+    }
   }
 
   sql += ` ORDER BY m.created_at DESC, m.id DESC LIMIT $${params.length + 1}`;

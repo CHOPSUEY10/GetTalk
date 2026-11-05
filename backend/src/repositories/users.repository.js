@@ -1,4 +1,8 @@
 import { query } from '../config/database.js';
+import {
+  DEFAULT_USER_SEARCH_LIMIT,
+  MAX_USER_SEARCH_LIMIT,
+} from '../validators/users.validator.js';
 
 export async function findById(id) {
   const result = await query(
@@ -130,15 +134,50 @@ export async function create({ username, email, passwordHash }) {
   return result.rows[0];
 }
 
-export async function search(q, limit = 20) {
-  const result = await query(
-    `SELECT id, username FROM users
-     WHERE username ILIKE $1
-     ORDER BY username
-     LIMIT $2`,
-    [`%${q}%`, limit]
+/**
+ * Search users by username prefix/substring with standardized LIMIT / OFFSET pagination.
+ *
+ * @param {string} q
+ * @param {number | { limit?: number, offset?: number }} [optionsOrLimit]
+ */
+export async function search(q, optionsOrLimit = {}) {
+  const rawLimit =
+    typeof optionsOrLimit === 'number'
+      ? optionsOrLimit
+      : (optionsOrLimit?.limit ?? DEFAULT_USER_SEARCH_LIMIT);
+  const rawOffset =
+    typeof optionsOrLimit === 'object' && optionsOrLimit !== null
+      ? (optionsOrLimit.offset ?? 0)
+      : 0;
+
+  const limit = Math.min(Math.max(1, Number(rawLimit) || DEFAULT_USER_SEARCH_LIMIT), MAX_USER_SEARCH_LIMIT);
+  const offset = Math.max(0, Number(rawOffset) || 0);
+  const pattern = `%${q}%`;
+
+  const countRes = await query(
+    `SELECT COUNT(*)::int AS total
+     FROM users
+     WHERE username ILIKE $1`,
+    [pattern]
   );
-  return result.rows;
+  const total = countRes.rows[0]?.total ?? 0;
+
+  const result = await query(
+    `SELECT id, username
+     FROM users
+     WHERE username ILIKE $1
+     ORDER BY username ASC, id ASC
+     LIMIT $2 OFFSET $3`,
+    [pattern, limit, offset]
+  );
+
+  const rows = result.rows;
+  Object.defineProperty(rows, 'total', {
+    value: total,
+    enumerable: false,
+    writable: true,
+  });
+  return rows;
 }
 
 /**

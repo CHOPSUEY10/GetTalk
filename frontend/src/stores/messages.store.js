@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 import {
   listMessages,
   sendMessage as apiSendMessage,
@@ -24,6 +24,8 @@ import { ApiError, API_ERROR_CODES, handleApiError } from '../lib/errors/apierro
 import { ENCRYPTION_ERROR_CODES, EncryptionError } from '../lib/errors/encryptionerror.js';
 import { PAGE_ERROR_CODES, resolvePageError } from '../lib/errors/pageerror.js';
 
+export const MESSAGES_PAGE_LIMIT = 50;
+
 /**
  * @typedef {Object} MessageItem
  * @property {string} id
@@ -42,6 +44,13 @@ import { PAGE_ERROR_CODES, resolvePageError } from '../lib/errors/pageerror.js';
  * @property {string | null} [edited_at]
  * @property {string | null} [deleted_at]
  * @property {any[]} [attachments]
+ */
+
+/**
+ * @typedef {Object} MessagePaginationMeta
+ * @property {number} limit
+ * @property {string | null} nextCursor
+ * @property {boolean} hasMore
  */
 
 /**
@@ -130,9 +139,28 @@ function buildValidationError(pageErrorCode, technicalMessage) {
 }
 
 /**
+ * Sort messages chronologically (oldest -> newest) with deterministic id tie-breaker.
+ * @param {any[]} list
+ */
+function sortChronologically(list) {
+  return [...list].sort((a, b) => {
+    const timeA = new Date(a.created_at || a.createdAt || 0).getTime();
+    const timeB = new Date(b.created_at || b.createdAt || 0).getTime();
+    if (timeA !== timeB) return timeA - timeB;
+    const idA = String(a.id || '');
+    const idB = String(b.id || '');
+    return idA.localeCompare(idB);
+  });
+}
+
+/**
  * @typedef {Object} MessagesState
  * @property {Record<string, MessageItem[]>} messagesByConversation
  * @property {Record<string, boolean>} loadingByConversation
+ * @property {Record<string, boolean>} loadingMoreByConversation
+ * @property {Record<string, string | null>} nextCursorByConversation
+ * @property {Record<string, boolean>} hasMoreByConversation
+ * @property {Record<string, MessagePaginationMeta>} paginationByConversation
  * @property {Record<string, string | null>} errorByConversation
  * @property {Record<string, string | null>} [errorCodeByConversation]
  */
@@ -141,6 +169,10 @@ function buildValidationError(pageErrorCode, technicalMessage) {
 const initialState = {
   messagesByConversation: {},
   loadingByConversation: {},
+  loadingMoreByConversation: {},
+  nextCursorByConversation: {},
+  hasMoreByConversation: {},
+  paginationByConversation: {},
   errorByConversation: {},
   errorCodeByConversation: {}
 };
@@ -191,11 +223,14 @@ function createMessagesStore() {
     subscribe,
 
     /**
-     * Load messages history for a conversation from REST API and decrypt it.
+     * Load initial messages history for a conversation from REST API (max 50 per Rule #13) and decrypt it.
      * @param {string} conversationId
+     * @param {{ limit?: number }} [options]
      */
-    loadMessages: async (conversationId) => {
+    loadMessages: async (conversationId, { limit = MESSAGES_PAGE_LIMIT } = {}) => {
       if (!conversationId) return [];
+
+      const safeLimit = Math.min(Math.max(1, Number(limit) || MESSAGES_PAGE_LIMIT), MESSAGES_PAGE_LIMIT);
 
       update((s) => ({
         ...s,
@@ -205,15 +240,14 @@ function createMessagesStore() {
       }));
 
       try {
-        const res = await listMessages(conversationId, { limit: 50 });
-        const list = Array.isArray(res) ? res : res?.messages || [];
+        const res = await listMessages(conversationId, { limit: safeLimit });
+        const list = Array.isArray(res) ? res : (res?.data || res?.messages || []);
+        const nextCursor = res?.pagination?.nextCursor ?? res?.nextCursor ?? null;
+        const hasMore = res?.pagination?.hasMore ?? res?.hasMore ?? Boolean(nextCursor);
+        const pageLimit = res?.pagination?.limit ?? safeLimit;
 
         // Backend returns DESC by created_at; display chronologically (oldest -> newest)
-        const ordered = [...list].sort(
-          (a, b) =>
-            new Date(a.created_at || a.createdAt || 0).getTime() -
-            new Date(b.created_at || b.createdAt || 0).getTime()
-        );
+        const ordered = sortChronologically(list);
 
         /** @type {MessageItem[]} */
         const formatted = await Promise.all(
@@ -238,6 +272,18 @@ function createMessagesStore() {
             ...s.messagesByConversation,
             [conversationId]: formatted
           },
+          nextCursorByConversation: {
+            ...(s.nextCursorByConversation || {}),
+            [conversationId]: nextCursor
+          },
+          hasMoreByConversation: {
+            ...(s.hasMoreByConversation || {}),
+            [conversationId]: hasMore
+          },
+          paginationByConversation: {
+            ...(s.paginationByConversation || {}),
+            [conversationId]: { limit: pageLimit, nextCursor, hasMore }
+          },
           loadingByConversation: { ...s.loadingByConversation, [conversationId]: false }
         }));
 
@@ -254,6 +300,148 @@ function createMessagesStore() {
         update((s) => ({
           ...s,
           loadingByConversation: { ...s.loadingByConversation, [conversationId]: false },
+          errorByConversation: {
+            ...s.errorByConversation,
+            [conversationId]: pageErr.userMessage
+          },
+          errorCodeByConversation: {
+            ...(s.errorCodeByConversation || {}),
+            [conversationId]: pageErr.code
+          }
+        }));
+        return [];
+      }
+    },
+
+    /**
+     * Load older message history using `nextCursor` (`before` cursor) and prepend without duplicates
+     * (Rule #5, #13).
+     *
+     * @param {string} conversationId
+     * @param {{ limit?: number }} [options]
+     * @returns {Promise<MessageItem[]>} Newly prepended messages
+     */
+    loadMoreMessages: async (conversationId, { limit = MESSAGES_PAGE_LIMIT } = {}) => {
+      if (!conversationId) return [];
+
+      const current = get({ subscribe });
+      if (
+        current.loadingByConversation?.[conversationId] ||
+        current.loadingMoreByConversation?.[conversationId]
+      ) {
+        return [];
+      }
+
+      const cursor = current.nextCursorByConversation?.[conversationId] ?? null;
+      const hasMore = current.hasMoreByConversation?.[conversationId] ?? Boolean(cursor);
+      if (!cursor || !hasMore) {
+        return [];
+      }
+
+      const safeLimit = Math.min(Math.max(1, Number(limit) || MESSAGES_PAGE_LIMIT), MESSAGES_PAGE_LIMIT);
+
+      update((s) => ({
+        ...s,
+        loadingMoreByConversation: {
+          ...(s.loadingMoreByConversation || {}),
+          [conversationId]: true
+        },
+        errorByConversation: { ...s.errorByConversation, [conversationId]: null },
+        errorCodeByConversation: { ...(s.errorCodeByConversation || {}), [conversationId]: null }
+      }));
+
+      try {
+        const res = await listMessages(conversationId, {
+          limit: safeLimit,
+          before: cursor
+        });
+        const list = Array.isArray(res) ? res : (res?.data || res?.messages || []);
+        const nextCursor = res?.pagination?.nextCursor ?? res?.nextCursor ?? null;
+        const nextHasMore = res?.pagination?.hasMore ?? res?.hasMore ?? Boolean(nextCursor);
+        const pageLimit = res?.pagination?.limit ?? safeLimit;
+
+        const ordered = sortChronologically(list);
+
+        /** @type {MessageItem[]} */
+        const formatted = await Promise.all(
+          ordered.map(async (raw) => {
+            const message = normalizeMessage(raw, conversationId);
+            const decrypted = await decryptPayload(
+              conversationId,
+              message.body_ciphertext,
+              message.nonce
+            );
+            return {
+              ...message,
+              ...decrypted,
+              status: /** @type {MessageItem['status']} */ (message.status || 'delivered')
+            };
+          })
+        );
+
+        /** @type {MessageItem[]} */
+        let newlyPrepended = [];
+
+        update((s) => {
+          const existing = s.messagesByConversation[conversationId] || [];
+          const existingIds = new Set(existing.map((m) => m.id));
+          const existingClientIds = new Set(
+            existing.map((m) => m.client_message_id).filter(Boolean)
+          );
+
+          newlyPrepended = formatted.filter(
+            (m) =>
+              !existingIds.has(m.id) &&
+              (!m.client_message_id || !existingClientIds.has(m.client_message_id))
+          );
+
+          const merged = [...newlyPrepended, ...existing];
+
+          return {
+            ...s,
+            messagesByConversation: {
+              ...s.messagesByConversation,
+              [conversationId]: merged
+            },
+            nextCursorByConversation: {
+              ...(s.nextCursorByConversation || {}),
+              [conversationId]: nextCursor
+            },
+            hasMoreByConversation: {
+              ...(s.hasMoreByConversation || {}),
+              [conversationId]: nextHasMore
+            },
+            paginationByConversation: {
+              ...(s.paginationByConversation || {}),
+              [conversationId]: {
+                limit: pageLimit,
+                nextCursor,
+                hasMore: nextHasMore
+              }
+            },
+            loadingMoreByConversation: {
+              ...(s.loadingMoreByConversation || {}),
+              [conversationId]: false
+            }
+          };
+        });
+
+        return newlyPrepended;
+      } catch (err) {
+        const normalized = handleApiError(err, {
+          endpoint: '/api/conversations/messages',
+          method: 'GET'
+        });
+        const pageErr = resolvePageError(normalized, {
+          context: 'chat',
+          fallbackCode: PAGE_ERROR_CODES.MESSAGE_LOAD_FAILED
+        });
+        update((s) => ({
+          ...s,
+          loadingMoreByConversation: {
+            ...(s.loadingMoreByConversation || {}),
+            [conversationId]: false
+          },
           errorByConversation: {
             ...s.errorByConversation,
             [conversationId]: pageErr.userMessage

@@ -19,6 +19,19 @@
     $: friends = $friendsStore.friends;
     $: requests = $friendsStore.requests;
     $: loading = $friendsStore.loading;
+    $: loadingMoreFriends = $friendsStore.loadingMoreFriends || false;
+    $: loadingMoreRequests = $friendsStore.loadingMoreRequests || false;
+    $: friendsPagination = $friendsStore.friendsPagination || {
+        limit: 20,
+        offset: 0,
+        total: friends.length,
+        hasMore: false
+    };
+    $: requestsPagination = $friendsStore.requestsPagination || {
+        limit: 20,
+        nextCursor: null,
+        hasMore: false
+    };
 
     const handleSendRequest = async () => {
         if (!addUsername.trim()) return;
@@ -96,6 +109,14 @@
         }
     };
 
+    const handleLoadMoreFriends = async () => {
+        await friendsStore.loadMoreFriends();
+    };
+
+    const handleLoadMoreRequests = async () => {
+        await friendsStore.loadMoreRequests();
+    };
+
     /** @param {any} friend */
     const startChat = async (friend) => {
         const targetUserId = friend.userId || friend.id;
@@ -148,7 +169,7 @@
                     class="px-4 py-2 rounded-lg transition-all {activeTab === 'friends' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'}"
                     on:click={() => (activeTab = 'friends')}
                 >
-                    Teman ({friends.length})
+                    Teman ({friendsPagination.total || friends.length})
                 </button>
                 <button
                     type="button"
@@ -279,6 +300,28 @@
                             </div>
                         {/each}
                     </div>
+
+                    <!-- Pagination Bar for Friends List -->
+                    {#if friendsPagination.hasMore}
+                        <div class="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3 bg-white px-4 py-3 rounded-xl border border-slate-200 shadow-xs">
+                            <span class="text-xs text-slate-500">
+                                Menampilkan <strong class="text-slate-700">{friends.length}</strong> dari <strong class="text-slate-700">{friendsPagination.total || friends.length}</strong> teman
+                            </span>
+                            <button
+                                type="button"
+                                disabled={loadingMoreFriends}
+                                on:click={handleLoadMoreFriends}
+                                class="px-4 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold transition-colors disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                            >
+                                {#if loadingMoreFriends}
+                                    <div class="w-3.5 h-3.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                                    <span>Memuat...</span>
+                                {:else}
+                                    <span>Muat lebih banyak</span>
+                                {/if}
+                            </button>
+                        </div>
+                    {/if}
                 {/if}
             </div>
 
@@ -339,6 +382,25 @@
                             </div>
                         {/each}
                     </div>
+
+                    <!-- Pagination Bar for Pending Requests -->
+                    {#if requestsPagination.hasMore}
+                        <div class="pt-2 flex justify-center">
+                            <button
+                                type="button"
+                                disabled={loadingMoreRequests}
+                                on:click={handleLoadMoreRequests}
+                                class="px-4 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold transition-colors disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                            >
+                                {#if loadingMoreRequests}
+                                    <div class="w-3.5 h-3.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                                    <span>Memuat...</span>
+                                {:else}
+                                    <span>Muat lebih banyak</span>
+                                {/if}
+                            </button>
+                        </div>
+                    {/if}
                 {/if}
             </div>
 

@@ -1,7 +1,13 @@
 import * as friendsRepo from '../repositories/friends.repository.js';
 import * as usersRepo from '../repositories/users.repository.js';
 import AppError from '../errors/AppError.js';
-import { buildPage, DEFAULT_PAGE_LIMIT } from '../utils/pagination.js';
+import { buildPage, buildOffsetPage } from '../utils/pagination.js';
+import {
+  DEFAULT_FRIENDS_LIMIT,
+  MAX_FRIENDS_LIMIT,
+  DEFAULT_FRIEND_REQUESTS_LIMIT,
+  MAX_FRIEND_REQUESTS_LIMIT,
+} from '../validators/friends.validator.js';
 import {
   RESOURCE_NOT_FOUND,
   FRIENDSHIP_ALREADY_EXISTS,
@@ -11,19 +17,90 @@ import {
 } from '../errors/error-codes.js';
 
 /**
+ * List accepted friends for a user with offset-based pagination (and optional `after` cursor).
+ *
  * @param {string} userId
- * @param {{ limit?: number, after?: string | null }} [options]
- * @returns {Promise<{ friends: any[], nextCursor: string | null }>}
+ * @param {{ limit?: number, offset?: number, after?: string | null }} [options]
  */
-export async function list(userId, { limit = DEFAULT_PAGE_LIMIT, after = null } = {}) {
-  // Fetch one extra row to know whether another page exists.
-  const rows = await friendsRepo.findAllByUserId(userId, { limit: limit + 1, after });
-  const { items, nextCursor } = buildPage(rows, limit, (row) => row.userId);
-  return { friends: items, nextCursor };
+export async function list(
+  userId,
+  { limit = DEFAULT_FRIENDS_LIMIT, offset = 0, after = null } = {}
+) {
+  const safeLimit = Math.min(Math.max(1, Number(limit) || DEFAULT_FRIENDS_LIMIT), MAX_FRIENDS_LIMIT);
+  const safeOffset = Math.max(0, Number(offset) || 0);
+
+  if (after) {
+    const rows = await friendsRepo.findAllByUserId(userId, {
+      limit: safeLimit + 1,
+      after,
+    });
+    const total = rows.total ?? rows.length;
+    const { items, nextCursor, hasMore } = buildPage(rows, safeLimit, (row) => row.userId);
+    return {
+      data: items,
+      friends: items,
+      nextCursor,
+      hasMore,
+      pagination: {
+        limit: safeLimit,
+        offset: safeOffset,
+        total,
+        hasMore,
+        nextCursor,
+      },
+    };
+  }
+
+  const rows = await friendsRepo.findAllByUserId(userId, {
+    limit: safeLimit,
+    offset: safeOffset,
+  });
+  const total = rows.total ?? rows.length;
+  const hasMore = safeOffset + rows.length < total;
+  const nextCursor = hasMore && rows.length > 0 ? rows[rows.length - 1].userId : null;
+  const page = buildOffsetPage(rows, {
+    limit: safeLimit,
+    offset: safeOffset,
+    total,
+    nextCursor,
+  });
+
+  return {
+    data: page.items,
+    friends: page.items,
+    nextCursor,
+    hasMore: page.hasMore,
+    pagination: page.pagination,
+  };
 }
 
-export async function listRequests(userId) {
-  return friendsRepo.findPendingRequests(userId);
+/**
+ * List pending incoming friend requests for a user (cursor-paginated).
+ *
+ * @param {string} userId
+ * @param {{ limit?: number, before?: string | null }} [options]
+ */
+export async function listRequests(
+  userId,
+  { limit = DEFAULT_FRIEND_REQUESTS_LIMIT, before = null } = {}
+) {
+  const safeLimit = Math.min(
+    Math.max(1, Number(limit) || DEFAULT_FRIEND_REQUESTS_LIMIT),
+    MAX_FRIEND_REQUESTS_LIMIT
+  );
+  const rows = await friendsRepo.findPendingRequests(userId, {
+    limit: safeLimit + 1,
+    before,
+  });
+  const { items: requests, nextCursor, hasMore, pagination } = buildPage(rows, safeLimit);
+
+  return {
+    data: requests,
+    requests,
+    nextCursor,
+    hasMore,
+    pagination,
+  };
 }
 
 export async function sendRequest(fromUserId, toUserId) {

@@ -1,19 +1,31 @@
 import { query } from '../config/database.js';
+import { UUID_REGEX } from '../validators/pagination.validator.js';
 
 /**
- * Accepted friends ordered alphabetically, keyset-paginated on
- * (username, id). `after` is the last friend userId of the previous page and
- * must itself be a friend of the user.
+ * Accepted friends ordered alphabetically by (username, id).
+ * Supports standardized LIMIT / OFFSET pagination with total row count,
+ * as well as `after` cursor for keyset navigation.
  *
  * @param {string} userId
- * @param {{ limit?: number, after?: string | null }} [options]
- *   `limit` is the number of rows to fetch (callers pass page size + 1).
+ * @param {{ limit?: number, offset?: number, after?: string | null }} [options]
  */
-export async function findAllByUserId(userId, { limit = 51, after = null } = {}) {
+export async function findAllByUserId(
+  userId,
+  { limit = 20, offset = 0, after = null } = {}
+) {
+  const countRes = await query(
+    `SELECT COUNT(*)::int AS total
+     FROM friendships f
+     WHERE (f.from_user_id = $1 OR f.to_user_id = $1)
+       AND f.status = 'accepted'`,
+    [userId]
+  );
+  const total = countRes.rows[0]?.total ?? 0;
+
   const params = [userId];
   let cursorSql = '';
 
-  if (after) {
+  if (after && UUID_REGEX.test(after)) {
     params.push(after);
     cursorSql = `AND (u.username, u.id) > (
                    SELECT cu.username, cu.id
@@ -27,6 +39,13 @@ export async function findAllByUserId(userId, { limit = 51, after = null } = {})
   }
 
   params.push(limit);
+  const limitParamIdx = params.length;
+
+  let offsetSql = '';
+  if (!after) {
+    params.push(offset);
+    offsetSql = `OFFSET $${params.length}`;
+  }
 
   const result = await query(
     `SELECT u.id AS "userId", u.username
@@ -38,24 +57,62 @@ export async function findAllByUserId(userId, { limit = 51, after = null } = {})
      WHERE (f.from_user_id = $1 OR f.to_user_id = $1)
        AND f.status = 'accepted'
        ${cursorSql}
-     ORDER BY u.username, u.id
-     LIMIT $${params.length}`,
+     ORDER BY u.username ASC, u.id ASC
+     LIMIT $${limitParamIdx}
+     ${offsetSql}`,
     params
   );
-  return result.rows;
+
+  const rows = result.rows;
+  Object.defineProperty(rows, 'total', {
+    value: total,
+    enumerable: false,
+    writable: true,
+  });
+  return rows;
 }
 
-export async function findPendingRequests(userId) {
+/**
+ * Pending incoming friend requests ordered by (created_at DESC, id DESC),
+ * supporting cursor-based (`before`) pagination.
+ *
+ * @param {string} userId
+ * @param {{ limit?: number, before?: string | null }} [options]
+ *   `limit` is the number of rows to fetch (service passes page size + 1).
+ */
+export async function findPendingRequests(userId, { limit = 21, before = null } = {}) {
+  const params = [userId];
+  let cursorSql = '';
+
+  if (before) {
+    params.push(before);
+    if (UUID_REGEX.test(before)) {
+      cursorSql = `AND (f.created_at, f.id) < (
+                     SELECT cf.created_at, cf.id
+                     FROM friendships cf
+                     WHERE cf.id = $${params.length}
+                       AND cf.to_user_id = $1
+                       AND cf.status = 'pending'
+                   )`;
+    } else {
+      cursorSql = `AND f.created_at < $${params.length}::timestamptz`;
+    }
+  }
+
+  params.push(limit);
+
   const result = await query(
     `SELECT f.id, f.created_at AS "createdAt",
             u.id AS "fromUserId", u.username AS "fromUsername"
      FROM friendships f
      JOIN users u ON f.from_user_id = u.id
      WHERE f.to_user_id = $1 AND f.status = 'pending'
-     ORDER BY f.created_at DESC`,
-    [userId]
+       ${cursorSql}
+     ORDER BY f.created_at DESC, f.id DESC
+     LIMIT $${params.length}`,
+    params
   );
-  return result.rows.map(r => ({
+  return result.rows.map((r) => ({
     id: r.id,
     fromUser: { id: r.fromUserId, username: r.fromUsername },
     createdAt: r.createdAt,

@@ -2,14 +2,22 @@
  * Conversations Validator
  */
 
-import { validatePaginationQuery } from '../utils/pagination.js';
+import { validatePaginationQuery } from './pagination.validator.js';
+
+export const DEFAULT_CONVERSATIONS_LIMIT = 20;
+export const MAX_CONVERSATIONS_LIMIT = 50;
 
 /**
  * GET /api/conversations?limit=&before=
- * Newest activity first; `before` is the last conversation id of the previous page.
+ * Newest activity first; `before` is the last conversation id or updated_at ISO string.
  */
 export function validateListConversationsQuery(body, req) {
-  return validatePaginationQuery(req?.query, 'before');
+  return validatePaginationQuery(req?.query, {
+    cursorParam: 'before',
+    maxLimit: MAX_CONVERSATIONS_LIMIT,
+    allowOffset: false,
+    allowCursor: true,
+  });
 }
 
 export function validateCreateConversation(body) {

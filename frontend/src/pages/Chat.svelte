@@ -1,10 +1,10 @@
 <script>
-    import { onMount, onDestroy } from "svelte";
+    import { onMount, onDestroy, tick } from "svelte";
     import ProtectedLayout from "../components/layout/ProtectedLayout.svelte";
     import { authStore } from "../stores/auth.store.js";
     import { socketStore } from "../stores/socket.store.js";
     import { conversationsStore } from "../stores/conversations.store.js";
-    import { messagesStore } from "../stores/messages.store.js";
+    import { messagesStore, MESSAGES_PAGE_LIMIT } from "../stores/messages.store.js";
     import MessageItem from "../components/chat/MessageItem.svelte";
     import MessageInput from "../components/chat/MessageInput.svelte";
     import { PAGE_ERROR_CODES, getPageErrorMessage } from "../lib/errors/pageerror.js";
@@ -19,6 +19,8 @@
     let roomStatus = "connecting";
     /** @type {string | null} */
     let attachmentError = null;
+    /** @type {HTMLElement | null} */
+    let messagesContainer = null;
 
     $: e2eeStatus = $conversationsStore.e2eeStatus;
     $: e2eeError = $conversationsStore.e2eeError;
@@ -47,10 +49,51 @@
         const joinRes = await socketStore.joinRoom(convId);
         roomStatus = joinRes?.success ? "connected" : "error";
 
-        // Fetch message history from REST API (decryption is per-message)
-        await messagesStore.loadMessages(convId);
+        // Fetch message history from REST API (decryption is per-message, max 50 per page)
+        await messagesStore.loadMessages(convId, { limit: MESSAGES_PAGE_LIMIT });
 
         scrollToBottom();
+    };
+
+    /**
+     * Load older messages (up to 50) using cursor pagination (`nextCursor`)
+     * while preserving the user's current scroll position.
+     */
+    const loadOlderMessages = async () => {
+        if (!conversationId || !hasMoreMessages || isLoadingMore || isLoadingHistory) {
+            return;
+        }
+
+        const container = messagesContainer || document.getElementById("chat-messages");
+        const prevScrollHeight = container ? container.scrollHeight : 0;
+        const prevScrollTop = container ? container.scrollTop : 0;
+
+        const added = await messagesStore.loadMoreMessages(conversationId, {
+            limit: MESSAGES_PAGE_LIMIT
+        });
+
+        if (added.length > 0 && container) {
+            await tick();
+            const newScrollHeight = container.scrollHeight;
+            container.scrollTop = Math.max(0, newScrollHeight - prevScrollHeight + prevScrollTop);
+        }
+    };
+
+    /**
+     * Scroll-to-top detector to trigger loading the previous 50 messages smoothly.
+     * @param {UIEvent} e
+     */
+    const handleMessagesScroll = (e) => {
+        const target = /** @type {HTMLElement | null} */ (e.currentTarget);
+        if (
+            target &&
+            target.scrollTop <= 40 &&
+            hasMoreMessages &&
+            !isLoadingMore &&
+            !isLoadingHistory
+        ) {
+            loadOlderMessages();
+        }
     };
 
     /**
@@ -121,7 +164,7 @@
                 $authStore.user?.id,
                 keyChange.userId
             );
-            await messagesStore.loadMessages(conversationId);
+            await messagesStore.loadMessages(conversationId, { limit: MESSAGES_PAGE_LIMIT });
             scrollToBottom();
         } catch {
             // Error is already normalized and stored in conversationsStore.e2eeError
@@ -143,13 +186,15 @@
 
     const scrollToBottom = () => {
         setTimeout(() => {
-            const container = document.getElementById("chat-messages");
+            const container = messagesContainer || document.getElementById("chat-messages");
             if (container) container.scrollTop = container.scrollHeight;
         }, 60);
     };
 
     $: currentMessages = $messagesStore.messagesByConversation[conversationId] || [];
     $: isLoadingHistory = $messagesStore.loadingByConversation[conversationId] || false;
+    $: isLoadingMore = $messagesStore.loadingMoreByConversation?.[conversationId] || false;
+    $: hasMoreMessages = $messagesStore.hasMoreByConversation?.[conversationId] || false;
     $: activeConv = $conversationsStore.activeConversation;
 
     onMount(() => {
@@ -231,7 +276,12 @@
         </div>
 
         <!-- Messages Feed Container -->
-        <div id="chat-messages" class="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50/50">
+        <div
+            id="chat-messages"
+            bind:this={messagesContainer}
+            on:scroll={handleMessagesScroll}
+            class="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50/50"
+        >
             <!-- E2EE Info Banner -->
             <div class="max-w-md mx-auto p-3.5 rounded-2xl {isE2EEError ? 'bg-rose-50/70 border-rose-100 text-rose-800' : 'bg-indigo-50/70 border-indigo-100 text-indigo-800'} border text-center text-xs leading-relaxed shadow-xs">
                 <div class="flex items-center justify-center gap-1.5 font-semibold mb-1 {isE2EEError ? 'text-rose-900' : 'text-indigo-900'}">
@@ -283,6 +333,23 @@
                     <p class="text-xs mt-1">Kirim pesan pertama Anda di bawah ini!</p>
                 </div>
             {:else}
+                {#if isLoadingMore}
+                    <div class="py-2 text-center text-slate-400 flex items-center justify-center gap-2 text-xs" role="status">
+                        <div class="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                        <span>Memuat pesan sebelumnya...</span>
+                    </div>
+                {:else if hasMoreMessages}
+                    <div class="py-1 text-center">
+                        <button
+                            type="button"
+                            class="px-3 py-1 rounded-full bg-white border border-slate-200 hover:border-indigo-300 text-xs font-medium text-indigo-600 hover:text-indigo-700 shadow-xs transition-colors cursor-pointer"
+                            on:click={loadOlderMessages}
+                        >
+                            Muat pesan sebelumnya
+                        </button>
+                    </div>
+                {/if}
+
                 {#each currentMessages as msg (msg.id || msg.client_message_id)}
                     {@const isSelf = msg.sender_id === $authStore.user?.id || msg.sender_username === $authStore.user?.username || msg.sender_id === 'me'}
                     <MessageItem

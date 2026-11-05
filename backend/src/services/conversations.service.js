@@ -1,7 +1,11 @@
 import * as convRepo from '../repositories/conversations.repository.js';
 import * as usersRepo from '../repositories/users.repository.js';
 import AppError from '../errors/AppError.js';
-import { buildPage, DEFAULT_PAGE_LIMIT } from '../utils/pagination.js';
+import { buildPage } from '../utils/pagination.js';
+import {
+  DEFAULT_CONVERSATIONS_LIMIT,
+  MAX_CONVERSATIONS_LIMIT,
+} from '../validators/conversations.validator.js';
 import {
   CONVERSATION_NOT_FOUND,
   FORBIDDEN,
@@ -11,12 +15,22 @@ import {
 /**
  * @param {string} userId
  * @param {{ limit?: number, before?: string | null }} [options]
- * @returns {Promise<{ conversations: any[], nextCursor: string | null }>}
  */
-export async function list(userId, { limit = DEFAULT_PAGE_LIMIT, before = null } = {}) {
+export async function list(
+  userId,
+  { limit = DEFAULT_CONVERSATIONS_LIMIT, before = null } = {}
+) {
+  const safeLimit = Math.min(
+    Math.max(1, Number(limit) || DEFAULT_CONVERSATIONS_LIMIT),
+    MAX_CONVERSATIONS_LIMIT
+  );
+
   // Fetch one extra row to know whether another page exists.
-  const rows = await convRepo.findAllByUserId(userId, { limit: limit + 1, before });
-  const { items, nextCursor } = buildPage(rows, limit);
+  const rows = await convRepo.findAllByUserId(userId, {
+    limit: safeLimit + 1,
+    before,
+  });
+  const { items, nextCursor, hasMore, pagination } = buildPage(rows, safeLimit);
 
   // Explicit DTO; the peer is resolved by the repository query (no N+1).
   const conversations = items.map((conv) => ({
@@ -26,7 +40,13 @@ export async function list(userId, { limit = DEFAULT_PAGE_LIMIT, before = null }
     lastMessageAt: conv.lastMessageAt,
   }));
 
-  return { conversations, nextCursor };
+  return {
+    data: conversations,
+    conversations,
+    nextCursor,
+    hasMore,
+    pagination,
+  };
 }
 
 export async function getById(userId, conversationId) {
@@ -41,7 +61,7 @@ export async function getById(userId, conversationId) {
   }
 
   const members = await convRepo.getMembers(conversationId);
-  const peer = members.find(m => m.id !== userId);
+  const peer = members.find((m) => m.id !== userId);
 
   return {
     id: conv.id,
@@ -61,7 +81,7 @@ export async function create(userId, targetUserId) {
   const existing = await convRepo.findDirectBetween(userId, targetUserId);
   if (existing) {
     const members = await convRepo.getMembers(existing.id);
-    const peer = members.find(m => m.id !== userId);
+    const peer = members.find((m) => m.id !== userId);
     return {
       id: existing.id,
       type: existing.type || 'direct',

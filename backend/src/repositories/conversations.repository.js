@@ -1,4 +1,5 @@
 import { query, getClient } from '../config/database.js';
+import { UUID_REGEX } from '../validators/pagination.validator.js';
 
 /**
  * Conversations of a user, most recent activity first, keyset-paginated on
@@ -9,20 +10,24 @@ import { query, getClient } from '../config/database.js';
  * @param {{ limit?: number, before?: string | null }} [options]
  *   `limit` is the number of rows to fetch (callers pass page size + 1).
  */
-export async function findAllByUserId(userId, { limit = 51, before = null } = {}) {
+export async function findAllByUserId(userId, { limit = 21, before = null } = {}) {
   const params = [userId];
   let cursorSql = '';
 
   if (before) {
     params.push(before);
-    // The cursor must be a conversation the user belongs to.
-    cursorSql = `AND (c.updated_at, c.id) < (
-                   SELECT cc.updated_at, cc.id
-                   FROM conversations cc
-                   JOIN conversation_members ccm
-                     ON ccm.conversation_id = cc.id AND ccm.user_id = $1
-                   WHERE cc.id = $${params.length}
-                 )`;
+    if (UUID_REGEX.test(before)) {
+      // The cursor must be a conversation the user belongs to.
+      cursorSql = `AND (c.updated_at, c.id) < (
+                     SELECT cc.updated_at, cc.id
+                     FROM conversations cc
+                     JOIN conversation_members ccm
+                       ON ccm.conversation_id = cc.id AND ccm.user_id = $1
+                     WHERE cc.id = $${params.length}
+                   )`;
+    } else {
+      cursorSql = `AND c.updated_at < $${params.length}::timestamptz`;
+    }
   }
 
   params.push(limit);

@@ -1,7 +1,9 @@
 import * as usersService from '../services/users.service.js';
+import { parseOffsetPaginationQuery } from '../utils/pagination.js';
+import { DEFAULT_USER_SEARCH_LIMIT } from '../validators/users.validator.js';
 
 // In-memory public key exchange registry (Rule §17: public keys may be shared for ECDH key exchange)
-const xuserPublicKeys = new Map();
+const userPublicKeys = new Map();
 
 export async function getMe(req, res, next) {
   try {
@@ -20,8 +22,11 @@ export async function getMe(req, res, next) {
 export async function search(req, res, next) {
   try {
     const q = req.query.q || '';
-    const users = await usersService.search(q);
-    return res.json({ users });
+    const { limit, offset } = parseOffsetPaginationQuery(req.query, {
+      defaultLimit: DEFAULT_USER_SEARCH_LIMIT,
+    });
+    const result = await usersService.search(q, { limit, offset });
+    return res.json(result);
   } catch (err) {
     return next(err);
   }

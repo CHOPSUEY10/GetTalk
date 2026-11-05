@@ -1,18 +1,32 @@
 import { api } from './client.js';
 
 /**
- * Fetch messages for a specific conversation.
+ * Fetch messages for a specific conversation (cursor-paginated, max 50 per page per Rule #13).
  * @param {string} conversationId
- * @param {{ limit?: number, before?: string }} [params]
- * @returns {Promise<{ messages: any[], nextCursor: string | null }>}
+ * @param {{ limit?: number, before?: string, cursor?: string, offset?: number }} [params]
+ * @returns {Promise<{
+ *   data: any[],
+ *   messages: any[],
+ *   nextCursor: string | null,
+ *   hasMore: boolean,
+ *   pagination: { limit: number, nextCursor: string | null, hasMore: boolean }
+ * }>}
  */
 export const listMessages = (conversationId, params = {}) => {
   const query = new URLSearchParams();
-  if (params.limit) query.set('limit', String(params.limit));
-  if (params.before) query.set('before', params.before);
+  if (params.limit !== undefined && params.limit !== null) {
+    query.set('limit', String(params.limit));
+  }
+  const beforeCursor = params.before ?? params.cursor;
+  if (beforeCursor !== undefined && beforeCursor !== null && beforeCursor !== '') {
+    query.set('before', String(beforeCursor));
+  }
+  if (params.offset !== undefined && params.offset !== null) {
+    query.set('offset', String(params.offset));
+  }
   const qs = query.toString() ? `?${query.toString()}` : '';
 
-  return api.get(`/api/conversations/${conversationId}/messages${qs}`);
+  return api.get(`/api/conversations/${encodeURIComponent(conversationId)}/messages${qs}`);
 };
 
 /**

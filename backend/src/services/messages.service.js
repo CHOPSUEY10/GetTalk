@@ -12,7 +12,11 @@ import {
   NOT_MESSAGE_OWNER,
   VALIDATION_ERROR,
 } from '../errors/error-codes.js';
-import { validateSendMessage, validateEditMessage } from '../validators/messages.validator.js';
+import {
+  validateSendMessage,
+  validateEditMessage,
+  MAX_MESSAGES_PAGE_LIMIT,
+} from '../validators/messages.validator.js';
 
 export async function list(userId, conversationId, { limit = 50, before } = {}) {
   // Verify membership
@@ -21,11 +25,25 @@ export async function list(userId, conversationId, { limit = 50, before } = {}) 
     throw new AppError('Not a member of this conversation', 403, NOT_CONVERSATION_MEMBER);
   }
 
-  // Fetch one extra row to know whether another page exists.
-  const rows = await messagesRepo.findByConversation(conversationId, { limit: limit + 1, before });
-  const { items: messages, nextCursor } = buildPage(rows, limit);
+  const safeLimit = Math.min(
+    Math.max(1, Number(limit) || MAX_MESSAGES_PAGE_LIMIT),
+    MAX_MESSAGES_PAGE_LIMIT
+  );
 
-  return { messages, nextCursor };
+  // Fetch one extra row to know whether another page exists.
+  const rows = await messagesRepo.findByConversation(conversationId, {
+    limit: safeLimit + 1,
+    before,
+  });
+  const { items: messages, nextCursor, hasMore, pagination } = buildPage(rows, safeLimit);
+
+  return {
+    data: messages,
+    messages,
+    nextCursor,
+    hasMore,
+    pagination,
+  };
 }
 
 export async function create(userId, conversationId, { bodyCiphertext, nonce, clientMessageId }) {

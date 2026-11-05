@@ -10,7 +10,7 @@
  * - nonce length bounded to prevent abuse
  */
 
-import { UUID_REGEX, validatePaginationQuery } from '../utils/pagination.js';
+import { UUID_REGEX, validatePaginationQuery } from './pagination.validator.js';
 
 export const MAX_MESSAGE_TEXT_BYTES = 10 * 1024; // 10,240 bytes
 export const GCM_TAG_BYTES = 16;
@@ -18,17 +18,23 @@ export const MAX_CIPHERTEXT_BYTES = MAX_MESSAGE_TEXT_BYTES + GCM_TAG_BYTES; // 1
 export const MAX_BODY_CIPHERTEXT_LENGTH = 13676; // Base64/Base64URL of 10,256 bytes
 export const MAX_NONCE_LENGTH = 64;
 export const MAX_CLIENT_MESSAGE_ID_LENGTH = 128;
+export const MAX_MESSAGES_PAGE_LIMIT = 50;
 
 /**
  * GET /api/conversations/:conversationId/messages?limit=&before=
  * Rejects malformed IDs/limits with 400 instead of letting them reach SQL.
+ * Enforces max 50 items per page (Rule #13).
  */
 export function validateListMessagesQuery(body, req) {
   const conversationId = req?.params?.conversationId;
   if (!conversationId || !UUID_REGEX.test(conversationId)) {
     return { valid: false, errors: ['conversationId must be a valid id'] };
   }
-  return validatePaginationQuery(req?.query, 'before');
+  return validatePaginationQuery(req?.query, {
+    cursorParam: 'before',
+    maxLimit: MAX_MESSAGES_PAGE_LIMIT,
+    allowOffset: false,
+  });
 }
 
 /**

@@ -1,13 +1,23 @@
 import * as friendsService from '../services/friends.service.js';
-import { parsePaginationQuery } from '../utils/pagination.js';
+import {
+  parsePaginationQuery,
+  parseOffsetPaginationQuery,
+} from '../utils/pagination.js';
+import {
+  DEFAULT_FRIENDS_LIMIT,
+  DEFAULT_FRIEND_REQUESTS_LIMIT,
+} from '../validators/friends.validator.js';
 import * as events from '../socket/events.js';
 import * as rooms from '../socket/rooms.js';
 
 export async function list(req, res, next) {
   try {
-    const { limit, cursor: after } = parsePaginationQuery(req.query, 'after');
-    const { friends, nextCursor } = await friendsService.list(req.user.id, { limit, after });
-    return res.json({ friends, nextCursor });
+    const { limit, offset, cursor: after } = parseOffsetPaginationQuery(req.query, {
+      defaultLimit: DEFAULT_FRIENDS_LIMIT,
+      cursorParam: 'after',
+    });
+    const result = await friendsService.list(req.user.id, { limit, offset, after });
+    return res.json(result);
   } catch (err) {
     return next(err);
   }
@@ -15,8 +25,12 @@ export async function list(req, res, next) {
 
 export async function listRequests(req, res, next) {
   try {
-    const requests = await friendsService.listRequests(req.user.id);
-    return res.json({ requests });
+    const { limit, cursor: before } = parsePaginationQuery(req.query, {
+      defaultLimit: DEFAULT_FRIEND_REQUESTS_LIMIT,
+      cursorParam: 'before',
+    });
+    const result = await friendsService.listRequests(req.user.id, { limit, before });
+    return res.json(result);
   } catch (err) {
     return next(err);
   }
