@@ -17,13 +17,29 @@ import {
 } from '../../lib/errors/encryptionerror.js';
 
 /**
- * Active derived-key id per conversation.
+ *Active derived-key id per conversation.
  *
  * The id includes the peer fingerprint so a rotated peer key never silently
  * reuses a stale conversation key.
  * @type {Map<string, string>}
  */
 const activeDerivedIds = new Map();
+
+/**
+ * Optional cleanup callbacks registered by higher-level session modules.
+ * @type {Set<() => void>}
+ */
+const stateCleanupCallbacks = new Set();
+
+/**
+ * Register a callback to be invoked when `clearCryptoState()` runs.
+ * @param {() => void} fn
+ */
+export function onClearCryptoState(fn) {
+  if (typeof fn === 'function') {
+    stateCleanupCallbacks.add(fn);
+  }
+}
 
 /**
  * Get or create the user's ECDH key pair.
@@ -278,5 +294,12 @@ export async function decryptMessage(conversationId, bodyCiphertextBase64, nonce
  */
 export async function clearCryptoState() {
   activeDerivedIds.clear();
+  for (const fn of stateCleanupCallbacks) {
+    try {
+      fn();
+    } catch {
+      // Ignore cleanup callback errors
+    }
+  }
   await clearAll();
 }

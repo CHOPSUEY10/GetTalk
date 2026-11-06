@@ -153,9 +153,12 @@
     const handleAcceptNewKey = async () => {
         if (!keyChange) return;
 
-        const confirmed = confirm(
-            "Pastikan fingerprint baru cocok dengan yang diberikan lawan bicara lewat kanal lain (tatap muka/telepon). Lanjutkan?"
-        );
+        const confirmed =
+            typeof confirm === "function"
+                ? confirm(
+                      "Pastikan fingerprint baru cocok dengan yang diberikan lawan bicara lewat kanal lain (tatap muka/telepon). Lanjutkan?"
+                  )
+                : true;
         if (!confirmed) return;
 
         try {
@@ -164,11 +167,17 @@
                 $authStore.user?.id,
                 keyChange.userId
             );
+            await messagesStore.flushPendingMessages(conversationId);
             await messagesStore.loadMessages(conversationId, { limit: MESSAGES_PAGE_LIMIT });
             scrollToBottom();
         } catch {
             // Error is already normalized and stored in conversationsStore.e2eeError
         }
+    };
+
+    const handleDiscardPendingMessages = () => {
+        if (!conversationId) return;
+        messagesStore.discardPendingMessages(conversationId);
     };
 
     /** @param {any} attachment */
@@ -192,6 +201,8 @@
     };
 
     $: currentMessages = $messagesStore.messagesByConversation[conversationId] || [];
+    $: pendingQueue = $messagesStore.pendingQueueByConversation?.[conversationId] || [];
+    $: pendingCount = pendingQueue.length;
     $: isLoadingHistory = $messagesStore.loadingByConversation[conversationId] || false;
     $: isLoadingMore = $messagesStore.loadingMoreByConversation?.[conversationId] || false;
     $: hasMoreMessages = $messagesStore.hasMoreByConversation?.[conversationId] || false;
@@ -297,8 +308,10 @@
                 {#if e2eeStatus === 'ready'}
                     Pesan dan data hanya dapat dibaca oleh Anda dan lawan bicara.
                 {:else if isE2EEError}
-                    <p>{e2eeError || getPageErrorMessage(PAGE_ERROR_CODES.KEY_EXCHANGE_FAILED, "e2ee")} Pengiriman pesan diblokir.</p>
                     {#if keyChange}
+                        <p>
+                            Lawan bicara mengganti perangkat. Terdapat <strong>{pendingCount}</strong> pesan yang sedang ditahan. Verifikasi nomor keamanan untuk melanjutkan pengiriman.
+                        </p>
                         <div class="mt-2 p-2.5 rounded-lg bg-white/70 border border-rose-100 text-left font-mono text-[10px] leading-relaxed break-all text-slate-700">
                             <div>
                                 <span class="font-sans font-semibold">Fingerprint lama</span><br>
@@ -309,13 +322,26 @@
                                 {keyChange.fingerprint}
                             </div>
                         </div>
-                        <button
-                            type="button"
-                            class="mt-2 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition-colors"
-                            on:click={handleAcceptNewKey}
-                        >
-                            Verifikasi dan terima kunci baru
-                        </button>
+                        <div class="mt-2 flex flex-wrap items-center justify-center gap-2">
+                            <button
+                                type="button"
+                                class="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition-colors cursor-pointer"
+                                on:click={handleAcceptNewKey}
+                            >
+                                Verifikasi dan terima kunci baru
+                            </button>
+                            {#if pendingCount > 0}
+                                <button
+                                    type="button"
+                                    class="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-100 border border-rose-200 text-rose-700 text-xs font-medium transition-colors cursor-pointer"
+                                    on:click={handleDiscardPendingMessages}
+                                >
+                                    Batalkan pesan tertahan ({pendingCount})
+                                </button>
+                            {/if}
+                        </div>
+                    {:else}
+                        <p>{e2eeError || getPageErrorMessage(PAGE_ERROR_CODES.KEY_EXCHANGE_FAILED, "e2ee")} Pengiriman pesan diblokir.</p>
                     {/if}
                 {:else}
                     Menghitung kunci bersama. Pengiriman pesan belum diaktifkan.
@@ -368,7 +394,8 @@
         <!-- Chat Input Bar -->
         <MessageInput
             {conversationId}
-            disabled={e2eeStatus !== 'ready'}
+            disabled={e2eeStatus !== 'ready' && e2eeStatus !== 'keyChange'}
+            isKeyChange={e2eeStatus === 'keyChange'}
             externalError={attachmentError}
             on:sent={scrollToBottom}
         />

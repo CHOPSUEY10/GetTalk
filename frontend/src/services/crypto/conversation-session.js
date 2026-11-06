@@ -10,13 +10,59 @@
  * callers must refuse to send rather than fall back to a weaker key.
  */
 
-import { getOrCreateIdentityKeyPair, establishConversationKey } from './message-crypto.js';
+import {
+  getOrCreateIdentityKeyPair,
+  establishConversationKey,
+  onClearCryptoState,
+} from './message-crypto.js';
 import { getTrustedPeerKey, IdentityKeyChangedError } from './identity-trust.js';
 import {
   ENCRYPTION_ERROR_CODES,
   EncryptionError,
   handleEncryptionError,
 } from '../../lib/errors/encryptionerror.js';
+
+/**
+ * Tracked participant context per conversation so outgoing messages can
+ * verify peer key continuity (Rule #17) and re-establish sessions after
+ * out-of-band key approval.
+ * @type {Map<string, { currentUserId: string, peerUserId: string }>}
+ */
+const conversationPeers = new Map();
+
+onClearCryptoState(() => {
+  conversationPeers.clear();
+});
+
+/**
+ * Get the tracked currentUserId and peerUserId for a conversation, if known.
+ * @param {string} conversationId
+ * @returns {{ currentUserId: string, peerUserId: string } | null}
+ */
+export function getConversationSessionPeer(conversationId) {
+  return conversationPeers.get(conversationId) || null;
+}
+
+/**
+ * Register or update the participant context for a conversation.
+ * @param {string} conversationId
+ * @param {{ currentUserId: string, peerUserId: string }} peers
+ */
+export function setConversationSessionPeer(conversationId, peers) {
+  if (conversationId && peers?.currentUserId && peers?.peerUserId) {
+    conversationPeers.set(conversationId, {
+      currentUserId: peers.currentUserId,
+      peerUserId: peers.peerUserId,
+    });
+  }
+}
+
+/**
+ * Clear tracked conversation peers (e.g. on logout / test reset).
+ */
+export function clearConversationSessionPeers() {
+  conversationPeers.clear();
+}
 
 /**
  * @param {{ conversationId: string, currentUserId: string, peerUserId: string }} params
@@ -33,6 +79,8 @@ export async function establishConversationSession({ conversationId, currentUser
       }
     );
   }
+
+  conversationPeers.set(conversationId, { currentUserId, peerUserId });
 
   try {
     const { privateKey } = await getOrCreateIdentityKeyPair(currentUserId);

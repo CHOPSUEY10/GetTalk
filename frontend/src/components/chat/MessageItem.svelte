@@ -24,7 +24,9 @@
         isSelf &&
         Boolean(msg?.id) &&
         !String(msg.id).startsWith("local-") &&
+        !String(msg.id).startsWith("queue-") &&
         msg.status !== "sending" &&
+        msg.status !== "queued" &&
         msg.status !== "failed";
 
     $: canEdit =
@@ -226,6 +228,17 @@
             </p>
         {/if}
 
+        {#if msg.status === "queued" && !isEditing}
+            <div
+                class="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 border border-amber-300 text-amber-900 text-[10px] font-semibold"
+                title="Pesan tidak dikirim sampai Anda memverifikasi kunci perangkat baru lawan bicara"
+                role="status"
+            >
+                <span aria-hidden="true">⏳</span>
+                <span>Ditahan (menunggu verifikasi kunci baru)</span>
+            </div>
+        {/if}
+
         <div class="flex items-center justify-end gap-1.5 mt-1 text-[10px] {isSelf ? 'text-indigo-200' : 'text-slate-400'}">
             {#if isEdited}
                 <span class="italic" title="Pesan telah diedit">(diedit)</span>
@@ -239,6 +252,13 @@
             {#if isSelf}
                 {#if msg.status === "sending"}
                     <div class="w-2.5 h-2.5 border border-indigo-200 border-t-transparent rounded-full animate-spin"></div>
+                {:else if msg.status === "queued"}
+                    <span
+                        class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-200 font-semibold"
+                        title="Pesan tidak dikirim sampai Anda memverifikasi kunci perangkat baru lawan bicara"
+                    >
+                        ⏳ Ditahan
+                    </span>
                 {:else if msg.status === "failed"}
                     <span class="text-rose-300 font-bold" title="Gagal terkirim">!</span>
                 {:else if msg.status === "read"}

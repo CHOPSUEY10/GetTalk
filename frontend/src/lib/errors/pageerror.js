@@ -346,6 +346,10 @@ export const CONTEXT_USER_MESSAGES = Object.freeze({
     [PAGE_ERROR_CODES.NOT_FOUND]:
       'Kunci keamanan lawan bicara belum tersedia. Lawan bicara perlu masuk terlebih dahulu.',
     [PAGE_ERROR_CODES.RESOURCE_NOT_FOUND]:
+      'Kunci keamanan lawan bicara belum tersedia. Lawan bicara perlu masuk terlebih dahulu.',
+    [PAGE_ERROR_CODES.IDENTITY_KEY_NOT_FOUND]:
+      'Kunci keamanan lawan bicara belum tersedia. Lawan bicara perlu masuk terlebih dahulu.',
+    [PAGE_ERROR_CODES.KEY_UNAVAILABLE]:
       'Kunci keamanan lawan bicara belum tersedia. Lawan bicara perlu masuk terlebih dahulu.'
   })
 });

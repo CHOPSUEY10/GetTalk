@@ -17,8 +17,19 @@ import {
 } from '../services/socket/client.js';
 import { registerSocketListeners } from '../services/socket/handlers.js';
 import { encryptMessage, decryptMessage } from '../services/crypto/message-crypto.js';
+import {
+  establishConversationSession,
+  getConversationSessionPeer
+} from '../services/crypto/conversation-session.js';
+import {
+  assertPeerIdentityKey,
+  IdentityKeyChangedError
+} from '../services/crypto/identity-trust.js';
 import { encryptFile, decryptFile, createDownloadUrl } from '../services/crypto/file-crypto.js';
-import { conversationsStore } from './conversations.store.js';
+import {
+  conversationsStore,
+  registerKeyChangeAcceptedFlushHandler
+} from './conversations.store.js';
 import { validateMessageText, validateAttachmentFile } from '../lib/validators.js';
 import { ApiError, API_ERROR_CODES, handleApiError } from '../lib/errors/apierror.js';
 import { ENCRYPTION_ERROR_CODES, EncryptionError } from '../lib/errors/encryptionerror.js';
@@ -27,8 +38,20 @@ import { PAGE_ERROR_CODES, resolvePageError } from '../lib/errors/pageerror.js';
 export const MESSAGES_PAGE_LIMIT = 50;
 
 /**
+ * @typedef {Object} QueuedMessage
+ * @property {string} queueId
+ * @property {string} conversationId
+ * @property {string} plaintext
+ * @property {string} senderId
+ * @property {string} senderUsername
+ * @property {string} createdAt
+ * @property {'KEY_ROTATION_PENDING_APPROVAL'} reason
+ */
+
+/**
  * @typedef {Object} MessageItem
  * @property {string} id
+ * @property {string} [queueId]
  * @property {string} conversation_id
  * @property {string} sender_id
  * @property {string} [sender_username]
@@ -37,7 +60,8 @@ export const MESSAGES_PAGE_LIMIT = 50;
  * @property {string | null} [plaintext] Decrypted locally; never plaintext from the server
  * @property {boolean} [decryptError]
  * @property {string | null} [errorCode]
- * @property {'sending' | 'sent' | 'delivered' | 'read' | 'failed'} [status]
+ * @property {'sending' | 'queued' | 'sent' | 'delivered' | 'read' | 'failed'} [status]
+ * @property {string} [reason]
  * @property {string} [client_message_id]
  * @property {string} created_at
  * @property {string | null} [updated_at]
@@ -154,8 +178,49 @@ function sortChronologically(list) {
 }
 
 /**
+ * Check whether an error indicates a peer's identity public key has changed (Rule #17).
+ * @param {any} err
+ * @returns {boolean}
+ */
+function isIdentityKeyChangedError(err) {
+  return Boolean(
+    err instanceof IdentityKeyChangedError ||
+      err?.name === 'IdentityKeyChangedError' ||
+      err?.code === ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED ||
+      err?.category === ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED
+  );
+}
+
+/**
+ * Resolve the peer's userId for a conversation from session context or conversation store.
+ * @param {string} conversationId
+ * @param {string} [explicitPeerUserId]
+ * @returns {string | null}
+ */
+function resolvePeerUserId(conversationId, explicitPeerUserId) {
+  if (explicitPeerUserId) return explicitPeerUserId;
+  const sessionPeer = getConversationSessionPeer(conversationId);
+  if (sessionPeer?.peerUserId) return sessionPeer.peerUserId;
+
+  const convState = get(conversationsStore);
+  if (
+    convState?.activeConversation?.id === conversationId &&
+    convState?.activeConversation?.peer?.id
+  ) {
+    return convState.activeConversation.peer.id;
+  }
+  const found = convState?.conversations?.find((c) => c.id === conversationId);
+  if (found?.peer?.id) return found.peer.id;
+  if (convState?.activeConversationId === conversationId && convState?.keyChange?.userId) {
+    return convState.keyChange.userId;
+  }
+  return null;
+}
+
+/**
  * @typedef {Object} MessagesState
  * @property {Record<string, MessageItem[]>} messagesByConversation
+ * @property {Record<string, QueuedMessage[]>} pendingQueueByConversation
  * @property {Record<string, boolean>} loadingByConversation
  * @property {Record<string, boolean>} loadingMoreByConversation
  * @property {Record<string, string | null>} nextCursorByConversation
@@ -168,6 +233,7 @@ function sortChronologically(list) {
 /** @type {MessagesState} */
 const initialState = {
   messagesByConversation: {},
+  pendingQueueByConversation: {},
   loadingByConversation: {},
   loadingMoreByConversation: {},
   nextCursorByConversation: {},
@@ -179,6 +245,8 @@ const initialState = {
 
 function createMessagesStore() {
   const { subscribe, set, update } = writable(initialState);
+  /** @type {Set<string>} */
+  const flushingConversations = new Set();
 
   // Bind real-time socket events directly to store mutations
   registerSocketListeners({
@@ -266,26 +334,50 @@ function createMessagesStore() {
           })
         );
 
-        update((s) => ({
-          ...s,
-          messagesByConversation: {
-            ...s.messagesByConversation,
-            [conversationId]: formatted
-          },
-          nextCursorByConversation: {
-            ...(s.nextCursorByConversation || {}),
-            [conversationId]: nextCursor
-          },
-          hasMoreByConversation: {
-            ...(s.hasMoreByConversation || {}),
-            [conversationId]: hasMore
-          },
-          paginationByConversation: {
-            ...(s.paginationByConversation || {}),
-            [conversationId]: { limit: pageLimit, nextCursor, hasMore }
-          },
-          loadingByConversation: { ...s.loadingByConversation, [conversationId]: false }
-        }));
+        update((s) => {
+          const pendingQueue = s.pendingQueueByConversation?.[conversationId] || [];
+          const formattedIds = new Set(
+            formatted.flatMap((m) => [m.id, m.client_message_id].filter(Boolean))
+          );
+          const pendingFeedItems = pendingQueue
+            .filter((q) => !formattedIds.has(q.queueId))
+            .map((q) => ({
+              id: q.queueId,
+              queueId: q.queueId,
+              conversation_id: conversationId,
+              sender_id: q.senderId,
+              sender_username: q.senderUsername,
+              body_ciphertext: '',
+              nonce: '',
+              plaintext: q.plaintext,
+              decryptError: false,
+              status: /** @type {MessageItem['status']} */ ('queued'),
+              reason: q.reason,
+              client_message_id: q.queueId,
+              created_at: q.createdAt
+            }));
+
+          return {
+            ...s,
+            messagesByConversation: {
+              ...s.messagesByConversation,
+              [conversationId]: [...formatted, ...pendingFeedItems]
+            },
+            nextCursorByConversation: {
+              ...(s.nextCursorByConversation || {}),
+              [conversationId]: nextCursor
+            },
+            hasMoreByConversation: {
+              ...(s.hasMoreByConversation || {}),
+              [conversationId]: hasMore
+            },
+            paginationByConversation: {
+              ...(s.paginationByConversation || {}),
+              [conversationId]: { limit: pageLimit, nextCursor, hasMore }
+            },
+            loadingByConversation: { ...s.loadingByConversation, [conversationId]: false }
+          };
+        });
 
         return formatted;
       } catch (err) {
@@ -456,8 +548,297 @@ function createMessagesStore() {
     },
 
     /**
-     * Validate (<= 10 KB UTF-8), encrypt locally, and send a message to a conversation
-     * (Rule #3, #14, #20, #25, #26).
+     * Enqueue an outgoing message locally when peer identity key has rotated or E2EE session
+     * requires out-of-band verification (Rule #17, AC-17).
+     * Never transmits plaintext or stale-key ciphertext over the network.
+     *
+     * @param {string} conversationId
+     * @param {{
+     *   plaintext: string,
+     *   senderId?: string,
+     *   senderUsername?: string,
+     *   createdAt?: string,
+     *   reason?: 'KEY_ROTATION_PENDING_APPROVAL'
+     * }} params
+     * @returns {MessageItem}
+     */
+    queuePendingMessage: (
+      conversationId,
+      {
+        plaintext,
+        senderId = 'me',
+        senderUsername = 'Me',
+        createdAt,
+        reason = 'KEY_ROTATION_PENDING_APPROVAL'
+      } = /** @type {any} */ ({})
+    ) => {
+      const validation = validateMessageText(plaintext);
+      if (!validation.valid) {
+        throw buildValidationError(
+          validation.code || PAGE_ERROR_CODES.VALIDATION_ERROR,
+          validation.code === PAGE_ERROR_CODES.MESSAGE_TOO_LONG
+            ? 'Message content exceeds maximum size of 10 KB.'
+            : 'Message content cannot be empty.'
+        );
+      }
+
+      const resolvedPlaintext = validation.trimmed;
+      const queueId = `queue-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const nowIso = createdAt || new Date().toISOString();
+
+      /** @type {QueuedMessage} */
+      const queuedEntry = {
+        queueId,
+        conversationId,
+        plaintext: resolvedPlaintext,
+        senderId: senderId || 'me',
+        senderUsername: senderUsername || 'Me',
+        createdAt: nowIso,
+        reason: reason || 'KEY_ROTATION_PENDING_APPROVAL'
+      };
+
+      /** @type {MessageItem} */
+      const queuedMessageItem = {
+        id: queueId,
+        queueId,
+        conversation_id: conversationId,
+        sender_id: queuedEntry.senderId,
+        sender_username: queuedEntry.senderUsername,
+        body_ciphertext: '',
+        nonce: '',
+        plaintext: resolvedPlaintext,
+        decryptError: false,
+        status: 'queued',
+        reason: queuedEntry.reason,
+        client_message_id: queueId,
+        created_at: nowIso
+      };
+
+      update((s) => {
+        const currentQueue = s.pendingQueueByConversation?.[conversationId] || [];
+        const currentMessages = s.messagesByConversation?.[conversationId] || [];
+        return {
+          ...s,
+          pendingQueueByConversation: {
+            ...(s.pendingQueueByConversation || {}),
+            [conversationId]: [...currentQueue, queuedEntry]
+          },
+          messagesByConversation: {
+            ...s.messagesByConversation,
+            [conversationId]: [...currentMessages, queuedMessageItem]
+          }
+        };
+      });
+
+      conversationsStore.updateLastMessage(conversationId, queuedMessageItem);
+      return queuedMessageItem;
+    },
+
+    /**
+     * Flush all queued messages for a conversation in FIFO order after the user verifies
+     * and accepts the peer's new identity key (Rule #15, #16, #17, NFR-07, AC-17).
+     * Re-encrypts each message with the newly established session key and transmits it.
+     *
+     * @param {string} conversationId
+     * @returns {Promise<MessageItem[]>}
+     */
+    flushPendingMessages: async (conversationId) => {
+      if (!conversationId || flushingConversations.has(conversationId)) {
+        return [];
+      }
+
+      const initialSnapshot = get({ subscribe });
+      const queueSnapshot = [...(initialSnapshot.pendingQueueByConversation?.[conversationId] || [])];
+      if (queueSnapshot.length === 0) {
+        return [];
+      }
+
+      flushingConversations.add(conversationId);
+      /** @type {MessageItem[]} */
+      const flushedMessages = [];
+
+      try {
+        // Ensure the conversation's session key is derived from the newly accepted peer key
+        const sessionPeer = getConversationSessionPeer(conversationId);
+        const peerUserId = resolvePeerUserId(conversationId);
+        const convState = get(conversationsStore);
+        const fallbackCurrentUserId =
+          sessionPeer?.currentUserId ||
+          (queueSnapshot[0]?.senderId && queueSnapshot[0].senderId !== 'me'
+            ? queueSnapshot[0].senderId
+            : null);
+
+        if (fallbackCurrentUserId && peerUserId) {
+          await establishConversationSession({
+            conversationId,
+            currentUserId: fallbackCurrentUserId,
+            peerUserId
+          });
+          conversationsStore.markSessionReady(conversationId);
+        } else if (peerUserId) {
+          await assertPeerIdentityKey(peerUserId);
+          if (convState?.e2eeStatus === 'keyChange') {
+            conversationsStore.markSessionReady(conversationId);
+          }
+        }
+
+        for (const item of queueSnapshot) {
+          // Verify item is still in the pending queue (not discarded while awaiting previous item)
+          const stillQueued = (
+            get({ subscribe }).pendingQueueByConversation?.[conversationId] || []
+          ).some((q) => q.queueId === item.queueId);
+          if (!stillQueued) continue;
+
+          // Transition UI item from 'queued' -> 'sending'
+          update((s) => {
+            const list = s.messagesByConversation[conversationId] || [];
+            return {
+              ...s,
+              messagesByConversation: {
+                ...s.messagesByConversation,
+                [conversationId]: list.map((m) =>
+                  m.id === item.queueId ||
+                  m.queueId === item.queueId ||
+                  m.client_message_id === item.queueId
+                    ? { ...m, status: /** @type {MessageItem['status']} */ ('sending') }
+                    : m
+                )
+              }
+            };
+          });
+
+          // Re-encrypt plaintext with the newly established session key (fresh random nonce per message)
+          const { bodyCiphertext, nonce } = await encryptMessage(conversationId, item.plaintext);
+
+          let serverMessage = null;
+          const socketRes = await sendEncryptedMessage({
+            conversationId,
+            bodyCiphertext,
+            nonce,
+            clientMessageId: item.queueId
+          });
+
+          if (socketRes?.error && !socketRes?.disconnected) {
+            throw handleApiError(new Error(socketRes.error), {
+              code: socketRes.code || API_ERROR_CODES.BAD_REQUEST,
+              endpoint: 'socket:message:send',
+              method: 'SOCKET'
+            });
+          }
+
+          serverMessage = socketRes?.message || null;
+
+          if (!serverMessage) {
+            const restRes = await apiSendMessage(conversationId, {
+              bodyCiphertext,
+              nonce,
+              clientMessageId: item.queueId
+            });
+            serverMessage = restRes?.message || restRes;
+          }
+
+          /** @type {MessageItem} */
+          const confirmed = {
+            ...normalizeMessage(
+              serverMessage || {
+                id: item.queueId,
+                conversationId,
+                senderId: item.senderId,
+                bodyCiphertext,
+                nonce,
+                clientMessageId: item.queueId,
+                createdAt: item.createdAt
+              },
+              conversationId
+            ),
+            body_ciphertext:
+              serverMessage?.body_ciphertext || serverMessage?.bodyCiphertext || bodyCiphertext,
+            nonce: serverMessage?.nonce || nonce,
+            plaintext: item.plaintext,
+            decryptError: false,
+            status: 'sent'
+          };
+
+          update((s) => {
+            const list = s.messagesByConversation[conversationId] || [];
+            const replaced = list.map((m) =>
+              m.id === item.queueId ||
+              m.queueId === item.queueId ||
+              m.client_message_id === item.queueId
+                ? confirmed
+                : m
+            );
+            const remainingQueue = (s.pendingQueueByConversation?.[conversationId] || []).filter(
+              (q) => q.queueId !== item.queueId
+            );
+            return {
+              ...s,
+              messagesByConversation: {
+                ...s.messagesByConversation,
+                [conversationId]: replaced
+              },
+              pendingQueueByConversation: {
+                ...(s.pendingQueueByConversation || {}),
+                [conversationId]: remainingQueue
+              }
+            };
+          });
+
+          conversationsStore.updateLastMessage(conversationId, confirmed);
+          flushedMessages.push(confirmed);
+        }
+
+        return flushedMessages;
+      } finally {
+        flushingConversations.delete(conversationId);
+      }
+    },
+
+    /**
+     * Discard all held/queued outgoing messages for a conversation when the user rejects
+     * the changed key or cancels pending messages.
+     *
+     * @param {string} conversationId
+     * @returns {QueuedMessage[]}
+     */
+    discardPendingMessages: (conversationId) => {
+      if (!conversationId) return [];
+
+      const current = get({ subscribe });
+      const discarded = [...(current.pendingQueueByConversation?.[conversationId] || [])];
+      const discardedIds = new Set(discarded.map((q) => q.queueId));
+
+      update((s) => {
+        const list = s.messagesByConversation[conversationId] || [];
+        const filtered = list.filter(
+          (m) =>
+            !discardedIds.has(m.id) &&
+            !discardedIds.has(m.queueId || '') &&
+            !discardedIds.has(m.client_message_id || '') &&
+            m.status !== 'queued'
+        );
+        return {
+          ...s,
+          pendingQueueByConversation: {
+            ...(s.pendingQueueByConversation || {}),
+            [conversationId]: []
+          },
+          messagesByConversation: {
+            ...s.messagesByConversation,
+            [conversationId]: filtered
+          }
+        };
+      });
+
+      return discarded;
+    },
+
+    /**
+     * Validate (<= 10 KB UTF-8), verify peer identity key continuity, encrypt locally,
+     * and send a message to a conversation (Rule #3, #14, #17, #20, #25, #26).
+     * If a peer identity key rotation is detected (`IdentityKeyChangedError`) or the
+     * conversation E2EE status is awaiting key verification, holds the message in
+     * `pendingQueueByConversation` with status `'queued'` instead of failing or transmitting.
      *
      * @param {string} conversationId
      * @param {{
@@ -466,6 +847,7 @@ function createMessagesStore() {
      *   nonce?: string,
      *   senderId?: string,
      *   senderUsername?: string,
+     *   peerUserId?: string,
      *   plaintextPreview?: string
      * }} params
      */
@@ -477,6 +859,7 @@ function createMessagesStore() {
         nonce: preEncryptedNonce,
         senderId = 'me',
         senderUsername = 'Me',
+        peerUserId: explicitPeerUserId,
         plaintextPreview
       } = {}
     ) => {
@@ -497,9 +880,6 @@ function createMessagesStore() {
           );
         }
         resolvedPlaintext = validation.trimmed;
-        const encrypted = await encryptMessage(conversationId, resolvedPlaintext);
-        bodyCiphertext = encrypted.bodyCiphertext;
-        nonce = encrypted.nonce;
       } else if (resolvedPlaintext !== undefined && resolvedPlaintext !== null) {
         const validation = validateMessageText(resolvedPlaintext);
         if (!validation.valid) {
@@ -511,6 +891,53 @@ function createMessagesStore() {
           );
         }
         resolvedPlaintext = validation.trimmed;
+      }
+
+      // Check peer key continuity & conversation E2EE status before encrypting/transmitting (Rule #17)
+      const convState = get(conversationsStore);
+      const isManagedConversationNotReady =
+        convState?.e2eeStatus === 'keyChange' ||
+        (convState?.activeConversationId === conversationId && convState?.e2eeStatus !== 'ready');
+      const peerUserId = resolvePeerUserId(conversationId, explicitPeerUserId);
+
+      if (isManagedConversationNotReady && resolvedPlaintext) {
+        if (peerUserId && convState?.e2eeStatus !== 'keyChange') {
+          try {
+            await assertPeerIdentityKey(peerUserId);
+          } catch (err) {
+            if (isIdentityKeyChangedError(err)) {
+              conversationsStore.recordKeyChange(/** @type {any} */ (err), conversationId);
+            }
+          }
+        }
+        return messagesStore.queuePendingMessage(conversationId, {
+          plaintext: resolvedPlaintext,
+          senderId,
+          senderUsername,
+          reason: 'KEY_ROTATION_PENDING_APPROVAL'
+        });
+      }
+
+      if (!bodyCiphertext || !nonce) {
+        try {
+          if (peerUserId) {
+            await assertPeerIdentityKey(peerUserId);
+          }
+          const encrypted = await encryptMessage(conversationId, /** @type {string} */ (resolvedPlaintext));
+          bodyCiphertext = encrypted.bodyCiphertext;
+          nonce = encrypted.nonce;
+        } catch (err) {
+          if (isIdentityKeyChangedError(err) && resolvedPlaintext) {
+            conversationsStore.recordKeyChange(/** @type {any} */ (err), conversationId);
+            return messagesStore.queuePendingMessage(conversationId, {
+              plaintext: resolvedPlaintext,
+              senderId,
+              senderUsername,
+              reason: 'KEY_ROTATION_PENDING_APPROVAL'
+            });
+          }
+          throw err;
+        }
       }
 
       const clientMessageId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -690,7 +1117,7 @@ function createMessagesStore() {
 
       // 3. Upload encrypted attachment payload
       let uploadedAttachment = null;
-      if (confirmed?.id) {
+      if (confirmed?.id && confirmed?.status !== 'queued') {
         const uploadRes = await uploadAttachment({
           messageId: confirmed.id,
           metadataCiphertext: encryptedFile.metadataCiphertext,
@@ -1158,9 +1585,24 @@ function createMessagesStore() {
     },
 
     reset: () => {
-      set(initialState);
+      flushingConversations.clear();
+      set({
+        messagesByConversation: {},
+        pendingQueueByConversation: {},
+        loadingByConversation: {},
+        loadingMoreByConversation: {},
+        nextCursorByConversation: {},
+        hasMoreByConversation: {},
+        paginationByConversation: {},
+        errorByConversation: {},
+        errorCodeByConversation: {}
+      });
     }
   };
+
+  registerKeyChangeAcceptedFlushHandler((convId) =>
+    messagesStore.flushPendingMessages(convId)
+  );
 
   return messagesStore;
 }

@@ -8,6 +8,7 @@
 
     export let conversationId = "";
     export let disabled = false;
+    export let isKeyChange = false;
     /** @type {string | null} */
     export let externalError = null;
 
@@ -95,7 +96,7 @@
     <form on:submit|preventDefault={handleSendMessage} class="flex items-center gap-2">
         <AttachmentPicker
             {conversationId}
-            disabled={disabled || isSending}
+            disabled={disabled || isSending || isKeyChange}
             loading={isSending}
             on:attached={handleAttached}
         />
@@ -107,7 +108,11 @@
                 if (inputError) inputError = null;
             }}
             on:keydown={handleKeydown}
-            placeholder={!disabled ? "Ketik pesan terenkripsi..." : "Menunggu sesi E2EE siap..."}
+            placeholder={isKeyChange
+                ? "Ketik pesan (akan ditahan hingga kunci baru diverifikasi)..."
+                : !disabled
+                  ? "Ketik pesan terenkripsi..."
+                  : "Menunggu sesi E2EE siap..."}
             disabled={disabled || isSending}
             class="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white transition-all shadow-inner disabled:opacity-60"
         />

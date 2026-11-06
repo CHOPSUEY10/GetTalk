@@ -105,6 +105,18 @@ export async function getTrustedPeerKey(userId) {
 }
 
 /**
+ * Assert that a peer's current identity key matches the pinned fingerprint (Rule #17).
+ * Throws IdentityKeyChangedError if the peer has rotated keys / changed devices.
+ *
+ * @param {string} userId
+ * @returns {Promise<{ publicKey: string, fingerprint: string, trust: 'new' | 'trusted' }>}
+ * @throws {IdentityKeyChangedError}
+ */
+export async function assertPeerIdentityKey(userId) {
+  return getTrustedPeerKey(userId);
+}
+
+/**
  * Re-pin a changed key after the user verified the fingerprint out of band.
  *
  * @param {string} userId
