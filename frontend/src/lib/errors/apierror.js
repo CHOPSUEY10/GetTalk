@@ -62,8 +62,9 @@ export const API_ERROR_CODES = Object.freeze({
   USER_ALREADY_EXISTS: 'USER_ALREADY_EXISTS',
   FRIENDSHIP_ALREADY_EXISTS: 'FRIENDSHIP_ALREADY_EXISTS',
 
-  // Rate limit
+  // Rate limit & connection quotas
   TOO_MANY_REQUESTS: 'TOO_MANY_REQUESTS',
+  MAX_CONCURRENT_SOCKETS_EXCEEDED: 'MAX_CONCURRENT_SOCKETS_EXCEEDED',
 
   // E2EE key registry API codes
   INVALID_PUBLIC_KEY: 'INVALID_PUBLIC_KEY',
@@ -175,6 +176,8 @@ function defaultTechnicalMessage(code, status) {
       return 'Resource conflict';
     case API_ERROR_CODES.TOO_MANY_REQUESTS:
       return 'Rate limit exceeded';
+    case API_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED:
+      return 'Maximum concurrent WebSocket connections exceeded';
     case API_ERROR_CODES.VALIDATION_ERROR:
     case API_ERROR_CODES.BAD_REQUEST:
       return 'Request validation failed';
@@ -603,4 +606,3 @@ export default {
   logApiError,
   handleApiError
 };
-

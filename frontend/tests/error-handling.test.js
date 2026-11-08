@@ -54,6 +54,11 @@ let friendsStore;
 let conversationsStore;
 let messagesStore;
 let uiStore;
+let socketStore;
+let socket;
+let SOCKET_RECONNECTION_ATTEMPTS;
+let SOCKET_RECONNECTION_DELAY_MS;
+let SOCKET_RECONNECTION_DELAY_MAX_MS;
 
 before(async () => {
   ({ api } = await import('../src/services/api/client.js'));
@@ -62,6 +67,13 @@ before(async () => {
   ({ conversationsStore } = await import('../src/stores/conversations.store.js'));
   ({ messagesStore } = await import('../src/stores/messages.store.js'));
   ({ uiStore } = await import('../src/stores/ui.store.js'));
+  ({ socketStore } = await import('../src/stores/socket.store.js'));
+  ({
+    socket,
+    SOCKET_RECONNECTION_ATTEMPTS,
+    SOCKET_RECONNECTION_DELAY_MS,
+    SOCKET_RECONNECTION_DELAY_MAX_MS,
+  } = await import('../src/services/socket/client.js'));
 });
 
 describe('Centralized Error Handling — Unit & Security Tests', () => {
@@ -785,6 +797,93 @@ describe('Centralized Error Handling — Unit & Security Tests', () => {
       assert.equal(sentBody.plaintext, undefined);
       assert.equal(sentBody.body, undefined);
       assert.equal(sent.plaintext, 'Halo dunia terenkripsi!');
+    });
+  });
+
+  // ── 7. Socket.IO Connection Limit & Reconnection Loop Prevention (Rule #18) ─
+
+  describe('7. Socket.IO Connection Limit & Reconnection Loop Prevention (Rule #18)', () => {
+    test('client.js configures a singleton managed socket with bounded reconnection options', () => {
+      assert.ok(socket);
+      assert.equal(SOCKET_RECONNECTION_ATTEMPTS, 5);
+      assert.equal(SOCKET_RECONNECTION_DELAY_MS, 1000);
+      assert.equal(SOCKET_RECONNECTION_DELAY_MAX_MS, 5000);
+      assert.equal(socket.io.opts.autoConnect, false);
+      assert.equal(socket.io.opts.withCredentials, true);
+      assert.equal(socket.io.opts.reconnectionAttempts, 5);
+      assert.equal(socket.io.opts.reconnectionDelay, 1000);
+      assert.equal(socket.io.opts.reconnectionDelayMax, 5000);
+    });
+
+    test('MAX_CONCURRENT_SOCKETS_EXCEEDED connect_error halts auto-reconnection, updates socketStore, and notifies uiStore', () => {
+      let disconnectCalls = 0;
+      let connectCalls = 0;
+      const originalDisconnect = socket.disconnect.bind(socket);
+      const originalConnect = socket.connect.bind(socket);
+
+      socket.disconnect = () => {
+        disconnectCalls += 1;
+        return socket;
+      };
+      socket.connect = () => {
+        connectCalls += 1;
+        return socket;
+      };
+
+      try {
+        socket.io.opts.reconnection = true;
+
+        const quotaError = new Error(
+          'Batas maksimum 3 sesi obrolan aktif bersamaan telah tercapai untuk akun ini.'
+        );
+        /** @type {any} */ (quotaError).data = {
+          code: 'MAX_CONCURRENT_SOCKETS_EXCEEDED',
+          message:
+            'Batas maksimum 3 sesi obrolan aktif bersamaan telah tercapai untuk akun ini.',
+        };
+
+        // Simulate connect_error from Socket.IO server handshake rejection
+        socket.listeners('connect_error').forEach((fn) => fn(quotaError));
+
+        // 1. Auto-reconnection is immediately disabled and socket.disconnect() called
+        assert.equal(socket.io.opts.reconnection, false);
+        assert.equal(disconnectCalls, 1);
+        assert.equal(connectCalls, 0);
+
+        // 2. socketStore state reflects MAX_CONCURRENT_SOCKETS_EXCEEDED
+        const state = get(socketStore);
+        assert.equal(state.status, 'error');
+        assert.equal(state.connected, false);
+        assert.equal(state.error, 'MAX_CONCURRENT_SOCKETS_EXCEEDED');
+        assert.equal(state.errorCode, 'MAX_CONCURRENT_SOCKETS_EXCEEDED');
+        assert.equal(
+          state.errorMessage,
+          getPageErrorMessage(PAGE_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED)
+        );
+
+        // 3. uiStore receives warning notification for the user
+        const notifications = get(uiStore).notifications;
+        assert.equal(notifications.length, 1);
+        assert.equal(notifications[0].type, 'warning');
+        assert.equal(
+          notifications[0].message,
+          getPageErrorMessage(PAGE_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED)
+        );
+
+        // 4. Manual reconnect re-enables reconnection, clears error, and calls socket.connect()
+        socketStore.reconnect();
+        assert.equal(socket.io.opts.reconnection, true);
+        assert.equal(connectCalls, 1);
+        const reconnectingState = get(socketStore);
+        assert.equal(reconnectingState.status, 'connecting');
+        assert.equal(reconnectingState.error, null);
+        assert.equal(reconnectingState.errorCode, null);
+        assert.equal(get(uiStore).notifications.length, 0);
+      } finally {
+        socket.disconnect = originalDisconnect;
+        socket.connect = originalConnect;
+        socketStore.disconnect();
+      }
     });
   });
 });

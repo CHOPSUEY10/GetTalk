@@ -1,8 +1,11 @@
 import { writable } from 'svelte/store';
 import { socket, joinConversation as apiJoin, leaveConversation as apiLeave } from '../services/socket/client.js';
 import { friendsStore } from './friends.store.js';
+import { uiStore } from './ui.store.js';
 import { API_ERROR_CODES, handleApiError } from '../lib/errors/apierror.js';
-import { getPageErrorMessage } from '../lib/errors/pageerror.js';
+import { PAGE_ERROR_CODES, getPageErrorMessage } from '../lib/errors/pageerror.js';
+
+export const SOCKET_QUOTA_NOTIFICATION_ID = 'socket-connection-limit';
 
 /**
  * @typedef {Object} SocketState
@@ -13,6 +16,7 @@ import { getPageErrorMessage } from '../lib/errors/pageerror.js';
  * @property {string[]} joinedRooms
  * @property {string | null} error
  * @property {string | null} [errorCode]
+ * @property {string | null} [errorMessage]
  */
 
 /** @type {SocketState} */
@@ -23,7 +27,8 @@ const initialState = {
   activeConversationId: null,
   joinedRooms: [],
   error: null,
-  errorCode: null
+  errorCode: null,
+  errorMessage: null
 };
 
 function createSocketStore() {
@@ -31,13 +36,16 @@ function createSocketStore() {
 
   // Sync with native socket lifecycle events
   socket.on('connect', () => {
+    uiStore.dismissNotification(SOCKET_QUOTA_NOTIFICATION_ID);
+
     update((state) => ({
       ...state,
       status: 'connected',
       connected: true,
       id: socket.id || null,
       error: null,
-      errorCode: null
+      errorCode: null,
+      errorMessage: null
     }));
 
     // Register real-time listeners globally so friends and notifications
@@ -47,31 +55,91 @@ function createSocketStore() {
   });
 
   socket.on('disconnect', () => {
-    update((state) => ({
-      ...state,
-      status: 'disconnected',
-      connected: false,
-      id: null,
-      activeConversationId: null,
-      joinedRooms: [],
-      error: null,
-      errorCode: null
-    }));
+    update((state) => {
+      // Preserve quota exceeded error state when disconnect() is invoked to halt reconnection
+      if (
+        state.error === API_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED ||
+        state.errorCode === API_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED
+      ) {
+        return {
+          ...state,
+          connected: false,
+          id: null,
+          activeConversationId: null,
+          joinedRooms: []
+        };
+      }
+
+      return {
+        ...state,
+        status: 'disconnected',
+        connected: false,
+        id: null,
+        activeConversationId: null,
+        joinedRooms: [],
+        error: null,
+        errorCode: null,
+        errorMessage: null
+      };
+    });
   });
 
   socket.on('connect_error', (err) => {
+    const rawCode =
+      err?.data?.code ||
+      err?.data?.error?.code ||
+      err?.code ||
+      null;
+
+    if (rawCode === API_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED) {
+      // Immediately halt auto-reconnection to prevent connection storm/flood (Rule #18)
+      if (socket.io?.opts) {
+        socket.io.opts.reconnection = false;
+      }
+      socket.disconnect();
+
+      handleApiError(err, {
+        code: API_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED,
+        endpoint: 'socket:connect',
+        method: 'SOCKET'
+      });
+
+      const userMessage = getPageErrorMessage(PAGE_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED);
+
+      update((state) => ({
+        ...state,
+        status: 'error',
+        connected: false,
+        id: null,
+        error: API_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED,
+        errorCode: API_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED,
+        errorMessage: userMessage
+      }));
+
+      uiStore.notify({
+        id: SOCKET_QUOTA_NOTIFICATION_ID,
+        type: 'warning',
+        message: userMessage,
+        timeout: 8000
+      });
+      return;
+    }
+
     const normalized = handleApiError(err, {
-      code: API_ERROR_CODES.NETWORK_ERROR,
+      code: rawCode || API_ERROR_CODES.NETWORK_ERROR,
       endpoint: 'socket:connect',
       method: 'SOCKET'
     });
+    const userMessage = getPageErrorMessage(normalized.code);
+
     update((state) => ({
       ...state,
       status: 'error',
       connected: false,
       id: null,
-      error: getPageErrorMessage(normalized.code),
-      errorCode: normalized.code
+      error: userMessage,
+      errorCode: normalized.code,
+      errorMessage: userMessage
     }));
   });
 
@@ -82,18 +150,43 @@ function createSocketStore() {
     }));
   });
 
+  const connectSocket = () => {
+    if (!socket.connected) {
+      if (socket.io?.opts) {
+        socket.io.opts.reconnection = true;
+      }
+      uiStore.dismissNotification(SOCKET_QUOTA_NOTIFICATION_ID);
+      update((state) => ({
+        ...state,
+        status: 'connecting',
+        error: null,
+        errorCode: null,
+        errorMessage: null
+      }));
+      socket.connect();
+    }
+  };
+
   return {
     subscribe,
-    connect: () => {
-      if (!socket.connected) {
-        update((state) => ({ ...state, status: 'connecting', error: null, errorCode: null }));
-        socket.connect();
-      }
-    },
-    disconnect: () => {
+    connect: connectSocket,
+    /**
+     * Manually re-initiate WebSocket connection (e.g. after closing other active tabs).
+     */
+    reconnect: () => {
       if (socket.connected) {
         socket.disconnect();
       }
+      connectSocket();
+    },
+    disconnect: () => {
+      if (socket.io?.opts) {
+        socket.io.opts.reconnection = true;
+      }
+      if (socket.connected) {
+        socket.disconnect();
+      }
+      uiStore.dismissNotification(SOCKET_QUOTA_NOTIFICATION_ID);
       set(initialState);
     },
     /**

@@ -2,13 +2,22 @@ import { io } from 'socket.io-client';
 import env from '../../config/env.js';
 import * as events from './events.js';
 
+export const SOCKET_RECONNECTION_ATTEMPTS = 5;
+export const SOCKET_RECONNECTION_DELAY_MS = 1000;
+export const SOCKET_RECONNECTION_DELAY_MAX_MS = 5000;
+
 /**
- * Managed Socket.IO client instance (rule §18).
+ * Managed singleton Socket.IO client instance (Rule #18).
+ * Never create additional Socket.IO instances inside components.
  */
 export const socket = io(env.socketUrl, {
   autoConnect: false,
   withCredentials: true,
-  transports: ['websocket', 'polling']
+  transports: ['websocket', 'polling'],
+  reconnection: true,
+  reconnectionAttempts: SOCKET_RECONNECTION_ATTEMPTS,
+  reconnectionDelay: SOCKET_RECONNECTION_DELAY_MS,
+  reconnectionDelayMax: SOCKET_RECONNECTION_DELAY_MAX_MS
 });
 
 /**

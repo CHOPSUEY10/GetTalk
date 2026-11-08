@@ -3,12 +3,17 @@
     import { socketStore } from "../../stores/socket.store.js";
     import { friendsStore } from "../../stores/friends.store.js";
     import { uiStore } from "../../stores/ui.store.js";
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../../lib/errors/pageerror.js";
     import { replace } from "svelte-spa-router";
 
     // Reactive safety check for authentication
     $: if (!$authStore.loading && !$authStore.authenticated) {
         replace("/login");
     }
+
+    $: isSocketQuotaExceeded =
+        $socketStore.error === PAGE_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED ||
+        $socketStore.errorCode === PAGE_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED;
 </script>
 
 {#if $authStore.loading}
@@ -126,6 +131,29 @@
             </div>
         </aside>
         <main class="main-content">
+            {#if isSocketQuotaExceeded}
+                <div
+                    role="alert"
+                    class="mb-4 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm flex flex-wrap items-center justify-between gap-3 shadow-xs"
+                >
+                    <div class="flex items-center gap-2.5">
+                        <svg class="w-5 h-5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                        </svg>
+                        <span>
+                            {$socketStore.errorMessage || getPageErrorMessage(PAGE_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED)}
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        class="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold transition-colors cursor-pointer shrink-0"
+                        on:click={() => socketStore.reconnect()}
+                    >
+                        Hubungkan Ulang
+                    </button>
+                </div>
+            {/if}
+
             {#if $uiStore.notifications.length > 0}
                 <div class="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none">
                     {#each $uiStore.notifications as n (n.id)}

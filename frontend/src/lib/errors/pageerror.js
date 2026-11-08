@@ -8,6 +8,9 @@ export const PAGE_ERROR_CODES = Object.freeze({
   ...API_ERROR_CODES,
   ...ENCRYPTION_ERROR_CODES,
 
+  // Socket & connection quotas
+  MAX_CONCURRENT_SOCKETS_EXCEEDED: 'MAX_CONCURRENT_SOCKETS_EXCEEDED',
+
   // Store & page operation codes
   MESSAGE_SEND_FAILED: 'MESSAGE_SEND_FAILED',
   MESSAGE_EDIT_FAILED: 'MESSAGE_EDIT_FAILED',
@@ -122,9 +125,11 @@ export const DEFAULT_USER_MESSAGES = Object.freeze({
   [PAGE_ERROR_CODES.FRIENDSHIP_ALREADY_EXISTS]:
     'Pengguna ini sudah ada dalam daftar teman atau permintaan pertemanan Anda.',
 
-  // Rate limit & server
+  // Rate limit, socket quota & server
   [PAGE_ERROR_CODES.TOO_MANY_REQUESTS]:
     'Terlalu banyak permintaan dalam waktu singkat. Silakan tunggu beberapa saat lalu coba lagi.',
+  [PAGE_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED]:
+    'Batas maksimum 3 sesi obrolan aktif bersamaan telah tercapai untuk akun ini. Tutup salah satu tab atau perangkat lain, lalu hubungkan ulang.',
   [PAGE_ERROR_CODES.SERVER_ERROR]:
     'Terjadi masalah pada server. Silakan coba lagi nanti.',
   [PAGE_ERROR_CODES.INTERNAL_ERROR]:
@@ -497,4 +502,3 @@ export default {
   getPageErrorMessage,
   createValidationError
 };
-

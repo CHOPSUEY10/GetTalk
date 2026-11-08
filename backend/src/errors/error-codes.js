@@ -41,8 +41,9 @@ export const INVALID_PUBLIC_KEY = 'INVALID_PUBLIC_KEY';
 export const IDENTITY_KEY_NOT_FOUND = 'IDENTITY_KEY_NOT_FOUND';
 export const KEY_REGISTRY_UNAVAILABLE = 'KEY_REGISTRY_UNAVAILABLE';
 
-// ── Rate Limiting ──────────────────────────────────────────────
+// ── Rate Limiting & Connection Quotas ──────────────────────────
 export const TOO_MANY_REQUESTS = 'TOO_MANY_REQUESTS';
+export const MAX_CONCURRENT_SOCKETS_EXCEEDED = 'MAX_CONCURRENT_SOCKETS_EXCEEDED';
 
 // ── Server ─────────────────────────────────────────────────────
 export const INTERNAL_ERROR = 'INTERNAL_ERROR';
