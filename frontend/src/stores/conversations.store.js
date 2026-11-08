@@ -4,7 +4,14 @@ import {
   establishConversationSession,
   getConversationSessionPeer,
 } from '../services/crypto/conversation-session.js';
-import { IdentityKeyChangedError, acceptChangedPeerKey } from '../services/crypto/identity-trust.js';
+import {
+  IdentityKeyChangedError,
+  acceptChangedPeerKey,
+  getPeerSafetyNumber,
+  setPeerVerificationStatus,
+  getVerificationStatus,
+  revokeVerificationStatus,
+} from '../services/crypto/identity-trust.js';
 import { handleApiError } from '../lib/errors/apierror.js';
 import { PAGE_ERROR_CODES, resolvePageError, getPageErrorMessage } from '../lib/errors/pageerror.js';
 
@@ -50,6 +57,10 @@ export function registerKeyChangeAcceptedFlushHandler(fn) {
  * @property {'initializing' | 'ready' | 'error' | 'keyChange'} e2eeStatus
  * @property {string | null} e2eeError
  * @property {KeyChangeInfo | null} keyChange
+ * @property {boolean} peerVerified
+ * @property {number | null} peerVerifiedAt
+ * @property {any | null} safetyNumber
+ * @property {boolean} safetyNumberLoading
  */
 
 /** @type {ConversationState} */
@@ -71,6 +82,10 @@ const initialState = {
   e2eeStatus: 'initializing',
   e2eeError: null,
   keyChange: null,
+  peerVerified: false,
+  peerVerifiedAt: null,
+  safetyNumber: null,
+  safetyNumberLoading: false,
 };
 
 function createConversationsStore() {
@@ -296,11 +311,14 @@ function createConversationsStore() {
           currentUserId: resolvedCurrentUserId,
           peerUserId: peerId,
         });
+        const verification = await getVerificationStatus(peerId);
         update((s) => ({
           ...s,
           e2eeStatus: 'ready',
           e2eeError: null,
           keyChange: null,
+          peerVerified: Boolean(verification.verified),
+          peerVerifiedAt: verification.verified ? verification.verifiedAt : null,
         }));
         return {
           status: 'ready',
@@ -322,6 +340,8 @@ function createConversationsStore() {
             e2eeStatus: 'keyChange',
             e2eeError: errMsg,
             keyChange,
+            peerVerified: false,
+            peerVerifiedAt: null,
           }));
           return {
             status: 'keyChange',
@@ -340,6 +360,8 @@ function createConversationsStore() {
           e2eeStatus: 'error',
           e2eeError: errMsg,
           keyChange: null,
+          peerVerified: false,
+          peerVerifiedAt: null,
         }));
         return {
           status: 'error',
@@ -365,6 +387,9 @@ function createConversationsStore() {
         previousFingerprint: err.previousFingerprint || '',
         fingerprint: err.fingerprint || '',
       };
+      if (keyChange.userId) {
+        revokeVerificationStatus(keyChange.userId).catch(() => { });
+      }
       const errMsg = getPageErrorMessage(PAGE_ERROR_CODES.IDENTITY_KEY_CHANGED, 'e2ee');
       update((s) => ({
         ...s,
@@ -372,6 +397,11 @@ function createConversationsStore() {
         e2eeStatus: 'keyChange',
         e2eeError: errMsg,
         keyChange,
+        peerVerified: false,
+        peerVerifiedAt: null,
+        safetyNumber: s.safetyNumber
+          ? { ...s.safetyNumber, verified: false, verifiedAt: null, keyChanged: true }
+          : null,
       }));
     },
 
@@ -397,8 +427,9 @@ function createConversationsStore() {
      * @param {string} conversationId
      * @param {string | undefined} currentUserId
      * @param {string} [peerUserId]
+     * @param {{ verified?: boolean }} [options]
      */
-    acceptPeerKeyChange: async (conversationId, currentUserId, peerUserId) => {
+    acceptPeerKeyChange: async (conversationId, currentUserId, peerUserId, options = {}) => {
       const current = get({ subscribe });
       const sessionPeer = getConversationSessionPeer(conversationId);
       const targetUserId = peerUserId || current.keyChange?.userId || sessionPeer?.peerUserId;
@@ -406,7 +437,7 @@ function createConversationsStore() {
       if (!targetUserId) return null;
 
       try {
-        await acceptChangedPeerKey(targetUserId);
+        await acceptChangedPeerKey(targetUserId, options);
         const sessionResult = await conversationsStore.initE2EESession(
           conversationId,
           resolvedCurrentUserId
@@ -427,6 +458,83 @@ function createConversationsStore() {
         }));
         throw err;
       }
+    },
+
+    /**
+     * Load the 60-digit Safety Number, local QR code SVG, and out-of-band verification state
+     * for the active conversation (Rule #17, NFR-15, AC-17).
+     *
+     * @param {string} conversationId
+     * @param {string | undefined} currentUserId
+     * @param {string} [peerUserId]
+     */
+    loadSafetyNumber: async (conversationId, currentUserId, peerUserId) => {
+      const current = get({ subscribe });
+      const sessionPeer = getConversationSessionPeer(conversationId);
+      const resolvedPeerId =
+        peerUserId ||
+        current.activeConversation?.peer?.id ||
+        current.keyChange?.userId ||
+        sessionPeer?.peerUserId;
+      const resolvedCurrentUserId = currentUserId || sessionPeer?.currentUserId;
+
+      if (!resolvedCurrentUserId || !resolvedPeerId) {
+        return null;
+      }
+
+      update((s) => ({ ...s, safetyNumberLoading: true }));
+      try {
+        const info = await getPeerSafetyNumber(resolvedCurrentUserId, resolvedPeerId);
+        update((s) => ({
+          ...s,
+          safetyNumber: info,
+          safetyNumberLoading: false,
+          peerVerified: info.verified,
+          peerVerifiedAt: info.verifiedAt,
+        }));
+        return info;
+      } catch {
+        update((s) => ({ ...s, safetyNumberLoading: false }));
+        return null;
+      }
+    },
+
+    /**
+     * Mark or unmark the conversation peer as verified out-of-band in IndexedDB (Rule #17).
+     *
+     * @param {string} conversationId
+     * @param {boolean} verified
+     * @param {string} [peerUserId]
+     */
+    togglePeerVerification: async (conversationId, verified, peerUserId) => {
+      const current = get({ subscribe });
+      const sessionPeer = getConversationSessionPeer(conversationId);
+      const resolvedPeerId =
+        peerUserId ||
+        current.activeConversation?.peer?.id ||
+        current.safetyNumber?.peerUserId ||
+        sessionPeer?.peerUserId;
+
+      if (!resolvedPeerId) return null;
+
+      const updated = await setPeerVerificationStatus(
+        resolvedPeerId,
+        verified,
+        current.safetyNumber?.peerFingerprint
+      );
+      update((s) => ({
+        ...s,
+        peerVerified: updated.verified,
+        peerVerifiedAt: updated.verifiedAt,
+        safetyNumber: s.safetyNumber
+          ? {
+            ...s.safetyNumber,
+            verified: updated.verified,
+            verifiedAt: updated.verifiedAt,
+          }
+          : null,
+      }));
+      return updated;
     },
 
     /**

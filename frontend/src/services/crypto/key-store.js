@@ -154,6 +154,8 @@ export async function deleteKey(id) {  const db = await openDB();
 
 /**
  * Pin a peer identity key fingerprint (TOFU, issue #11).
+ * If the fingerprint changed compared to a previously stored record,
+ * any previous out-of-band verification status is automatically reset to unverified.
  *
  * @param {string} userId
  * @param {string} fingerprint
@@ -163,11 +165,23 @@ export async function storeTrustedFingerprint(userId, fingerprint) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put({
-      id: `trust:${userId}`,
-      fingerprint,
-      updatedAt: Date.now(),
-    });
+    const store = tx.objectStore(STORE_NAME);
+    const id = `trust:${userId}`;
+    const getReq = store.get(id);
+
+    getReq.onsuccess = () => {
+      const existing = getReq.result;
+      const sameFingerprint = Boolean(existing && existing.fingerprint === fingerprint);
+      store.put({
+        id,
+        fingerprint,
+        verified: sameFingerprint ? Boolean(existing.verified) : false,
+        verifiedAt: sameFingerprint ? (existing.verifiedAt || null) : null,
+        updatedAt: Date.now(),
+      });
+    };
+    getReq.onerror = () => reject(getReq.error);
+
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -186,6 +200,122 @@ export async function getTrustedFingerprint(userId) {
     const request = tx.objectStore(STORE_NAME).get(`trust:${userId}`);
     request.onsuccess = () => resolve(request.result?.fingerprint || null);
     request.onerror = () => reject(request.error);
+  });
+}
+
+/**
+ * Store out-of-band verification status for a peer's identity key (Rule #17, NFR-15, AC-17).
+ *
+ * @param {string} peerUserId
+ * @param {{ fingerprint?: string | null, verified: boolean, verifiedAt?: number | null }} status
+ * @returns {Promise<{ userId: string, fingerprint: string | null, verified: boolean, verifiedAt: number | null, updatedAt: number }>}
+ */
+export async function storeVerificationStatus(peerUserId, { fingerprint = null, verified = true, verifiedAt = null } = { verified: true }) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const id = `trust:${peerUserId}`;
+    const getReq = store.get(id);
+    /** @type {{ userId: string, fingerprint: string | null, verified: boolean, verifiedAt: number | null, updatedAt: number }} */
+    let savedRecord;
+
+    getReq.onsuccess = () => {
+      const existing = getReq.result;
+      const resolvedFingerprint = fingerprint || existing?.fingerprint || null;
+      const isVerified = Boolean(verified && resolvedFingerprint);
+      const now = Date.now();
+      const resolvedVerifiedAt = isVerified ? (verifiedAt || existing?.verifiedAt || now) : null;
+
+      savedRecord = {
+        userId: peerUserId,
+        fingerprint: resolvedFingerprint,
+        verified: isVerified,
+        verifiedAt: resolvedVerifiedAt,
+        updatedAt: now,
+      };
+
+      store.put({
+        id,
+        fingerprint: resolvedFingerprint,
+        verified: isVerified,
+        verifiedAt: resolvedVerifiedAt,
+        updatedAt: now,
+      });
+    };
+    getReq.onerror = () => reject(getReq.error);
+
+    tx.oncomplete = () => resolve(savedRecord);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
+ * Retrieve out-of-band verification status for a peer from IndexedDB.
+ *
+ * @param {string} peerUserId
+ * @returns {Promise<{ userId: string, fingerprint: string | null, verified: boolean, verifiedAt: number | null, updatedAt: number | null }>}
+ */
+export async function getVerificationStatus(peerUserId) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const request = tx.objectStore(STORE_NAME).get(`trust:${peerUserId}`);
+    request.onsuccess = () => {
+      const result = request.result;
+      if (!result) {
+        resolve({
+          userId: peerUserId,
+          fingerprint: null,
+          verified: false,
+          verifiedAt: null,
+          updatedAt: null,
+        });
+        return;
+      }
+      resolve({
+        userId: peerUserId,
+        fingerprint: result.fingerprint || null,
+        verified: Boolean(result.verified),
+        verifiedAt: result.verifiedAt || null,
+        updatedAt: result.updatedAt || null,
+      });
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/**
+ * Automatically revoke a peer's verified status when a public key change is detected,
+ * while preserving the pinned fingerprint until the user explicitly approves the new key.
+ *
+ * @param {string} peerUserId
+ * @returns {Promise<void>}
+ */
+export async function revokeVerificationStatus(peerUserId) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const id = `trust:${peerUserId}`;
+    const getReq = store.get(id);
+
+    getReq.onsuccess = () => {
+      const existing = getReq.result;
+      if (existing) {
+        store.put({
+          ...existing,
+          id,
+          verified: false,
+          verifiedAt: null,
+          updatedAt: Date.now(),
+        });
+      }
+    };
+    getReq.onerror = () => reject(getReq.error);
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
   });
 }
 

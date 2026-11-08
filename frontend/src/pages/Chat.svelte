@@ -7,6 +7,7 @@
     import { messagesStore, MESSAGES_PAGE_LIMIT } from "../stores/messages.store.js";
     import MessageItem from "../components/chat/MessageItem.svelte";
     import MessageInput from "../components/chat/MessageInput.svelte";
+    import SafetyNumberModal from "../components/chat/SafetyNumberModal.svelte";
     import { PAGE_ERROR_CODES, getPageErrorMessage } from "../lib/errors/pageerror.js";
     import { push } from "svelte-spa-router";
 
@@ -21,10 +22,15 @@
     let attachmentError = null;
     /** @type {HTMLElement | null} */
     let messagesContainer = null;
+    let showSafetyNumberModal = false;
 
     $: e2eeStatus = $conversationsStore.e2eeStatus;
     $: e2eeError = $conversationsStore.e2eeError;
     $: keyChange = $conversationsStore.keyChange;
+    $: peerVerified = $conversationsStore.peerVerified;
+    $: peerVerifiedAt = $conversationsStore.peerVerifiedAt;
+    $: safetyNumber = $conversationsStore.safetyNumber;
+    $: safetyNumberLoading = $conversationsStore.safetyNumberLoading;
     $: isE2EEError = e2eeStatus === "error" || e2eeStatus === "keyChange";
 
     $: if (params.conversationId && params.conversationId !== conversationId) {
@@ -150,6 +156,52 @@
         }
     };
 
+    const openSafetyNumberModal = async () => {
+        showSafetyNumberModal = true;
+        await conversationsStore.loadSafetyNumber(
+            conversationId,
+            $authStore.user?.id,
+            activeConv?.peer?.id || keyChange?.userId
+        );
+    };
+
+    const closeSafetyNumberModal = () => {
+        showSafetyNumberModal = false;
+    };
+
+    /** @param {CustomEvent<{ verified: boolean, done?: () => void }>} e */
+    const handleToggleVerified = async (e) => {
+        const { verified, done } = e.detail || {};
+        try {
+            await conversationsStore.togglePeerVerification(
+                conversationId,
+                Boolean(verified),
+                activeConv?.peer?.id
+            );
+        } finally {
+            done?.();
+        }
+    };
+
+    /** @param {{ verified?: boolean }} [options] */
+    const approvePeerKeyChange = async (options = {}) => {
+        if (!keyChange) return;
+        try {
+            await conversationsStore.acceptPeerKeyChange(
+                conversationId,
+                $authStore.user?.id,
+                keyChange.userId,
+                options
+            );
+            await messagesStore.flushPendingMessages(conversationId);
+            await messagesStore.loadMessages(conversationId, { limit: MESSAGES_PAGE_LIMIT });
+            showSafetyNumberModal = false;
+            scrollToBottom();
+        } catch {
+            // Error is already normalized and stored in conversationsStore.e2eeError
+        }
+    };
+
     const handleAcceptNewKey = async () => {
         if (!keyChange) return;
 
@@ -161,18 +213,12 @@
                 : true;
         if (!confirmed) return;
 
-        try {
-            await conversationsStore.acceptPeerKeyChange(
-                conversationId,
-                $authStore.user?.id,
-                keyChange.userId
-            );
-            await messagesStore.flushPendingMessages(conversationId);
-            await messagesStore.loadMessages(conversationId, { limit: MESSAGES_PAGE_LIMIT });
-            scrollToBottom();
-        } catch {
-            // Error is already normalized and stored in conversationsStore.e2eeError
-        }
+        await approvePeerKeyChange({ verified: false });
+    };
+
+    /** @param {CustomEvent<{ verified?: boolean }>} e */
+    const handleModalAcceptKeyChange = async (e) => {
+        await approvePeerKeyChange({ verified: Boolean(e.detail?.verified) });
     };
 
     const handleDiscardPendingMessages = () => {
@@ -261,22 +307,45 @@
                 </div>
             </div>
 
-            <!-- E2EE & Socket Status Badge -->
+            <!-- E2EE & Socket Status Badge (Rule #17 - Clickable Safety Number Trigger) -->
             <div class="flex items-center gap-2">
                 {#if e2eeStatus === 'ready'}
-                    <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium">
-                        <svg class="w-3.5 h-3.5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                        </svg>
-                        <span class="hidden sm:inline">E2EE Terproteksi</span>
-                    </div>
+                    <button
+                        type="button"
+                        on:click={openSafetyNumberModal}
+                        title={peerVerified
+                            ? 'Identitas lawan bicara telah terverifikasi secara out-of-band. Klik untuk melihat Nomor Keamanan & Kode QR.'
+                            : 'Klik untuk membuka Nomor Keamanan (Safety Number) & memverifikasi identitas lawan bicara.'}
+                        class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full {peerVerified
+                            ? 'bg-emerald-100 hover:bg-emerald-200/80 border-emerald-300 text-emerald-800'
+                            : 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700'} border text-xs font-medium transition-colors cursor-pointer"
+                    >
+                        {#if peerVerified}
+                            <!-- Verified Shield Check Icon -->
+                            <svg class="w-3.5 h-3.5 text-emerald-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                            </svg>
+                            <span class="hidden sm:inline font-semibold">E2EE Terverifikasi</span>
+                        {:else}
+                            <!-- Standard E2EE Lock Icon -->
+                            <svg class="w-3.5 h-3.5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                            </svg>
+                            <span class="hidden sm:inline">E2EE Terproteksi</span>
+                        {/if}
+                    </button>
                 {:else if isE2EEError}
-                    <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium" title={e2eeError || 'Sesi E2EE gagal'}>
+                    <button
+                        type="button"
+                        on:click={openSafetyNumberModal}
+                        class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-medium transition-colors cursor-pointer"
+                        title={e2eeError || 'Sesi E2EE gagal — Klik untuk memeriksa Nomor Keamanan'}
+                    >
                         <svg class="w-3.5 h-3.5 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                         </svg>
-                        <span class="hidden sm:inline">E2EE Gagal</span>
-                    </div>
+                        <span class="hidden sm:inline">{keyChange ? 'Verifikasi Kunci Baru' : 'E2EE Gagal'}</span>
+                    </button>
                 {:else}
                     <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-xs font-medium">
                         <div class="w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
@@ -306,7 +375,16 @@
                     </span>
                 </div>
                 {#if e2eeStatus === 'ready'}
-                    Pesan dan data hanya dapat dibaca oleh Anda dan lawan bicara.
+                    <p>Pesan dan data hanya dapat dibaca oleh Anda dan lawan bicara.</p>
+                    <div class="mt-1.5 flex items-center justify-center gap-2">
+                        <button
+                            type="button"
+                            on:click={openSafetyNumberModal}
+                            class="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 hover:text-indigo-900 underline underline-offset-2 cursor-pointer"
+                        >
+                            <span>{peerVerified ? '🛡️✓ Kontak Terverifikasi — Lihat Nomor Keamanan' : 'Verifikasi Nomor Keamanan / Kode QR'}</span>
+                        </button>
+                    </div>
                 {:else if isE2EEError}
                     {#if keyChange}
                         <p>
@@ -323,6 +401,13 @@
                             </div>
                         </div>
                         <div class="mt-2 flex flex-wrap items-center justify-center gap-2">
+                            <button
+                                type="button"
+                                class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors cursor-pointer"
+                                on:click={openSafetyNumberModal}
+                            >
+                                Bandingkan di Modal Safety Number
+                            </button>
                             <button
                                 type="button"
                                 class="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition-colors cursor-pointer"
@@ -400,4 +485,19 @@
             on:sent={scrollToBottom}
         />
     </div>
+
+    <SafetyNumberModal
+        open={showSafetyNumberModal}
+        peerUsername={activeConv?.peer?.username || "Lawan Bicara"}
+        currentUsername={$authStore.user?.username || "Anda"}
+        {safetyNumber}
+        loading={safetyNumberLoading}
+        {peerVerified}
+        {peerVerifiedAt}
+        {keyChange}
+        {pendingCount}
+        on:close={closeSafetyNumberModal}
+        on:toggleVerified={handleToggleVerified}
+        on:acceptKeyChange={handleModalAcceptKeyChange}
+    />
 </ProtectedLayout>
