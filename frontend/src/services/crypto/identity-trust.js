@@ -14,61 +14,61 @@
 import { getOrCreateIdentityKeyPair } from './message-crypto.js';
 import { publishIdentityKey, fetchIdentityKey } from '../api/identity-keys.api.js';
 import {
-  storeTrustedFingerprint,
-  getTrustedFingerprint,
-  storeVerificationStatus,
-  getVerificationStatus,
-  revokeVerificationStatus,
+    storeTrustedFingerprint,
+    getTrustedFingerprint,
+    storeVerificationStatus,
+    getVerificationStatus,
+    revokeVerificationStatus,
 } from './key-store.js';
 import { toBase64Url, fromBase64Url } from './aes-gcm.js';
 import {
-  deriveSafetyNumber,
-  formatSafetyNumberBlocks,
-  formatFingerprintBlocks,
-  compareFingerprints,
-  buildSafetyNumberQrPayload,
-  verifySafetyNumberQrPayload,
-  generateQrCodeMatrix,
-  generateQrCodeSvg,
+    deriveSafetyNumber,
+    formatSafetyNumberBlocks,
+    formatFingerprintBlocks,
+    compareFingerprints,
+    buildSafetyNumberQrPayload,
+    verifySafetyNumberQrPayload,
+    generateQrCodeMatrix,
+    generateQrCodeSvg,
 } from './safety-number.js';
 import {
-  ENCRYPTION_ERROR_CODES,
-  handleEncryptionError,
+    ENCRYPTION_ERROR_CODES,
+    handleEncryptionError,
 } from '../../lib/errors/encryptionerror.js';
 
 export {
-  deriveSafetyNumber,
-  formatSafetyNumberBlocks,
-  formatFingerprintBlocks,
-  compareFingerprints,
-  buildSafetyNumberQrPayload,
-  verifySafetyNumberQrPayload,
-  generateQrCodeMatrix,
-  generateQrCodeSvg,
-  storeVerificationStatus,
-  getVerificationStatus,
-  revokeVerificationStatus,
+    deriveSafetyNumber,
+    formatSafetyNumberBlocks,
+    formatFingerprintBlocks,
+    compareFingerprints,
+    buildSafetyNumberQrPayload,
+    verifySafetyNumberQrPayload,
+    generateQrCodeMatrix,
+    generateQrCodeSvg,
+    storeVerificationStatus,
+    getVerificationStatus,
+    revokeVerificationStatus,
 };
 
 export class IdentityKeyChangedError extends Error {
-  /**
-   * @param {string} userId
-   * @param {string} previousFingerprint
-   * @param {string} fingerprint
-   */
-  constructor(userId, previousFingerprint, fingerprint) {
-    super(
-      `Identity key for ${userId} changed. Verify the new fingerprint before continuing.`
-    );
-    this.name = 'IdentityKeyChangedError';
-    this.code = ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED;
-    this.category = ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED;
-    this.source = 'encryption';
-    this.userId = userId;
-    this.previousFingerprint = previousFingerprint;
-    this.fingerprint = fingerprint;
-    this.logged = false;
-  }
+    /**
+     * @param {string} userId
+     * @param {string} previousFingerprint
+     * @param {string} fingerprint
+     */
+    constructor(userId, previousFingerprint, fingerprint) {
+        super(
+            `Identity key for ${userId} changed. Verify the new fingerprint before continuing.`
+        );
+        this.name = 'IdentityKeyChangedError';
+        this.code = ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED;
+        this.category = ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED;
+        this.source = 'encryption';
+        this.userId = userId;
+        this.previousFingerprint = previousFingerprint;
+        this.fingerprint = fingerprint;
+        this.logged = false;
+    }
 }
 
 /**
@@ -78,8 +78,8 @@ export class IdentityKeyChangedError extends Error {
  * @param {string} userId
  */
 export async function publishOwnIdentityKey(userId) {
-  const { publicKeyBase64 } = await getOrCreateIdentityKeyPair(userId);
-  return publishIdentityKey(publicKeyBase64);
+    const { publicKeyBase64 } = await getOrCreateIdentityKeyPair(userId);
+    return publishIdentityKey(publicKeyBase64);
 }
 
 /**
@@ -87,22 +87,22 @@ export async function publishOwnIdentityKey(userId) {
  * @returns {Promise<{ publicKey: string, fingerprint: string, updatedAt?: string }>}
  */
 async function fetchPeerIdentityKey(userId) {
-  const response = await fetchIdentityKey(userId);
-  const identityKey = response?.identityKey || response;
+    const response = await fetchIdentityKey(userId);
+    const identityKey = response?.identityKey || response;
 
-  if (!identityKey?.publicKey) {
-    throw handleEncryptionError(
-      new Error('Identity key response is missing publicKey'),
-      {
-        code: ENCRYPTION_ERROR_CODES.KEY_UNAVAILABLE,
-        operation: 'identity-verify',
-      }
-    );
-  }
+    if (!identityKey?.publicKey) {
+        throw handleEncryptionError(
+            new Error('Identity key response is missing publicKey'),
+            {
+                code: ENCRYPTION_ERROR_CODES.KEY_UNAVAILABLE,
+                operation: 'identity-verify',
+            }
+        );
+    }
 
-  // Recompute locally: the server-provided fingerprint is not trusted.
-  const digest = await crypto.subtle.digest('SHA-256', fromBase64Url(identityKey.publicKey));
-  return { ...identityKey, fingerprint: toBase64Url(digest) };
+    // Recompute locally: the server-provided fingerprint is not trusted.
+    const digest = await crypto.subtle.digest('SHA-256', fromBase64Url(identityKey.publicKey));
+    return { ...identityKey, fingerprint: toBase64Url(digest) };
 }
 
 /**
@@ -113,27 +113,27 @@ async function fetchPeerIdentityKey(userId) {
  * @throws {IdentityKeyChangedError} when the key differs from the pinned one
  */
 export async function getTrustedPeerKey(userId) {
-  const identityKey = await fetchPeerIdentityKey(userId);
-  const pinned = await getTrustedFingerprint(userId);
+    const identityKey = await fetchPeerIdentityKey(userId);
+    const pinned = await getTrustedFingerprint(userId);
 
-  if (!pinned) {
-    await storeTrustedFingerprint(userId, identityKey.fingerprint);
-    return { ...identityKey, trust: 'new' };
-  }
+    if (!pinned) {
+        await storeTrustedFingerprint(userId, identityKey.fingerprint);
+        return { ...identityKey, trust: 'new' };
+    }
 
-  if (pinned !== identityKey.fingerprint) {
-    // Automatically invalidate any prior out-of-band verification when the peer's public key changes (Rule #17, AC-17)
-    await revokeVerificationStatus(userId);
-    const changedErr = new IdentityKeyChangedError(userId, pinned, identityKey.fingerprint);
-    handleEncryptionError(changedErr, {
-      code: ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED,
-      operation: 'identity-verify',
-    });
-    changedErr.logged = true;
-    throw changedErr;
-  }
+    if (pinned !== identityKey.fingerprint) {
+        // Automatically invalidate any prior out-of-band verification when the peer's public key changes (Rule #17, AC-17)
+        await revokeVerificationStatus(userId);
+        const changedErr = new IdentityKeyChangedError(userId, pinned, identityKey.fingerprint);
+        handleEncryptionError(changedErr, {
+            code: ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED,
+            operation: 'identity-verify',
+        });
+        changedErr.logged = true;
+        throw changedErr;
+    }
 
-  return { ...identityKey, trust: 'trusted' };
+    return { ...identityKey, trust: 'trusted' };
 }
 
 /**
@@ -145,7 +145,7 @@ export async function getTrustedPeerKey(userId) {
  * @throws {IdentityKeyChangedError}
  */
 export async function assertPeerIdentityKey(userId) {
-  return getTrustedPeerKey(userId);
+    return getTrustedPeerKey(userId);
 }
 
 /**
@@ -155,19 +155,19 @@ export async function assertPeerIdentityKey(userId) {
  * @param {{ verified?: boolean }} [options]
  */
 export async function acceptChangedPeerKey(userId, options = {}) {
-  const identityKey = await fetchPeerIdentityKey(userId);
-  await storeTrustedFingerprint(userId, identityKey.fingerprint);
-  if (options?.verified) {
-    await storeVerificationStatus(userId, {
-      fingerprint: identityKey.fingerprint,
-      verified: true,
-    });
-  }
-  return {
-    ...identityKey,
-    trust: 'trusted',
-    verified: Boolean(options?.verified),
-  };
+    const identityKey = await fetchPeerIdentityKey(userId);
+    await storeTrustedFingerprint(userId, identityKey.fingerprint);
+    if (options?.verified) {
+        await storeVerificationStatus(userId, {
+            fingerprint: identityKey.fingerprint,
+            verified: true,
+        });
+    }
+    return {
+        ...identityKey,
+        trust: 'trusted',
+        verified: Boolean(options?.verified),
+    };
 }
 
 /**
@@ -179,16 +179,16 @@ export async function acceptChangedPeerKey(userId, options = {}) {
  * @returns {Promise<{ userId: string, fingerprint: string | null, verified: boolean, verifiedAt: number | null, updatedAt: number }>}
  */
 export async function setPeerVerificationStatus(peerUserId, verified, fingerprint) {
-  let resolvedFp = fingerprint || (await getTrustedFingerprint(peerUserId));
-  if (!resolvedFp) {
-    const identityKey = await fetchPeerIdentityKey(peerUserId);
-    resolvedFp = identityKey.fingerprint;
-    await storeTrustedFingerprint(peerUserId, resolvedFp);
-  }
-  return storeVerificationStatus(peerUserId, {
-    fingerprint: resolvedFp,
-    verified: Boolean(verified),
-  });
+    let resolvedFp = fingerprint || (await getTrustedFingerprint(peerUserId));
+    if (!resolvedFp) {
+        const identityKey = await fetchPeerIdentityKey(peerUserId);
+        resolvedFp = identityKey.fingerprint;
+        await storeTrustedFingerprint(peerUserId, resolvedFp);
+    }
+    return storeVerificationStatus(peerUserId, {
+        fingerprint: resolvedFp,
+        verified: Boolean(verified),
+    });
 }
 
 /**
@@ -216,51 +216,51 @@ export async function setPeerVerificationStatus(peerUserId, verified, fingerprin
  * }>}
  */
 export async function getPeerSafetyNumber(currentUserId, peerUserId) {
-  const ownIdentity = await getOrCreateIdentityKeyPair(currentUserId);
-  const peerIdentity = await fetchPeerIdentityKey(peerUserId);
-  const pinned = await getTrustedFingerprint(peerUserId);
+    const ownIdentity = await getOrCreateIdentityKeyPair(currentUserId);
+    const peerIdentity = await fetchPeerIdentityKey(peerUserId);
+    const pinned = await getTrustedFingerprint(peerUserId);
 
-  const keyChanged = Boolean(pinned && pinned !== peerIdentity.fingerprint);
-  if (keyChanged) {
-    await revokeVerificationStatus(peerUserId);
-  } else if (!pinned) {
-    await storeTrustedFingerprint(peerUserId, peerIdentity.fingerprint);
-  }
+    const keyChanged = Boolean(pinned && pinned !== peerIdentity.fingerprint);
+    if (keyChanged) {
+        await revokeVerificationStatus(peerUserId);
+    } else if (!pinned) {
+        await storeTrustedFingerprint(peerUserId, peerIdentity.fingerprint);
+    }
 
-  const verification = await getVerificationStatus(peerUserId);
-  const isVerified = Boolean(
-    !keyChanged &&
-      verification.verified &&
-      verification.fingerprint &&
-      verification.fingerprint === peerIdentity.fingerprint
-  );
+    const verification = await getVerificationStatus(peerUserId);
+    const isVerified = Boolean(
+        !keyChanged &&
+        verification.verified &&
+        verification.fingerprint &&
+        verification.fingerprint === peerIdentity.fingerprint
+    );
 
-  const safety = await deriveSafetyNumber(
-    ownIdentity.publicKeyBase64,
-    peerIdentity.publicKey,
-    { userAId: currentUserId, userBId: peerUserId }
-  );
+    const safety = await deriveSafetyNumber(
+        ownIdentity.publicKeyBase64,
+        peerIdentity.publicKey,
+        { userAId: currentUserId, userBId: peerUserId }
+    );
 
-  const qrSvg = generateQrCodeSvg(safety.qrPayload);
-  const fingerprintComparison = keyChanged && pinned
-    ? compareFingerprints(pinned, peerIdentity.fingerprint)
-    : null;
+    const qrSvg = generateQrCodeSvg(safety.qrPayload);
+    const fingerprintComparison = keyChanged && pinned
+        ? compareFingerprints(pinned, peerIdentity.fingerprint)
+        : null;
 
-  return {
-    currentUserId,
-    peerUserId,
-    ownFingerprint: safety.fingerprintA,
-    peerFingerprint: peerIdentity.fingerprint,
-    pinnedFingerprint: pinned || peerIdentity.fingerprint,
-    keyChanged,
-    verified: isVerified,
-    verifiedAt: isVerified ? verification.verifiedAt : null,
-    rawDigits: safety.rawDigits,
-    blocks: safety.blocks,
-    formatted: safety.formatted,
-    combinedFingerprint: safety.combinedFingerprint,
-    qrPayload: safety.qrPayload,
-    qrSvg,
-    fingerprintComparison,
-  };
+    return {
+        currentUserId,
+        peerUserId,
+        ownFingerprint: safety.fingerprintA,
+        peerFingerprint: peerIdentity.fingerprint,
+        pinnedFingerprint: pinned || peerIdentity.fingerprint,
+        keyChanged,
+        verified: isVerified,
+        verifiedAt: isVerified ? verification.verifiedAt : null,
+        rawDigits: safety.rawDigits,
+        blocks: safety.blocks,
+        formatted: safety.formatted,
+        combinedFingerprint: safety.combinedFingerprint,
+        qrPayload: safety.qrPayload,
+        qrSvg,
+        fingerprintComparison,
+    };
 }

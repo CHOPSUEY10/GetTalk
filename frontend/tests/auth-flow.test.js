@@ -147,4 +147,18 @@ describe('Frontend Password Reset Flow (6-Digit OTP)', () => {
       'Kode OTP pengaturan ulang kata sandi tidak valid atau telah kedaluwarsa.'
     );
   });
+
+  test('authStore.initialize does not set PAGE_ERROR_CODES.NETWORK_ERROR on initial load without session token', async () => {
+    globalThis.fetch = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+
+    await authStore.initialize();
+
+    const state = get(authStore);
+    assert.equal(state.authenticated, false);
+    assert.equal(state.loading, false);
+    assert.equal(state.error, null);
+    assert.equal(state.errorCode, null);
+  });
 });

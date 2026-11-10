@@ -70,25 +70,21 @@ function createAuthStore() {
         userStore.set(user);
         publishIdentityKey(user);
       } catch (err) {
-        const normalized = normalizeApiError(err);
-        // Only treat as error if it's a server/network error, not a standard unauthenticated response
-        const isAuthFailure =
-          normalized.status === 401 ||
-          normalized.status === 403 ||
-          normalized.code === API_ERROR_CODES.UNAUTHORIZED ||
-          normalized.code === API_ERROR_CODES.FORBIDDEN;
-
-        const pageErr = isAuthFailure ? null : resolvePageError(normalized);
-
+        normalizeApiError(err);
+        // Ketika user pertama kali membuka aplikasi / login dan belum memiliki session token,
+        // jangan tampilkan PAGE_ERROR_CODES.NETWORK_ERROR atau error sesi awal pada UI login.
         set({
           user: null,
           authenticated: false,
           loading: false,
-          error: pageErr ? pageErr.userMessage : null,
-          errorCode: pageErr ? pageErr.code : null,
+          error: null,
+          errorCode: null,
         });
         userStore.set(null);
       }
+    },
+    clearError: () => {
+      update((state) => ({ ...state, error: null, errorCode: null }));
     },
     /** @param {{ username: string, email: string, password: string }} payload */
     register: async (payload) => {

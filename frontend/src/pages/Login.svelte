@@ -1,4 +1,5 @@
 <script>
+    import { onMount } from "svelte";
     import PublicLayout from "../components/layout/PublicLayout.svelte";
     import { authStore } from "../stores/auth.store.js";
     import { PAGE_ERROR_CODES, getPageErrorMessage } from "../lib/errors/pageerror.js";
@@ -13,6 +14,10 @@
     let submitting = false;
     /** @type {string | null} */
     let localError = null;
+
+    onMount(() => {
+        authStore.clearError?.();
+    });
 
     const handleLogin = async () => {
         if (!email.trim() || !password) {

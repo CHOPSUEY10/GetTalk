@@ -34,6 +34,10 @@ async function fetchClient(endpoint, options = {}) {
     fetchOptions.body = JSON.stringify(fetchOptions.body);
   }
 
+  const isSessionProbe = Boolean(
+    suppressUnauthorizedEvent && endpoint === '/api/auth/session'
+  );
+
   let response;
   try {
     response = await fetch(url, fetchOptions);
@@ -45,6 +49,7 @@ async function fetchClient(endpoint, options = {}) {
       method,
       status: isTimeout ? 408 : 0,
       code: isTimeout ? API_ERROR_CODES.REQUEST_TIMEOUT : API_ERROR_CODES.NETWORK_ERROR,
+      silent: isSessionProbe,
     });
   }
 
