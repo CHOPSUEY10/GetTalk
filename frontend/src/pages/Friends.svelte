@@ -5,15 +5,27 @@
     import { conversationsStore } from "../stores/conversations.store.js";
     import { PAGE_ERROR_CODES, getPageErrorMessage } from "../lib/errors/pageerror.js";
     import { push } from "svelte-spa-router";
+    import Icon from "../components/common/Icon.svelte";
+    import Skeleton from "../components/common/Skeleton.svelte";
+    import EmptyState from "../components/common/EmptyState.svelte";
+    import ConfirmDialog from "../components/common/ConfirmDialog.svelte";
 
     let activeTab = "friends"; // 'friends' | 'requests' | 'add'
     let searchQuery = "";
     let addUsername = "";
     let actionLoading = false;
     /** @type {string | null} */
+    let busyItemId = null;
+    /** @type {string | null} */
+    let startingChatId = null;
+    /** @type {{ id: string, username: string } | null} */
+    let friendToDelete = null;
+
+    /** @type {string | null} */
     let message = null;
     /** @type {'success' | 'error' | null} */
     let messageType = null;
+    let storeErrorDismissed = false;
 
     // Subscribe to the store reactively
     $: friends = $friendsStore.friends;
@@ -33,13 +45,25 @@
         hasMore: false
     };
 
+    $: if ($friendsStore.error) {
+        storeErrorDismissed = false;
+    }
+
+    $: activeAlert = message || (!storeErrorDismissed ? $friendsStore.error : null);
+
+    const dismissAlert = () => {
+        message = null;
+        storeErrorDismissed = true;
+    };
+
     const handleSendRequest = async () => {
         if (!addUsername.trim()) return;
         actionLoading = true;
         message = null;
         try {
-            await friendsStore.sendRequest({ username: addUsername.trim() });
-            message = `Permintaan pertemanan berhasil dikirim ke "${addUsername.trim()}".`;
+            const targetName = addUsername.trim();
+            await friendsStore.sendRequest({ username: targetName });
+            message = `Permintaan pertemanan berhasil dikirim ke "${targetName}".`;
             messageType = "success";
             addUsername = "";
             await friendsStore.loadAll();
@@ -57,6 +81,8 @@
     /** @param {string} requestId */
     const handleAccept = async (requestId) => {
         actionLoading = true;
+        busyItemId = requestId;
+        message = null;
         try {
             await friendsStore.accept(requestId);
             message = "Permintaan pertemanan diterima.";
@@ -69,12 +95,15 @@
             messageType = "error";
         } finally {
             actionLoading = false;
+            busyItemId = null;
         }
     };
 
     /** @param {string} requestId */
     const handleReject = async (requestId) => {
         actionLoading = true;
+        busyItemId = requestId;
+        message = null;
         try {
             await friendsStore.reject(requestId);
             message = "Permintaan pertemanan ditolak.";
@@ -87,17 +116,31 @@
             messageType = "error";
         } finally {
             actionLoading = false;
+            busyItemId = null;
         }
     };
 
-    /** @param {string} friendId */
-    const handleDeleteFriend = async (friendId) => {
-        if (!confirm("Apakah Anda yakin ingin menghapus teman ini?")) return;
+    /** @param {any} friend */
+    const promptDeleteFriend = (friend) => {
+        const id = friend.id || friend.userId;
+        if (!id) return;
+        friendToDelete = {
+            id,
+            username: friend.username || friend.name || "teman ini"
+        };
+    };
+
+    const confirmDeleteFriend = async () => {
+        if (!friendToDelete) return;
+        const friendId = friendToDelete.id;
         actionLoading = true;
+        busyItemId = friendId;
+        message = null;
         try {
             await friendsStore.remove(friendId);
-            message = "Teman berhasil dihapus.";
+            message = `Kontak "${friendToDelete.username}" berhasil dihapus dari daftar teman.`;
             messageType = "success";
+            friendToDelete = null;
         } catch (err) {
             message = getPageErrorMessage(err, {
                 context: "friends",
@@ -106,6 +149,7 @@
             messageType = "error";
         } finally {
             actionLoading = false;
+            busyItemId = null;
         }
     };
 
@@ -125,10 +169,10 @@
             return;
         }
 
-        if (!targetUserId) return;
+        if (!targetUserId || startingChatId) return;
 
+        startingChatId = targetUserId;
         try {
-            // Friends are keyed by userId, which is not a conversation id.
             const conversationId = await conversationsStore.createOrOpenDirectChat(targetUserId);
             if (conversationId) {
                 push(`/chat/${conversationId}`);
@@ -139,6 +183,8 @@
                 fallbackCode: PAGE_ERROR_CODES.CONVERSATION_CREATE_FAILED
             });
             messageType = "error";
+        } finally {
+            startingChatId = null;
         }
     };
 
@@ -154,59 +200,78 @@
 </script>
 
 <ProtectedLayout>
-    <div class="max-w-4xl mx-auto space-y-6">
-        <!-- Header & Tabs -->
+    <div class="max-w-4xl w-full mx-auto space-y-6 pb-6">
+        <!-- Header & Responsive Tabs -->
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200">
             <div>
-                <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Daftar Teman</h1>
-                <p class="text-sm text-slate-500">Kelola kontak dan permintaan pertemanan Anda.</p>
+                <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Teman & Kontak</h1>
+                <p class="text-sm text-slate-500 mt-0.5">Kelola jaringan kontak terenkripsi dan permintaan pertemanan Anda.</p>
             </div>
 
             <!-- Tab Buttons -->
-            <div class="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 text-sm font-medium">
+            <div
+                class="flex flex-wrap sm:inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs sm:text-sm font-semibold gap-1"
+                role="tablist"
+                aria-label="Manajemen pertemanan"
+            >
                 <button
                     type="button"
-                    class="px-4 py-2 rounded-lg transition-all {activeTab === 'friends' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'}"
-                    on:click={() => (activeTab = 'friends')}
+                    role="tab"
+                    aria-selected={activeTab === "friends"}
+                    class="flex-1 sm:flex-initial px-3.5 py-2 rounded-lg transition-all cursor-pointer {activeTab === 'friends' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'}"
+                    on:click={() => (activeTab = "friends")}
                 >
                     Teman ({friendsPagination.total || friends.length})
                 </button>
                 <button
                     type="button"
-                    class="px-4 py-2 rounded-lg transition-all relative {activeTab === 'requests' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'}"
-                    on:click={() => (activeTab = 'requests')}
+                    role="tab"
+                    aria-selected={activeTab === "requests"}
+                    class="flex-1 sm:flex-initial px-3.5 py-2 rounded-lg transition-all relative inline-flex items-center justify-center gap-1.5 cursor-pointer {activeTab === 'requests' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'}"
+                    on:click={() => (activeTab = "requests")}
                 >
-                    Permintaan
+                    <span>Permintaan</span>
                     {#if requests.length > 0}
-                        <span class="ml-1 px-1.5 py-0.5 text-xs bg-indigo-600 text-white rounded-full">{requests.length}</span>
+                        <span class="px-1.5 py-0.5 text-[11px] bg-indigo-600 text-white rounded-full font-bold leading-none">
+                            {requests.length}
+                        </span>
                     {/if}
                 </button>
                 <button
                     type="button"
-                    class="px-4 py-2 rounded-lg transition-all {activeTab === 'add' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'}"
-                    on:click={() => (activeTab = 'add')}
+                    role="tab"
+                    aria-selected={activeTab === "add"}
+                    class="flex-1 sm:flex-initial px-3.5 py-2 rounded-lg transition-all inline-flex items-center justify-center gap-1 cursor-pointer {activeTab === 'add' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'}"
+                    on:click={() => (activeTab = "add")}
                 >
-                    + Tambah
+                    <Icon name="user-plus" size="xs" />
+                    <span>Tambah</span>
                 </button>
             </div>
         </div>
 
         <!-- Alert Notification -->
-        {#if message || $friendsStore.error}
-            <div class="p-3.5 rounded-xl text-sm flex items-center justify-between gap-3 animate-fadeIn {messageType === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-rose-50 border border-rose-200 text-rose-800'}">
-                <div class="flex items-center gap-2">
-                    {#if messageType === 'success'}
-                        <svg class="w-5 h-5 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                        </svg>
-                    {:else}
-                        <svg class="w-5 h-5 text-rose-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                        </svg>
-                    {/if}
-                    <span>{message || $friendsStore.error}</span>
+        {#if activeAlert}
+            <div
+                role="alert"
+                class="p-3.5 rounded-xl text-sm flex items-center justify-between gap-3 animate-fadeIn {messageType === 'success' && message ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-rose-50 border border-rose-200 text-rose-800'}"
+            >
+                <div class="flex items-center gap-2.5">
+                    <Icon
+                        name={messageType === "success" && message ? "check" : "alert-triangle"}
+                        size="md"
+                        className={messageType === "success" && message ? "text-emerald-600" : "text-rose-600"}
+                    />
+                    <span>{activeAlert}</span>
                 </div>
-                <button type="button" class="text-xs font-semibold opacity-70 hover:opacity-100" on:click={() => (message = null)}>✕</button>
+                <button
+                    type="button"
+                    class="p-1 rounded-lg opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
+                    aria-label="Tutup pesan"
+                    on:click={dismissAlert}
+                >
+                    <Icon name="x" size="xs" />
+                </button>
             </div>
         {/if}
 
@@ -216,85 +281,89 @@
                 <!-- Search Box -->
                 <div class="relative">
                     <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
+                        <Icon name="search" size="md" />
                     </div>
                     <input
-                        type="text"
+                        type="search"
                         bind:value={searchQuery}
-                        placeholder="Cari teman..."
-                        class="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all shadow-sm"
+                        placeholder="Cari teman berdasarkan username..."
+                        aria-label="Cari teman"
+                        class="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all shadow-xs"
                     />
                 </div>
 
-                {#if loading}
-                    <div class="p-12 text-center text-slate-400 space-y-3">
-                        <div class="w-8 h-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                        <p class="text-sm">Memuat daftar teman...</p>
-                    </div>
+                {#if loading && friends.length === 0}
+                    <Skeleton variant="card-grid" count={4} label="Memuat daftar teman..." />
                 {:else if filteredFriends.length === 0}
-                    <div class="bg-white rounded-2xl border border-slate-200 p-12 text-center">
-                        <div class="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-500 flex items-center justify-center mx-auto mb-4">
-                            <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                        </div>
-                        <h3 class="font-bold text-slate-800 text-base mb-1">
-                            {searchQuery ? 'Tidak ada teman yang cocok' : 'Belum Ada Teman'}
-                        </h3>
-                        <p class="text-sm text-slate-500 max-w-sm mx-auto mb-6">
-                            {searchQuery ? 'Coba cari dengan kata kunci lain.' : 'Mulai terhubung dengan menambahkan teman menggunakan username mereka.'}
-                        </p>
-                        {#if !searchQuery}
+                    <EmptyState
+                        icon="users"
+                        tone="primary"
+                        title={searchQuery ? "Tidak ada teman yang cocok" : "Belum Ada Teman"}
+                        description={searchQuery
+                            ? `Tidak ditemukan kontak dengan kata kunci "${searchQuery}".`
+                            : "Mulai terhubung secara aman dengan menambahkan teman menggunakan username mereka."}
+                    >
+                        {#if searchQuery}
                             <button
                                 type="button"
-                                class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold transition-colors shadow-sm"
-                                on:click={() => (activeTab = 'add')}
+                                class="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors cursor-pointer"
+                                on:click={() => (searchQuery = "")}
                             >
-                                + Tambah Teman Baru
+                                Reset Pencarian
+                            </button>
+                        {:else}
+                            <button
+                                type="button"
+                                class="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold transition-colors shadow-xs cursor-pointer"
+                                on:click={() => (activeTab = "add")}
+                            >
+                                <Icon name="user-plus" size="sm" />
+                                <span>Tambah Teman Baru</span>
                             </button>
                         {/if}
-                    </div>
+                    </EmptyState>
                 {:else}
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {#each filteredFriends as friend}
-                            <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between hover:border-slate-300 transition-all">
+                        {#each filteredFriends as friend (friend.userId || friend.id)}
+                            {@const fId = friend.userId || friend.id}
+                            <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between gap-3 hover:border-indigo-200 transition-all">
                                 <div class="flex items-center gap-3 min-w-0">
-                                    <div class="w-11 h-11 rounded-xl bg-gradient-to-tr from-indigo-500 to-indigo-600 text-white font-bold flex items-center justify-center text-sm uppercase shrink-0 shadow-sm">
+                                    <div class="w-11 h-11 rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white font-bold flex items-center justify-center text-sm uppercase shrink-0 shadow-xs">
                                         {(friend.username || friend.name || "U").slice(0, 2)}
                                     </div>
                                     <div class="min-w-0">
-                                        <h4 class="font-semibold text-slate-900 text-sm truncate">
+                                        <h4 class="font-bold text-slate-900 text-sm truncate">
                                             {friend.username || friend.name || "User"}
                                         </h4>
                                         <p class="text-xs text-slate-500 truncate">
-                                            {friend.email || "GetTalk User"}
+                                            {friend.email || "Kontak Terenkripsi GetTalk"}
                                         </p>
                                     </div>
                                 </div>
 
-                                <div class="flex items-center gap-2 shrink-0">
+                                <div class="flex items-center gap-1.5 shrink-0">
                                     <button
                                         type="button"
-                                        class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm flex items-center gap-1.5"
+                                        disabled={startingChatId === fId}
+                                        class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
                                         on:click={() => startChat(friend)}
                                     >
-                                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                                        </svg>
+                                        {#if startingChatId === fId}
+                                            <span class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                                        {:else}
+                                            <Icon name="message-square" size="xs" />
+                                        {/if}
                                         <span>Chat</span>
                                     </button>
                                     <button
                                         type="button"
-                                        class="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                        class="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
                                         title="Hapus Teman"
-                                        disabled={actionLoading}
-                                        on:click={() => handleDeleteFriend(friend.id || friend.userId)}
+                                        aria-label="Hapus {friend.username || 'teman'}"
+                                        disabled={actionLoading && busyItemId === fId}
+                                        on:click={() => promptDeleteFriend(friend)}
                                     >
-                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                        </svg>
+                                        <Icon name="trash" size="sm" />
                                     </button>
                                 </div>
                             </div>
@@ -328,53 +397,52 @@
         <!-- TAB 2: PENDING REQUESTS -->
         {:else if activeTab === "requests"}
             <div class="space-y-4">
-                {#if loading}
-                    <div class="p-12 text-center text-slate-400 space-y-3">
-                        <div class="w-8 h-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                        <p class="text-sm">Memuat permintaan pertemanan...</p>
-                    </div>
+                {#if loading && requests.length === 0}
+                    <Skeleton variant="list-rows" count={3} label="Memuat permintaan pertemanan..." />
                 {:else if requests.length === 0}
-                    <div class="bg-white rounded-2xl border border-slate-200 p-12 text-center">
-                        <div class="w-16 h-16 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-4">
-                            <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-                            </svg>
-                        </div>
-                        <h3 class="font-bold text-slate-800 text-base mb-1">Tidak Ada Permintaan Masuk</h3>
-                        <p class="text-sm text-slate-500 max-w-sm mx-auto">
-                            Saat seseorang mengirimkan permintaan pertemanan, Anda dapat menyetujui atau menolaknya di sini.
-                        </p>
-                    </div>
+                    <EmptyState
+                        icon="inbox"
+                        tone="neutral"
+                        title="Tidak Ada Permintaan Masuk"
+                        description="Saat seseorang mengirimkan permintaan pertemanan kepada Anda, Anda dapat menyetujui atau menolaknya di sini."
+                    />
                 {:else}
                     <div class="space-y-3">
-                        {#each requests as req}
-                            <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+                        {#each requests as req (req.id || req.requestId)}
+                            {@const reqId = req.id || req.requestId}
+                            {@const isBusy = actionLoading && busyItemId === reqId}
+                            <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                                 <div class="flex items-center gap-3 min-w-0">
                                     <div class="w-11 h-11 rounded-xl bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-sm uppercase shrink-0">
                                         {(req.fromUser?.username || req.username || req.sender?.username || "U").slice(0, 2)}
                                     </div>
                                     <div class="min-w-0">
-                                        <h4 class="font-semibold text-slate-900 text-sm truncate">
+                                        <h4 class="font-bold text-slate-900 text-sm truncate">
                                             {req.fromUser?.username || req.username || req.sender?.username || "User"}
                                         </h4>
-                                        <p class="text-xs text-slate-500">Ingin berteman dengan Anda</p>
+                                        <p class="text-xs text-slate-500">Mengirim permintaan untuk terhubung di GetTalk</p>
                                     </div>
                                 </div>
 
                                 <div class="flex items-center gap-2 shrink-0">
                                     <button
                                         type="button"
-                                        class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm disabled:opacity-50"
+                                        class="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition-colors shadow-xs cursor-pointer disabled:opacity-50"
                                         disabled={actionLoading}
-                                        on:click={() => handleAccept(req.id || req.requestId)}
+                                        on:click={() => handleAccept(reqId)}
                                     >
-                                        Terima
+                                        {#if isBusy}
+                                            <span class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                                        {:else}
+                                            <Icon name="check" size="xs" />
+                                        {/if}
+                                        <span>Terima</span>
                                     </button>
                                     <button
                                         type="button"
-                                        class="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
+                                        class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50"
                                         disabled={actionLoading}
-                                        on:click={() => handleReject(req.id || req.requestId)}
+                                        on:click={() => handleReject(reqId)}
                                     >
                                         Tolak
                                     </button>
@@ -406,15 +474,13 @@
 
         <!-- TAB 3: ADD FRIEND -->
         {:else if activeTab === "add"}
-            <div class="bg-white p-6 md:p-8 rounded-2xl border border-slate-200 shadow-sm max-w-lg mx-auto">
+            <div class="bg-white p-6 sm:p-8 rounded-2xl border border-slate-200 shadow-xs max-w-lg mx-auto animate-fadeIn">
                 <div class="text-center mb-6">
-                    <div class="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto mb-3">
-                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-                        </svg>
+                    <div class="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto mb-3 border border-indigo-100">
+                        <Icon name="user-plus" size="lg" />
                     </div>
                     <h3 class="text-lg font-bold text-slate-900">Tambah Teman Baru</h3>
-                    <p class="text-sm text-slate-500 mt-1">Masukkan username teman yang ingin Anda tambahkan.</p>
+                    <p class="text-sm text-slate-500 mt-1">Masukkan username akun GetTalk teman yang ingin Anda tambahkan.</p>
                 </div>
 
                 <form on:submit|preventDefault={handleSendRequest} class="space-y-4">
@@ -426,7 +492,7 @@
                             id="addUsername"
                             type="text"
                             bind:value={addUsername}
-                            placeholder="Ketik username..."
+                            placeholder="Ketik username tepat (mis. alice)..."
                             required
                             disabled={actionLoading}
                             class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white transition-all"
@@ -436,12 +502,13 @@
                     <button
                         type="submit"
                         disabled={actionLoading || !addUsername.trim()}
-                        class="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-xl transition-all shadow-md shadow-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        class="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-xl transition-all shadow-md shadow-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
                     >
                         {#if actionLoading}
                             <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                             <span>Mengirim Permintaan...</span>
                         {:else}
+                            <Icon name="user-plus" size="sm" />
                             <span>Kirim Permintaan Pertemanan</span>
                         {/if}
                     </button>
@@ -449,4 +516,16 @@
             </div>
         {/if}
     </div>
+
+    <ConfirmDialog
+        open={Boolean(friendToDelete)}
+        title="Hapus Kontak Teman?"
+        description="Apakah Anda yakin ingin menghapus {friendToDelete?.username || 'teman ini'} dari daftar kontak Anda?"
+        confirmLabel="Ya, Hapus Teman"
+        cancelLabel="Batal"
+        variant="danger"
+        loading={actionLoading}
+        on:cancel={() => (friendToDelete = null)}
+        on:confirm={confirmDeleteFriend}
+    />
 </ProtectedLayout>

@@ -1,9 +1,10 @@
 <script>
-    import { createEventDispatcher } from 'svelte';
-    import { validateAttachmentFile } from '../../lib/validators.js';
-    import { PAGE_ERROR_CODES, getPageErrorMessage } from '../../lib/errors/pageerror.js';
+    import { createEventDispatcher } from "svelte";
+    import { validateAttachmentFile } from "../../lib/validators.js";
+    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../../lib/errors/pageerror.js";
+    import Icon from "../common/Icon.svelte";
 
-    export let conversationId = '';
+    export let conversationId = "";
     export let disabled = false;
     export let loading = false;
 
@@ -11,7 +12,7 @@
 
     /** @type {HTMLInputElement | null} */
     let fileInput = null;
-    let errorMessage = '';
+    let errorMessage = "";
 
     const triggerFileInput = () => {
         if (disabled || loading) return;
@@ -25,24 +26,24 @@
         if (!file || !conversationId) return;
 
         // Reset input value for re-selection
-        target.value = '';
+        target.value = "";
 
         const validation = validateAttachmentFile(file);
         if (!validation.valid) {
             errorMessage = getPageErrorMessage(
                 validation.code || PAGE_ERROR_CODES.FILE_TOO_LARGE,
-                'attachment'
+                "attachment"
             );
-            setTimeout(() => (errorMessage = ''), 4000);
+            setTimeout(() => (errorMessage = ""), 4500);
             return;
         }
 
-        errorMessage = '';
-        dispatch('attached', {
+        errorMessage = "";
+        dispatch("attached", {
             file,
             fileName: file.name,
             fileSize: file.size,
-            fileType: validation.mimeType,
+            fileType: validation.mimeType
         });
     };
 </script>
@@ -54,27 +55,31 @@
         bind:this={fileInput}
         on:change={handleFileChange}
         disabled={disabled || loading}
+        aria-label="Pilih berkas untuk dienkripsi dan dikirim"
     />
 
     <button
         type="button"
-        class="p-2 text-slate-500 hover:text-indigo-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
-        title={loading ? 'Mengenkripsi file...' : 'Lampirkan file (Terenkripsi E2EE)'}
+        class="p-2.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        title={loading ? "Mengenkripsi berkas..." : "Lampirkan berkas terenkripsi E2EE (Maks. 25 MB)"}
+        aria-label={loading ? "Mengenkripsi berkas..." : "Lampirkan berkas terenkripsi E2EE"}
         on:click={triggerFileInput}
         disabled={disabled || loading}
     >
         {#if loading}
             <div class="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
         {:else}
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-            </svg>
+            <Icon name="paperclip" size="md" />
         {/if}
     </button>
 
     {#if errorMessage}
-        <div class="absolute bottom-full left-0 mb-2 px-3 py-1.5 bg-rose-600 text-white text-xs rounded-lg shadow-lg whitespace-nowrap z-50 animate-fade-in">
-            {errorMessage}
+        <div
+            role="alert"
+            class="absolute bottom-full left-0 mb-2 px-3 py-2 bg-rose-600 text-white text-xs rounded-xl shadow-lg whitespace-nowrap z-50 flex items-center gap-1.5 animate-fade-in"
+        >
+            <Icon name="alert-triangle" size="xs" />
+            <span>{errorMessage}</span>
         </div>
     {/if}
 </div>

@@ -19,6 +19,20 @@
         authStore.clearError?.();
     });
 
+    function getSafeRedirectTarget() {
+        if (typeof window === "undefined") return "/";
+        const hash = window.location.hash || "";
+        const qIndex = hash.indexOf("?");
+        const rawQuery =
+            qIndex !== -1 ? hash.substring(qIndex + 1) : window.location.search;
+        const params = new URLSearchParams(rawQuery);
+        const redirect = params.get("redirect");
+        if (redirect && redirect.startsWith("/") && !redirect.startsWith("//")) {
+            return redirect;
+        }
+        return "/";
+    }
+
     const handleLogin = async () => {
         if (!email.trim() || !password) {
             localError = getPageErrorMessage(PAGE_ERROR_CODES.LOGIN_REQUIRED_FIELDS, "login");
@@ -33,7 +47,7 @@
                 mfaChallengeId = response.challengeId;
                 return;
             }
-            replace("/");
+            replace(getSafeRedirectTarget());
         } catch (err) {
             localError = getPageErrorMessage(err, {
                 context: "login",
@@ -53,7 +67,7 @@
         submitting = true;
         try {
             await authStore.verifyMfa({ challengeId: mfaChallengeId, code: mfaCode.trim() });
-            replace("/");
+            replace(getSafeRedirectTarget());
         } catch (err) {
             localError = getPageErrorMessage(err, {
                 context: "mfa",
@@ -158,9 +172,9 @@
                     />
                     <button
                         type="button"
-                        class="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
+                        class="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                        aria-label={showPassword ? "Sembunyikan kata sandi" : "Tampilkan kata sandi"}
                         on:click={() => (showPassword = !showPassword)}
-                        tabindex="-1"
                     >
                         {#if showPassword}
                             <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">

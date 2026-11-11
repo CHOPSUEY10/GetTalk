@@ -39,6 +39,47 @@ const initialState = {
   sidebarOpen: false,
 };
 
+/**
+ * Separate reactive store for color theme ('light' | 'dark') so `get(uiStore)`
+ * preserves its exact contract while supporting centralized dark/light mode.
+ */
+function createThemeStore() {
+  const initialTheme =
+    typeof document !== 'undefined' &&
+    document.documentElement.getAttribute('data-theme') === 'dark'
+      ? 'dark'
+      : 'light';
+  const { subscribe, set, update } = writable(initialTheme);
+
+  /** @param {'light' | 'dark'} next */
+  const applyTheme = (next) => {
+    const resolved = next === 'dark' ? 'dark' : 'light';
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-theme', resolved);
+    }
+    set(resolved);
+    return resolved;
+  };
+
+  return {
+    subscribe,
+    setTheme: applyTheme,
+    toggleTheme: () => {
+      let next = 'light';
+      update((curr) => {
+        next = curr === 'dark' ? 'light' : 'dark';
+        if (typeof document !== 'undefined') {
+          document.documentElement.setAttribute('data-theme', next);
+        }
+        return next;
+      });
+      return next;
+    },
+  };
+}
+
+export const themeStore = createThemeStore();
+
 let notificationCounter = 0;
 
 function createUIStore() {
