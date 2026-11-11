@@ -58,6 +58,16 @@ export function registerSocketListeners(callbacks) {
     handlers.push(() => socket.off(events.FRIEND_ACCEPTED, callbacks.onFriendAccepted));
   }
 
+  if (callbacks.onTypingStart) {
+    socket.on(events.TYPING_START, callbacks.onTypingStart);
+    handlers.push(() => socket.off(events.TYPING_START, callbacks.onTypingStart));
+  }
+
+  if (callbacks.onTypingStop) {
+    socket.on(events.TYPING_STOP, callbacks.onTypingStop);
+    handlers.push(() => socket.off(events.TYPING_STOP, callbacks.onTypingStop));
+  }
+
   // Return unsubscribe function
   return () => {
     handlers.forEach((cleanup) => cleanup());

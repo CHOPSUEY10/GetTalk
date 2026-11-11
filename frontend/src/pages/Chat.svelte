@@ -2,6 +2,8 @@
     import { onMount, onDestroy, tick } from "svelte";
     import ProtectedLayout from "../components/layout/ProtectedLayout.svelte";
     import { authStore } from "../stores/auth.store.js";
+    import { userStore } from "../stores/user.store.js";
+    import { uiStore } from "../stores/ui.store.js";
     import { socketStore } from "../stores/socket.store.js";
     import { conversationsStore } from "../stores/conversations.store.js";
     import { messagesStore, MESSAGES_PAGE_LIMIT } from "../stores/messages.store.js";
@@ -28,7 +30,11 @@
     let showSafetyNumberModal = false;
     let showConfirmAcceptKey = false;
     let isAcceptingKey = false;
+    let showConfirmBlockPeer = false;
+    let isTogglingBlock = false;
     let previousMessageCount = 0;
+    /** @type {Set<string>} */
+    const markedReadIds = new Set();
 
     $: e2eeStatus = $conversationsStore.e2eeStatus;
     $: e2eeError = $conversationsStore.e2eeError;
@@ -282,7 +288,77 @@
     $: hasMoreMessages = $messagesStore.hasMoreByConversation?.[conversationId] || false;
     $: historyError = $messagesStore.errorByConversation?.[conversationId] || null;
     $: activeConv = $conversationsStore.activeConversation;
+    $: peerId = activeConv?.peer?.id || null;
     $: peerUsername = activeConv?.peer?.username || "Ruang Obrolan";
+    $: peerDisplayName = activeConv?.peer?.nickname || activeConv?.peer?.username || "Ruang Obrolan";
+    $: peerLastSeenAt = activeConv?.peer?.lastSeenAt || activeConv?.peer?.last_seen_at || null;
+    $: peerTypingState = $messagesStore.typingByConversation?.[conversationId];
+    $: isPeerTyping = Boolean(
+        peerTypingState?.isTyping &&
+            peerTypingState.userId &&
+            peerTypingState.userId !== $authStore.user?.id
+    );
+    $: readReceiptsEnabled = $userStore.privacySettings?.readReceiptsEnabled !== false;
+    $: securityChangeNotifications =
+        $userStore.privacySettings?.securityChangeNotifications !== false;
+    $: isPeerBlocked = Boolean(
+        peerId &&
+            ($userStore.blockedUsers || []).some(
+                (b) => (b.user?.id || b.blockedUserId || b.id) === peerId
+            )
+    );
+
+    $: if (
+        conversationId &&
+        e2eeStatus === "ready" &&
+        readReceiptsEnabled &&
+        currentMessages.length > 0
+    ) {
+        const myId = $authStore.user?.id;
+        for (const m of currentMessages) {
+            if (
+                m?.id &&
+                !String(m.id).startsWith("local-") &&
+                !String(m.id).startsWith("queue-") &&
+                m.sender_id &&
+                m.sender_id !== myId &&
+                m.sender_id !== "me" &&
+                m.status !== "read" &&
+                !markedReadIds.has(m.id)
+            ) {
+                markedReadIds.add(m.id);
+                messagesStore.markMessageRead(conversationId, m.id);
+            }
+        }
+    }
+
+    const handleToggleBlockPeer = async () => {
+        if (!peerId || isTogglingBlock) return;
+        isTogglingBlock = true;
+        try {
+            if (isPeerBlocked) {
+                await userStore.unblockUser(peerId);
+                uiStore.notify({
+                    type: "success",
+                    message: `Blokir terhadap @${peerUsername} telah dibuka.`
+                });
+            } else {
+                await userStore.blockUser(peerId);
+                uiStore.notify({
+                    type: "warning",
+                    message: `@${peerUsername} telah diblokir.`
+                });
+            }
+            showConfirmBlockPeer = false;
+        } catch (err) {
+            uiStore.notify({
+                type: "error",
+                message: getPageErrorMessage(err, "settings")
+            });
+        } finally {
+            isTogglingBlock = false;
+        }
+    };
 
     // Auto-scroll when a new message arrives and user is near the bottom
     $: if (currentMessages.length > previousMessageCount) {
@@ -297,6 +373,8 @@
     }
 
     onMount(() => {
+        userStore.loadPrivacySettings().catch(() => {});
+        userStore.loadBlockedUsers({ limit: 50, offset: 0 }).catch(() => {});
         if (params.conversationId) {
             conversationId = params.conversationId;
             initConversation(conversationId);
@@ -327,7 +405,7 @@
 
                 <div class="relative shrink-0">
                     <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white font-bold flex items-center justify-center text-sm uppercase shadow-xs">
-                        {(peerUsername || conversationId || "C").slice(0, 2)}
+                        {(peerDisplayName || conversationId || "C").slice(0, 2)}
                     </div>
                     <span
                         class="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white {$socketStore.connected && roomStatus === 'connected' ? 'bg-emerald-500' : roomStatus === 'connecting' ? 'bg-amber-500' : 'bg-rose-500'}"
@@ -340,16 +418,32 @@
                 </div>
 
                 <div class="min-w-0">
-                    <h2
-                        class="font-bold text-slate-900 text-sm sm:text-base truncate"
-                        title="ID Ruang: {conversationId}"
-                    >
-                        {peerUsername}
-                    </h2>
+                    <div class="flex items-center gap-1.5">
+                        <h2
+                            class="font-bold text-slate-900 text-sm sm:text-base truncate"
+                            title="ID Ruang: {conversationId}"
+                        >
+                            {peerDisplayName}
+                        </h2>
+                        {#if activeConv?.peer?.nickname && activeConv?.peer?.username}
+                            <span class="text-xs text-slate-400 font-normal truncate hidden sm:inline">
+                                @{activeConv.peer.username}
+                            </span>
+                        {/if}
+                    </div>
                     <div class="flex items-center gap-2 text-xs">
-                        {#if roomStatus === "connected" && $socketStore.connected}
+                        {#if isPeerTyping}
+                            <span class="text-indigo-600 font-semibold italic animate-pulse" role="status">
+                                sedang mengetik...
+                            </span>
+                        {:else if roomStatus === "connected" && $socketStore.connected}
                             <span class="text-emerald-600 font-medium flex items-center gap-1">
                                 <span>Terhubung Realtime</span>
+                                {#if peerLastSeenAt}
+                                    <span class="text-slate-400 font-normal">
+                                        • Aktif {new Date(peerLastSeenAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                    </span>
+                                {/if}
                             </span>
                         {:else if roomStatus === "connecting"}
                             <span class="text-amber-600 font-medium">Menghubungkan...</span>
@@ -367,8 +461,28 @@
                 </div>
             </div>
 
-            <!-- E2EE & Safety Number Trigger Badge (Rule #17) -->
+            <!-- E2EE & Safety Number Trigger Badge (Rule #17) + Block Action -->
             <div class="flex items-center gap-2 shrink-0">
+                {#if peerId}
+                    <button
+                        type="button"
+                        on:click={() => {
+                            if (isPeerBlocked) {
+                                handleToggleBlockPeer();
+                            } else {
+                                showConfirmBlockPeer = true;
+                            }
+                        }}
+                        disabled={isTogglingBlock}
+                        title={isPeerBlocked ? `Buka blokir @${peerUsername}` : `Blokir @${peerUsername}`}
+                        class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full border text-xs font-medium transition-colors cursor-pointer {isPeerBlocked
+                            ? 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800'
+                            : 'bg-slate-50 hover:bg-rose-50 border-slate-200 hover:border-rose-200 text-slate-600 hover:text-rose-700'}"
+                    >
+                        <Icon name="ban" size="xs" />
+                        <span class="hidden md:inline">{isPeerBlocked ? "Buka Blokir" : "Blokir"}</span>
+                    </button>
+                {/if}
                 {#if e2eeStatus === "ready"}
                     <button
                         type="button"
@@ -551,7 +665,8 @@
                     <MessageItem
                         {msg}
                         {isSelf}
-                        {peerUsername}
+                        peerUsername={peerDisplayName}
+                        {readReceiptsEnabled}
                         e2eeReady={e2eeStatus === "ready"}
                         isBusy={mutatingMessageId === msg.id}
                         on:edit={handleEditMessage}
@@ -559,6 +674,15 @@
                         on:download={(e) => handleDownloadAttachment(e.detail.attachment, e.detail.done)}
                     />
                 {/each}
+            {/if}
+
+            {#if keyChange && securityChangeNotifications}
+                <div
+                    role="status"
+                    class="max-w-md mx-auto px-3.5 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] text-center font-medium shadow-xs"
+                >
+                    Kode keamanan E2EE dengan <strong>{peerDisplayName}</strong> telah berubah. Ketuk untuk memverifikasi.
+                </div>
             {/if}
         </div>
 
@@ -590,12 +714,24 @@
     <ConfirmDialog
         open={showConfirmAcceptKey}
         title="Setujui Kunci Perangkat Baru?"
-        description="Pastikan fingerprint kunci baru cocok dengan yang diberikan oleh {peerUsername} melalui kanal komunikasi lain (tatap muka atau telepon). Setelah disetujui, {pendingCount} pesan yang ditahan akan dienkripsi ulang dan dikirim."
+        description="Pastikan fingerprint kunci baru cocok dengan yang diberikan oleh {peerDisplayName} melalui kanal komunikasi lain (tatap muka atau telepon). Setelah disetujui, {pendingCount} pesan yang ditahan akan dienkripsi ulang dan dikirim."
         confirmLabel="Ya, Terima Kunci Baru"
         cancelLabel="Batal"
         variant="warning"
         loading={isAcceptingKey}
         on:cancel={() => (showConfirmAcceptKey = false)}
         on:confirm={confirmAcceptNewKey}
+    />
+
+    <ConfirmDialog
+        open={showConfirmBlockPeer}
+        title="Blokir @{peerUsername}?"
+        description="Pengguna yang diblokir tidak dapat mengirim pesan, melihat status Terakhir Dilihat & Online Anda, atau mengirim permintaan pertemanan."
+        confirmLabel="Ya, Blokir Pengguna"
+        cancelLabel="Batal"
+        variant="danger"
+        loading={isTogglingBlock}
+        on:cancel={() => (showConfirmBlockPeer = false)}
+        on:confirm={handleToggleBlockPeer}
     />
 </ProtectedLayout>

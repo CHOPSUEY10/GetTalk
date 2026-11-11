@@ -14,6 +14,9 @@ export const MESSAGE_DELETE = 'message:delete';
 export const MESSAGE_DELIVERED = 'message:delivered';
 export const MESSAGE_READ = 'message:read';
 
+export const TYPING_START = 'typing:start';
+export const TYPING_STOP = 'typing:stop';
+
 // Server -> Client
 export const MESSAGE_NEW = 'message:new';
 export const MESSAGE_UPDATED = 'message:updated';

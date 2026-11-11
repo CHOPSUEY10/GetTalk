@@ -14,6 +14,8 @@
     export let isBusy = false;
     /** @type {string} */
     export let peerUsername = "Lawan Bicara";
+    /** @type {boolean} */
+    export let readReceiptsEnabled = true;
 
     const dispatch = createEventDispatcher();
 
@@ -331,11 +333,11 @@
                             <Icon name="alert-triangle" size="xs" />
                             <span>Gagal</span>
                         </span>
-                    {:else if msg.status === "read"}
+                    {:else if msg.status === "read" && readReceiptsEnabled}
                         <span class="text-emerald-300 font-bold tracking-tighter" title="Dibaca oleh penerima">
                             ✓✓
                         </span>
-                    {:else if msg.status === "delivered"}
+                    {:else if msg.status === "delivered" || (msg.status === "read" && !readReceiptsEnabled)}
                         <span class="text-indigo-100 font-semibold tracking-tighter" title="Tersampaikan ke perangkat penerima">
                             ✓✓
                         </span>

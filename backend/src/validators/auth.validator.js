@@ -169,3 +169,115 @@ export function validateResetPassword(body) {
     errors,
   };
 }
+
+export function validateChangePassword(body) {
+  const errors = [];
+
+  if (!body || typeof body !== 'object') {
+    return { valid: false, errors: ['Request body is required'] };
+  }
+
+  const { currentPassword, newPassword, mfaCode, code } = body;
+  const resolvedMfaCode = mfaCode ?? code;
+
+  if (!currentPassword || typeof currentPassword !== 'string' || currentPassword.length === 0) {
+    errors.push('Current password is required');
+  }
+
+  if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
+    errors.push('New password must be at least 8 characters long');
+  } else if (newPassword.length > 128) {
+    errors.push('New password must not exceed 128 characters');
+  } else if (currentPassword && newPassword === currentPassword) {
+    errors.push('New password must be different from current password');
+  }
+
+  if (
+    resolvedMfaCode !== undefined &&
+    resolvedMfaCode !== null &&
+    resolvedMfaCode !== '' &&
+    (typeof resolvedMfaCode !== 'string' ||
+      (!/^\d{6}$/.test(resolvedMfaCode) && !/^[a-f\d-]{24,29}$/i.test(resolvedMfaCode)))
+  ) {
+    errors.push('mfaCode must be a six-digit authenticator code or recovery code');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+export function validateEmailChangeRequest(body) {
+  const errors = [];
+
+  if (!body || typeof body !== 'object') {
+    return { valid: false, errors: ['Request body is required'] };
+  }
+
+  const newEmail = body.newEmail ?? body.email;
+  const currentPassword = body.currentPassword ?? body.password;
+
+  if (!newEmail || typeof newEmail !== 'string' || !EMAIL_REGEX.test(newEmail.trim())) {
+    errors.push('A valid new email address is required');
+  }
+
+  if (!currentPassword || typeof currentPassword !== 'string' || currentPassword.length === 0) {
+    errors.push('Current password is required');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+export function validateEmailChangeVerify(body) {
+  const errors = [];
+
+  if (!body || typeof body !== 'object') {
+    return { valid: false, errors: ['Request body is required'] };
+  }
+
+  const otp = body.otp ?? body.code ?? body.token;
+  const newEmail = body.newEmail ?? body.email;
+
+  if (!otp || typeof otp !== 'string' || !/^\d{6}$/.test(otp.trim())) {
+    errors.push('A valid 6-digit verification OTP code is required');
+  }
+
+  if (newEmail !== undefined && newEmail !== null && newEmail !== '') {
+    if (typeof newEmail !== 'string' || !EMAIL_REGEX.test(newEmail.trim())) {
+      errors.push('A valid email address is required');
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+export function validateRegenerateRecoveryCodes(body) {
+  const errors = [];
+
+  if (!body || typeof body !== 'object') {
+    return { valid: false, errors: ['Request body is required'] };
+  }
+
+  const password = body.password ?? body.currentPassword;
+  const code = body.code ?? body.mfaCode;
+
+  if (!password || typeof password !== 'string' || password.length === 0) {
+    errors.push('Password is required');
+  }
+
+  if (!code || typeof code !== 'string' || !/^\d{6}$/.test(code.trim())) {
+    errors.push('A valid 6-digit TOTP authenticator code is required');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}

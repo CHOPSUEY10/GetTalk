@@ -36,11 +36,14 @@ export async function findAllByUserId(userId, { limit = 21, before = null } = {}
     `SELECT c.id, c.type, c.created_at,
             c.updated_at AS "lastMessageAt",
             peer.id AS "peerId",
-            peer.username AS "peerUsername"
+            peer.username AS "peerUsername",
+            peer.nickname AS "peerNickname",
+            peer.bio AS "peerBio",
+            peer.last_seen_at AS "peerLastSeenAt"
      FROM conversations c
      JOIN conversation_members cm ON cm.conversation_id = c.id
      LEFT JOIN LATERAL (
-       SELECT u.id, u.username
+       SELECT u.id, u.username, u.nickname, u.bio, u.last_seen_at
        FROM conversation_members pm
        JOIN users u ON u.id = pm.user_id
        WHERE pm.conversation_id = c.id AND pm.user_id <> $1
@@ -75,7 +78,7 @@ export async function isMember(userId, conversationId) {
 
 export async function getMembers(conversationId) {
   const result = await query(
-    `SELECT u.id, u.username
+    `SELECT u.id, u.username, u.nickname, u.bio, u.last_seen_at
      FROM conversation_members cm
      JOIN users u ON u.id = cm.user_id
      WHERE cm.conversation_id = $1`,

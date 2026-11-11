@@ -9,11 +9,89 @@ export async function getMe(req, res, next) {
   try {
     const user = await usersService.getMe(req.user.id);
     return res.json({
-      user: {
-        id: user.id,
-        username: user.username,
-      },
+      user,
     });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function updateProfile(req, res, next) {
+  try {
+    const { username, nickname, bio } = req.body;
+    const user = await usersService.updateProfile(
+      req.user.id,
+      { username, nickname, bio },
+      { ipAddress: req.ip || req.socket?.remoteAddress || null }
+    );
+    return res.json({
+      user,
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function getPrivacy(req, res, next) {
+  try {
+    const privacy = await usersService.getPrivacySettings(req.user.id);
+    return res.json({
+      privacy,
+      ...privacy,
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function updatePrivacy(req, res, next) {
+  try {
+    const privacy = await usersService.updatePrivacySettings(req.user.id, req.body, {
+      ipAddress: req.ip || req.socket?.remoteAddress || null,
+    });
+    return res.json({
+      privacy,
+      ...privacy,
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function listBlockedUsers(req, res, next) {
+  try {
+    const { limit, offset, cursor } = parseOffsetPaginationQuery(req.query, {
+      defaultLimit: 20,
+      cursorParam: 'after',
+    });
+    const result = await usersService.listBlockedUsers(req.user.id, {
+      limit,
+      offset,
+      after: cursor,
+    });
+    return res.json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function blockUser(req, res, next) {
+  try {
+    const result = await usersService.blockUser(req.user.id, req.params.userId, {
+      ipAddress: req.ip || req.socket?.remoteAddress || null,
+    });
+    return res.status(201).json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function unblockUser(req, res, next) {
+  try {
+    const result = await usersService.unblockUser(req.user.id, req.params.userId, {
+      ipAddress: req.ip || req.socket?.remoteAddress || null,
+    });
+    return res.json(result);
   } catch (err) {
     return next(err);
   }
@@ -34,12 +112,9 @@ export async function search(req, res, next) {
 
 export async function getById(req, res, next) {
   try {
-    const user = await usersService.getById(req.params.userId);
+    const user = await usersService.getById(req.params.userId, req.user?.id || null);
     return res.json({
-      user: {
-        id: user.id,
-        username: user.username,
-      },
+      user,
     });
   } catch (err) {
     return next(err);

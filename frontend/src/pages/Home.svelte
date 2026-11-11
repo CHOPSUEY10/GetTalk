@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
     import ProtectedLayout from "../components/layout/ProtectedLayout.svelte";
     import { authStore } from "../stores/auth.store.js";
+    import { userStore } from "../stores/user.store.js";
     import { socketStore } from "../stores/socket.store.js";
     import { conversationsStore } from "../stores/conversations.store.js";
     import { friendsStore } from "../stores/friends.store.js";
@@ -112,7 +113,7 @@
                     </div>
 
                     <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-white mb-2">
-                        Halo, {$authStore.user?.username || "Pengguna"}!
+                        Halo, {$userStore.nickname || $authStore.user?.nickname || $authStore.user?.username || "Pengguna"}!
                     </h1>
                     <p class="text-slate-300 text-sm sm:text-base leading-relaxed">
                         Kunci enkripsi disimpan secara eksklusif di perangkat Anda. Pilih percakapan aktif atau mulai obrolan baru yang aman.
@@ -128,11 +129,11 @@
                         <span>Daftar Teman ({friends.length})</span>
                     </a>
                     <a
-                        href="#/settings/security"
+                        href="#/settings"
                         class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white font-semibold text-xs sm:text-sm transition-all no-underline"
                     >
-                        <Icon name="shield" size="sm" />
-                        <span>Keamanan Akun</span>
+                        <Icon name="settings" size="sm" />
+                        <span>Pengaturan & Privasi</span>
                     </a>
                 </div>
             </div>
@@ -240,7 +241,7 @@
                 {:else}
                     <div class="space-y-2.5">
                         {#each conversations as conv (conv.id)}
-                            {@const peerName = conv.peer?.username || conv.name || "Lawan Bicara"}
+                            {@const peerName = conv.peer?.nickname || conv.peer?.username || conv.name || "Lawan Bicara"}
                             <a
                                 href="#/chat/{conv.id}"
                                 class="bg-white p-4 rounded-2xl border border-slate-200 hover:border-indigo-300 shadow-xs hover:shadow-sm flex items-center justify-between gap-4 transition-all no-underline group"
@@ -345,10 +346,10 @@
                                 <div class="flex items-center justify-between gap-2 p-2 rounded-xl hover:bg-slate-50 transition-colors">
                                     <div class="flex items-center gap-2.5 min-w-0">
                                         <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs uppercase shrink-0">
-                                            {(friend.username || friend.name || "U").slice(0, 2)}
+                                            {(friend.nickname || friend.username || friend.name || "U").slice(0, 2)}
                                         </div>
                                         <span class="text-xs font-semibold text-slate-800 truncate">
-                                            {friend.username || friend.name || "User"}
+                                            {friend.nickname || friend.username || friend.name || "User"}
                                         </span>
                                     </div>
                                     <button

@@ -46,6 +46,14 @@ enum ReceiptStatus {
   @@map("receipt_status")
 }
 
+enum PrivacyVisibility {
+  everyone
+  friends
+  nobody
+
+  @@map("privacy_visibility")
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Users
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,6 +62,9 @@ model User {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   username     String   @unique @db.VarChar(50)
   email        String   @unique @db.VarChar(255)
+  nickname     String?  @db.VarChar(60)
+  bio          String?  @db.VarChar(160)
+  lastSeenAt   DateTime? @map("last_seen_at") @db.Timestamptz(6)
   /// Password hash only (bcrypt). Never return in API responses or logs.
   passwordHash String   @map("password_hash") @db.VarChar(255)
   /// TOTP secret encrypted using the application MFA key; never return to clients.
@@ -65,6 +76,9 @@ model User {
   mfaLastTotpStep    BigInt    @default(-1) @map("mfa_last_totp_step")
   failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
   loginLockedUntil    DateTime? @map("login_locked_until") @db.Timestamptz(6)
+  pendingEmail        String?   @map("pending_email") @db.VarChar(255)
+  emailChangeTokenHash String?  @map("email_change_token_hash") @db.VarChar(128)
+  emailChangeExpiresAt DateTime? @map("email_change_expires_at") @db.Timestamptz(6)
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -76,8 +90,45 @@ model User {
   attachments            Attachment[]
   securityEvents         SecurityEvent[]
   passwordResetTokens    PasswordResetToken[]
+  privacySettings        UserPrivacySettings?
+  blockedUsers           BlockedUser[]        @relation("Blocker")
+  blockedByUsers         BlockedUser[]        @relation("Blocked")
 
   @@map("users")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// User Privacy Settings & Blocked Users
+// ─────────────────────────────────────────────────────────────────────────────
+
+model UserPrivacySettings {
+  userId                      String            @id @map("user_id") @db.Uuid
+  lastSeenVisibility          PrivacyVisibility @default(everyone) @map("last_seen_visibility")
+  onlineVisibility            PrivacyVisibility @default(everyone) @map("online_visibility")
+  readReceiptsEnabled         Boolean           @default(true) @map("read_receipts_enabled")
+  typingIndicatorEnabled      Boolean           @default(true) @map("typing_indicator_enabled")
+  whoCanMessage               PrivacyVisibility @default(everyone) @map("who_can_message")
+  whoCanAddToGroups           PrivacyVisibility @default(everyone) @map("who_can_add_to_groups")
+  defaultDisappearingTimer    Int               @default(0) @map("default_disappearing_timer")
+  securityChangeNotifications Boolean           @default(true) @map("security_change_notifications")
+  updatedAt                   DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_privacy_settings")
+}
+
+model BlockedUser {
+  blockerId String   @map("blocker_id") @db.Uuid
+  blockedId String   @map("blocked_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId], map: "idx_blocked_users_blocked")
+  @@map("blocked_users")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ import * as authController from '../controllers/auth.controller.js';
 import { validate } from '../middleware/validation.middleware.js';
 import { rateLimiter } from '../middleware/rate-limit.middleware.js';
 import { authenticate } from '../middleware/auth.middleware.js';
+import { createPaginationValidator } from '../validators/pagination.validator.js';
 import {
   validateRegister,
   validateLogin,
@@ -12,6 +13,10 @@ import {
   validateMfaDisable,
   validateForgotPassword,
   validateResetPassword,
+  validateChangePassword,
+  validateEmailChangeRequest,
+  validateEmailChangeVerify,
+  validateRegenerateRecoveryCodes,
 } from '../validators/auth.validator.js';
 
 const router = Router();
@@ -43,8 +48,29 @@ router.delete(
   validate(validateMfaDisable),
   authController.mfaDisable
 );
+router.post(
+  '/mfa/disable',
+  authenticate,
+  rateLimiter({ name: 'auth:mfa:disable', limit: 5, windowSeconds: 60 }),
+  validate(validateMfaDisable),
+  authController.mfaDisable
+);
+router.post(
+  '/mfa/recovery-codes/regenerate',
+  authenticate,
+  rateLimiter({ name: 'auth:mfa:regenerate', limit: 5, windowSeconds: 60 }),
+  validate(validateRegenerateRecoveryCodes),
+  authController.regenerateRecoveryCodes
+);
 
-// ── Password Reset ─────────────────────────────────────────────
+// ── Password Management ────────────────────────────────────────
+router.post(
+  '/password',
+  authenticate,
+  rateLimiter({ name: 'auth:password:change', limit: 10, windowSeconds: 60 }),
+  validate(validateChangePassword),
+  authController.changePassword
+);
 router.post(
   '/password/forgot',
   rateLimiter({ name: 'auth:password:forgot', limit: 3, windowSeconds: 900 }),
@@ -56,6 +82,40 @@ router.post(
   rateLimiter({ name: 'auth:password:reset', limit: 10, windowSeconds: 900 }),
   validate(validateResetPassword),
   authController.resetPassword
+);
+
+// ── Email Change Verification ──────────────────────────────────
+router.post(
+  '/email/change-request',
+  authenticate,
+  rateLimiter({ name: 'auth:email:change', limit: 5, windowSeconds: 300 }),
+  validate(validateEmailChangeRequest),
+  authController.requestEmailChange
+);
+router.post(
+  '/email/verify',
+  authenticate,
+  rateLimiter({ name: 'auth:email:verify', limit: 10, windowSeconds: 300 }),
+  validate(validateEmailChangeVerify),
+  authController.verifyEmailChange
+);
+
+// ── Active Sessions Management ─────────────────────────────────
+router.get(
+  '/sessions',
+  authenticate,
+  validate(createPaginationValidator({ maxLimit: 50, allowOffset: true, allowCursor: true })),
+  authController.listSessions
+);
+router.delete(
+  '/sessions/:sessionId',
+  authenticate,
+  authController.revokeSession
+);
+router.delete(
+  '/sessions',
+  authenticate,
+  authController.revokeAllOtherSessions
 );
 
 export default router;

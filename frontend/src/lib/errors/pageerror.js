@@ -26,6 +26,19 @@ export const PAGE_ERROR_CODES = Object.freeze({
   MFA_STATUS_LOAD_FAILED: 'MFA_STATUS_LOAD_FAILED',
   MFA_SETUP_FAILED: 'MFA_SETUP_FAILED',
   MFA_DISABLE_FAILED: 'MFA_DISABLE_FAILED',
+  MFA_RECOVERY_REGENERATE_FAILED: 'MFA_RECOVERY_REGENERATE_FAILED',
+  PROFILE_LOAD_FAILED: 'PROFILE_LOAD_FAILED',
+  PROFILE_UPDATE_FAILED: 'PROFILE_UPDATE_FAILED',
+  PRIVACY_LOAD_FAILED: 'PRIVACY_LOAD_FAILED',
+  PRIVACY_UPDATE_FAILED: 'PRIVACY_UPDATE_FAILED',
+  PASSWORD_CHANGE_FAILED: 'PASSWORD_CHANGE_FAILED',
+  EMAIL_CHANGE_REQUEST_FAILED: 'EMAIL_CHANGE_REQUEST_FAILED',
+  EMAIL_VERIFY_FAILED: 'EMAIL_VERIFY_FAILED',
+  SESSIONS_LOAD_FAILED: 'SESSIONS_LOAD_FAILED',
+  SESSION_REVOKE_FAILED: 'SESSION_REVOKE_FAILED',
+  BLOCKED_USERS_LOAD_FAILED: 'BLOCKED_USERS_LOAD_FAILED',
+  USER_BLOCK_FAILED: 'USER_BLOCK_FAILED',
+  USER_UNBLOCK_FAILED: 'USER_UNBLOCK_FAILED',
   OTP_SEND_FAILED: 'OTP_SEND_FAILED',
   OTP_VERIFY_FAILED: 'OTP_VERIFY_FAILED',
   E2EE_PEER_UNAVAILABLE: 'E2EE_PEER_UNAVAILABLE',
@@ -37,8 +50,14 @@ export const PAGE_ERROR_CODES = Object.freeze({
   LOGIN_REQUIRED_FIELDS: 'LOGIN_REQUIRED_FIELDS',
   EMAIL_REQUIRED: 'EMAIL_REQUIRED',
   INVALID_EMAIL_FORMAT: 'INVALID_EMAIL_FORMAT',
+  INVALID_USERNAME_FORMAT: 'INVALID_USERNAME_FORMAT',
+  NICKNAME_TOO_LONG: 'NICKNAME_TOO_LONG',
+  BIO_TOO_LONG: 'BIO_TOO_LONG',
   PASSWORD_TOO_SHORT: 'PASSWORD_TOO_SHORT',
   PASSWORD_MISMATCH: 'PASSWORD_MISMATCH',
+  PASSWORD_SAME_AS_CURRENT: 'PASSWORD_SAME_AS_CURRENT',
+  PASSCODE_INVALID: 'PASSCODE_INVALID',
+  PASSCODE_INCORRECT: 'PASSCODE_INCORRECT',
   INVALID_OTP_CODE: 'INVALID_OTP_CODE',
   OTP_TOKEN_MISSING: 'OTP_TOKEN_MISSING',
   MFA_CODE_REQUIRED: 'MFA_CODE_REQUIRED',
@@ -84,6 +103,10 @@ export const DEFAULT_USER_MESSAGES = Object.freeze({
     'Kode OTP pengaturan ulang kata sandi tidak valid atau telah kedaluwarsa.',
   [PAGE_ERROR_CODES.RESET_TOKEN_EXPIRED]:
     'Kode OTP pengaturan ulang kata sandi telah kedaluwarsa. Silakan minta kode baru.',
+  [PAGE_ERROR_CODES.INVALID_OTP_TOKEN]:
+    'Kode verifikasi OTP tidak valid. Periksa kembali kode 6 digit Anda.',
+  [PAGE_ERROR_CODES.OTP_TOKEN_EXPIRED]:
+    'Kode verifikasi OTP telah kedaluwarsa. Silakan minta kode baru.',
 
   // Authorization
   [PAGE_ERROR_CODES.FORBIDDEN]:
@@ -92,6 +115,10 @@ export const DEFAULT_USER_MESSAGES = Object.freeze({
     'Anda bukan anggota dari percakapan ini.',
   [PAGE_ERROR_CODES.NOT_MESSAGE_OWNER]:
     'Anda hanya dapat mengubah atau menghapus pesan milik Anda sendiri.',
+  [PAGE_ERROR_CODES.USER_BLOCKED]:
+    'Tindakan tidak dapat dilakukan karena ada pemblokiran pengguna.',
+  [PAGE_ERROR_CODES.PRIVACY_RESTRICTED]:
+    'Pengguna ini membatasi siapa yang dapat mengirim pesan atau menambahkan ke grup.',
 
   // Validation & payload
   [PAGE_ERROR_CODES.VALIDATION_ERROR]:
@@ -116,6 +143,8 @@ export const DEFAULT_USER_MESSAGES = Object.freeze({
     'Percakapan tidak ditemukan atau telah dihapus.',
   [PAGE_ERROR_CODES.MESSAGE_NOT_FOUND]:
     'Pesan tidak ditemukan atau telah dihapus.',
+  [PAGE_ERROR_CODES.SESSION_NOT_FOUND]:
+    'Sesi perangkat tidak ditemukan atau sudah berakhir.',
 
   // Conflict
   [PAGE_ERROR_CODES.CONFLICT]:
@@ -192,6 +221,32 @@ export const DEFAULT_USER_MESSAGES = Object.freeze({
     'Pengaturan MFA belum dapat dimulai. Periksa kembali kata sandi Anda.',
   [PAGE_ERROR_CODES.MFA_DISABLE_FAILED]:
     'MFA belum dapat dinonaktifkan. Periksa kembali kata sandi dan kode autentikator Anda.',
+  [PAGE_ERROR_CODES.MFA_RECOVERY_REGENERATE_FAILED]:
+    'Recovery codes belum dapat dibuat ulang. Periksa kembali kata sandi dan kode TOTP Anda.',
+  [PAGE_ERROR_CODES.PROFILE_LOAD_FAILED]:
+    'Profil pengguna belum dapat dimuat. Silakan coba lagi.',
+  [PAGE_ERROR_CODES.PROFILE_UPDATE_FAILED]:
+    'Perubahan profil belum dapat disimpan. Silakan coba lagi.',
+  [PAGE_ERROR_CODES.PRIVACY_LOAD_FAILED]:
+    'Pengaturan privasi belum dapat dimuat. Silakan coba lagi.',
+  [PAGE_ERROR_CODES.PRIVACY_UPDATE_FAILED]:
+    'Pengaturan privasi belum dapat diperbarui. Silakan coba lagi.',
+  [PAGE_ERROR_CODES.PASSWORD_CHANGE_FAILED]:
+    'Kata sandi belum dapat diubah. Periksa kembali kata sandi saat ini.',
+  [PAGE_ERROR_CODES.EMAIL_CHANGE_REQUEST_FAILED]:
+    'Permintaan perubahan email belum dapat diproses. Periksa kembali kata sandi dan email baru Anda.',
+  [PAGE_ERROR_CODES.EMAIL_VERIFY_FAILED]:
+    'Verifikasi perubahan email gagal. Periksa kembali kode OTP Anda.',
+  [PAGE_ERROR_CODES.SESSIONS_LOAD_FAILED]:
+    'Daftar sesi perangkat aktif belum dapat dimuat.',
+  [PAGE_ERROR_CODES.SESSION_REVOKE_FAILED]:
+    'Sesi perangkat belum dapat dihentikan. Silakan coba lagi.',
+  [PAGE_ERROR_CODES.BLOCKED_USERS_LOAD_FAILED]:
+    'Daftar pengguna diblokir belum dapat dimuat.',
+  [PAGE_ERROR_CODES.USER_BLOCK_FAILED]:
+    'Pengguna belum dapat diblokir. Silakan coba lagi.',
+  [PAGE_ERROR_CODES.USER_UNBLOCK_FAILED]:
+    'Blokir pengguna belum dapat dibuka. Silakan coba lagi.',
   [PAGE_ERROR_CODES.OTP_SEND_FAILED]:
     'Kode OTP belum dapat dikirimkan. Silakan coba lagi nanti.',
   [PAGE_ERROR_CODES.OTP_VERIFY_FAILED]:
@@ -212,10 +267,22 @@ export const DEFAULT_USER_MESSAGES = Object.freeze({
     'Silakan masukkan alamat email Anda.',
   [PAGE_ERROR_CODES.INVALID_EMAIL_FORMAT]:
     'Format email tidak valid. Masukkan alamat email yang benar.',
+  [PAGE_ERROR_CODES.INVALID_USERNAME_FORMAT]:
+    'Username harus terdiri dari 3-50 karakter (huruf, angka, garis bawah, atau tanda hubung).',
+  [PAGE_ERROR_CODES.NICKNAME_TOO_LONG]:
+    'Nama tampilan (nickname) maksimal terdiri dari 60 karakter.',
+  [PAGE_ERROR_CODES.BIO_TOO_LONG]:
+    'Bio singkat maksimal terdiri dari 160 karakter.',
   [PAGE_ERROR_CODES.PASSWORD_TOO_SHORT]:
     'Kata sandi minimal terdiri dari 8 karakter.',
   [PAGE_ERROR_CODES.PASSWORD_MISMATCH]:
     'Konfirmasi kata sandi tidak cocok.',
+  [PAGE_ERROR_CODES.PASSWORD_SAME_AS_CURRENT]:
+    'Kata sandi baru harus berbeda dari kata sandi saat ini.',
+  [PAGE_ERROR_CODES.PASSCODE_INVALID]:
+    'Kode kunci aplikasi (PIN) harus terdiri dari 4 hingga 8 digit angka.',
+  [PAGE_ERROR_CODES.PASSCODE_INCORRECT]:
+    'PIN kunci aplikasi tidak sesuai. Silakan coba lagi.',
   [PAGE_ERROR_CODES.INVALID_OTP_CODE]:
     'Silakan masukkan 6 digit angka kode OTP lengkap.',
   [PAGE_ERROR_CODES.OTP_TOKEN_MISSING]:
@@ -288,10 +355,58 @@ export const CONTEXT_USER_MESSAGES = Object.freeze({
   'security-settings': Object.freeze({
     [PAGE_ERROR_CODES.UNAUTHORIZED]:
       'Kata sandi atau kode autentikator tidak sesuai. Silakan periksa kembali.',
+    [PAGE_ERROR_CODES.INVALID_CREDENTIALS]:
+      'Kata sandi atau kode autentikator tidak sesuai. Silakan periksa kembali.',
     [PAGE_ERROR_CODES.BAD_REQUEST]:
       'Data keamanan belum sesuai. Periksa kembali kata sandi dan kode autentikator Anda.',
     [PAGE_ERROR_CODES.VALIDATION_ERROR]:
       'Data keamanan belum sesuai. Periksa kembali kata sandi dan kode autentikator Anda.'
+  }),
+  profile: Object.freeze({
+    [PAGE_ERROR_CODES.CONFLICT]:
+      'Username sudah digunakan oleh pengguna lain. Silakan pilih username lain.',
+    [PAGE_ERROR_CODES.USER_ALREADY_EXISTS]:
+      'Username sudah digunakan oleh pengguna lain. Silakan pilih username lain.',
+    [PAGE_ERROR_CODES.BAD_REQUEST]:
+      'Data profil belum sesuai. Periksa kembali username, nama tampilan, atau bio Anda.',
+    [PAGE_ERROR_CODES.VALIDATION_ERROR]:
+      'Data profil belum sesuai. Periksa kembali username, nama tampilan, atau bio Anda.'
+  }),
+  password: Object.freeze({
+    [PAGE_ERROR_CODES.UNAUTHORIZED]:
+      'Kata sandi saat ini atau kode autentikator MFA tidak sesuai.',
+    [PAGE_ERROR_CODES.INVALID_CREDENTIALS]:
+      'Kata sandi saat ini atau kode autentikator MFA tidak sesuai.',
+    [PAGE_ERROR_CODES.BAD_REQUEST]:
+      'Kata sandi baru belum memenuhi syarat (minimal 8 karakter dan berbeda dari kata sandi lama).',
+    [PAGE_ERROR_CODES.VALIDATION_ERROR]:
+      'Kata sandi baru belum memenuhi syarat (minimal 8 karakter dan berbeda dari kata sandi lama).'
+  }),
+  email: Object.freeze({
+    [PAGE_ERROR_CODES.UNAUTHORIZED]:
+      'Kata sandi saat ini tidak sesuai.',
+    [PAGE_ERROR_CODES.INVALID_CREDENTIALS]:
+      'Kata sandi saat ini tidak sesuai.',
+    [PAGE_ERROR_CODES.CONFLICT]:
+      'Alamat email tersebut sudah terdaftar pada akun lain.',
+    [PAGE_ERROR_CODES.USER_ALREADY_EXISTS]:
+      'Alamat email tersebut sudah terdaftar pada akun lain.',
+    [PAGE_ERROR_CODES.INVALID_OTP_TOKEN]:
+      'Kode OTP verifikasi email tidak valid.',
+    [PAGE_ERROR_CODES.OTP_TOKEN_EXPIRED]:
+      'Kode OTP verifikasi email telah kedaluwarsa. Silakan kirim ulang kode baru.'
+  }),
+  privacy: Object.freeze({
+    [PAGE_ERROR_CODES.BAD_REQUEST]:
+      'Pilihan pengaturan privasi tidak valid.',
+    [PAGE_ERROR_CODES.VALIDATION_ERROR]:
+      'Pilihan pengaturan privasi tidak valid.'
+  }),
+  sessions: Object.freeze({
+    [PAGE_ERROR_CODES.NOT_FOUND]:
+      'Sesi perangkat tidak ditemukan atau sudah berakhir.',
+    [PAGE_ERROR_CODES.SESSION_NOT_FOUND]:
+      'Sesi perangkat tidak ditemukan atau sudah berakhir.'
   }),
   friends: Object.freeze({
     [PAGE_ERROR_CODES.NOT_FOUND]:

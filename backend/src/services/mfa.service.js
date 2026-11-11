@@ -1,5 +1,6 @@
 import bcrypt from 'bcrypt';
 import * as usersRepo from '../repositories/users.repository.js';
+import * as securityEventsRepo from '../repositories/security-events.repository.js';
 import AppError from '../errors/AppError.js';
 import {
   INVALID_CREDENTIALS,
@@ -89,4 +90,38 @@ export async function disable(userId, password, code) {
   if (!validTotp && !validRecovery) {
     throw new AppError('Invalid authenticator or recovery code', 401, INVALID_CREDENTIALS);
   }
+}
+
+export async function regenerateRecoveryCodes(userId, password, code, { ipAddress = null } = {}) {
+  const user = await usersRepo.findById(userId);
+  if (!user || !(await requirePassword(user, password))) {
+    throw new AppError('Password is incorrect', 401, INVALID_CREDENTIALS);
+  }
+  if (!user.mfa_enabled || !user.mfa_secret) {
+    throw new AppError('MFA is not enabled', 409, MFA_NOT_ENABLED);
+  }
+
+  const totpStep = findTotpStep(decryptMfaSecret(user.mfa_secret), code);
+  if (totpStep === null) {
+    throw new AppError('Invalid authenticator code', 401, INVALID_CREDENTIALS);
+  }
+
+  const recoveryCodes = generateRecoveryCodes();
+  const updated = await usersRepo.regenerateMfaRecoveryCodes(
+    userId,
+    recoveryCodes.map(hashRecoveryCode),
+    totpStep
+  );
+  if (!updated) {
+    throw new AppError('Invalid authenticator code', 401, INVALID_CREDENTIALS);
+  }
+
+  await securityEventsRepo.create({
+    userId,
+    eventType: 'MFA_RECOVERY_CODES_REGENERATED',
+    ipAddress,
+    metadata: { count: recoveryCodes.length },
+  });
+
+  return recoveryCodes;
 }

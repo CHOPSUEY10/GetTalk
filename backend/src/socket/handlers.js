@@ -3,6 +3,7 @@ import * as rooms from './rooms.js';
 import * as messagesService from '../services/messages.service.js';
 import * as convRepo from '../repositories/conversations.repository.js';
 import * as messagesRepo from '../repositories/messages.repository.js';
+import * as usersRepo from '../repositories/users.repository.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -173,13 +174,52 @@ export function registerHandlers(socket, io) {
       const existing = await messagesRepo.findById(messageId);
       if (!existing) return;
 
-      await messagesService.markReceipt(userId, messageId, 'read');
+      const result = await messagesService.markReceipt(userId, messageId, 'read');
+      if (result?.suppressed) return;
 
       io.to(rooms.conversationRoom(existing.conversation_id)).emit(events.MESSAGE_READ, {
         messageId,
       });
     } catch (err) {
       logger.error('Error in message:read', { message: err.message });
+    }
+  });
+
+  // ── Typing Indicators ─────────────────────────────────────
+  socket.on(events.TYPING_START, async (data) => {
+    try {
+      const conversationId = data?.conversationId;
+      if (!conversationId) return;
+
+      const [isMember, privacy] = await Promise.all([
+        convRepo.isMember(userId, conversationId),
+        usersRepo.getPrivacySettings(userId),
+      ]);
+      if (!isMember || !privacy.typingIndicatorEnabled) return;
+
+      socket.to(rooms.conversationRoom(conversationId)).emit(events.TYPING_START, {
+        conversationId,
+        userId,
+      });
+    } catch (err) {
+      logger.error('Error in typing:start', { message: err.message });
+    }
+  });
+
+  socket.on(events.TYPING_STOP, async (data) => {
+    try {
+      const conversationId = data?.conversationId;
+      if (!conversationId) return;
+
+      const isMember = await convRepo.isMember(userId, conversationId);
+      if (!isMember) return;
+
+      socket.to(rooms.conversationRoom(conversationId)).emit(events.TYPING_STOP, {
+        conversationId,
+        userId,
+      });
+    } catch (err) {
+      logger.error('Error in typing:stop', { message: err.message });
     }
   });
 }

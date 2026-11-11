@@ -121,3 +121,23 @@ export function markMessageRead(messageId) {
     socket.emit(events.MESSAGE_READ, { messageId });
   }
 }
+
+/**
+ * Emit typing start indicator to a conversation room.
+ * @param {string} conversationId
+ */
+export function emitTypingStart(conversationId) {
+  if (socket.connected && conversationId) {
+    socket.emit(events.TYPING_START, { conversationId });
+  }
+}
+
+/**
+ * Emit typing stop indicator to a conversation room.
+ * @param {string} conversationId
+ */
+export function emitTypingStop(conversationId) {
+  if (socket.connected && conversationId) {
+    socket.emit(events.TYPING_STOP, { conversationId });
+  }
+}

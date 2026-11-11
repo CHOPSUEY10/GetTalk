@@ -1,5 +1,5 @@
 <script>
-    import { createEventDispatcher, tick } from "svelte";
+    import { createEventDispatcher, onDestroy, tick } from "svelte";
     import AttachmentPicker from "../attachments/AttachmentPicker.svelte";
     import { authStore } from "../../stores/auth.store.js";
     import { messagesStore } from "../../stores/messages.store.js";
@@ -25,6 +25,37 @@
     let inputError = null;
     /** @type {HTMLTextAreaElement | null} */
     let textareaEl = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let typingStopTimer = null;
+    let isCurrentlyTyping = false;
+
+    const notifyTyping = (typing) => {
+        if (!conversationId || disabled) return;
+        if (typing) {
+            if (!isCurrentlyTyping) {
+                isCurrentlyTyping = true;
+                messagesStore.sendTypingIndicator?.(conversationId, true);
+            }
+            if (typingStopTimer) clearTimeout(typingStopTimer);
+            typingStopTimer = setTimeout(() => {
+                isCurrentlyTyping = false;
+                messagesStore.sendTypingIndicator?.(conversationId, false);
+            }, 2500);
+        } else {
+            if (typingStopTimer) {
+                clearTimeout(typingStopTimer);
+                typingStopTimer = null;
+            }
+            if (isCurrentlyTyping) {
+                isCurrentlyTyping = false;
+                messagesStore.sendTypingIndicator?.(conversationId, false);
+            }
+        }
+    };
+
+    onDestroy(() => {
+        notifyTyping(false);
+    });
 
     /**
      * Staged attachment waiting for user confirmation before client-side encryption & upload (Chat UX #8).
@@ -113,6 +144,7 @@
         messageText = "";
         stagedAttachment = null;
         inputError = null;
+        notifyTyping(false);
         resetComposerHeight();
 
         isSending = true;
@@ -232,7 +264,9 @@
                 on:input={() => {
                     if (inputError) inputError = null;
                     adjustTextareaHeight();
+                    notifyTyping(Boolean(messageText.trim()));
                 }}
+                on:blur={() => notifyTyping(false)}
                 on:keydown={handleKeydown}
                 placeholder={isKeyChange
                     ? "Ketik pesan (akan ditahan hingga kunci baru diverifikasi)..."

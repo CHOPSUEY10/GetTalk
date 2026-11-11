@@ -1,8 +1,10 @@
 import * as authService from '../services/auth.service.js';
 import * as mfaService from '../services/mfa.service.js';
 import * as passwordResetService from '../services/password-reset.service.js';
+import * as sessionsRepo from '../repositories/sessions.repository.js';
 import AppError from '../errors/AppError.js';
 import { UNAUTHORIZED } from '../errors/error-codes.js';
+import { parseOffsetPaginationQuery, buildOffsetPage } from '../utils/pagination.js';
 import { randomUUID } from 'node:crypto';
 
 /**
@@ -23,21 +25,42 @@ function regenerateSession(req) {
   });
 }
 
+async function persistAuthenticatedSession(req, userId) {
+  if (!req.session) return;
+  const nowIso = new Date().toISOString();
+  req.session.userId = userId;
+  req.session.userAgent = req.get('user-agent') || null;
+  req.session.ipAddress = req.ip || req.socket?.remoteAddress || null;
+  req.session.createdAt = req.session.createdAt || nowIso;
+  req.session.lastActiveAt = nowIso;
+  await saveSession(req.session);
+
+  if (req.sessionID) {
+    const expireDate = req.session.cookie?.expires
+      ? new Date(req.session.cookie.expires)
+      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await sessionsRepo.upsertSession(
+      req.sessionID,
+      {
+        userId,
+        userAgent: req.session.userAgent,
+        ipAddress: req.session.ipAddress,
+        createdAt: req.session.createdAt,
+        lastActiveAt: req.session.lastActiveAt,
+      },
+      expireDate
+    );
+  }
+}
+
 export async function register(req, res, next) {
   try {
-    const { username, email, password } = req.body;
+    const { username, email, password, nickname, bio } = req.body;
 
-    const user = await authService.register({ username, email, password });
-    if (req.session) {
-      req.session.userId = user.id;
-      await saveSession(req.session);
-    }
+    const user = await authService.register({ username, email, password, nickname, bio });
+    await persistAuthenticatedSession(req, user.id);
     return res.status(201).json({
-      user: {
-        id: user.id,
-        username: user.username,
-        mfaEnabled: user.mfaEnabled,
-      },
+      user,
     });
   } catch (err) {
     return next(err);
@@ -62,15 +85,10 @@ export async function login(req, res, next) {
         await saveSession(req.session);
         return res.json({ mfaRequired: true, challengeId });
       }
-      req.session.userId = user.id;
-      await saveSession(req.session);
+      await persistAuthenticatedSession(req, user.id);
     }
     return res.json({
-      user: {
-        id: user.id,
-        username: user.username,
-        mfaEnabled: user.mfaEnabled,
-      },
+      user,
     });
   } catch (err) {
     if (err.retryAfterSeconds) {
@@ -82,6 +100,11 @@ export async function login(req, res, next) {
 
 export async function logout(req, res, next) {
   try {
+    const userId = req.session?.userId;
+    const sid = req.sessionID;
+    if (userId && sid) {
+      await sessionsRepo.deleteBySidForUser(userId, sid).catch(() => {});
+    }
     if (req.session) {
       req.session.destroy(() => {
         res.clearCookie('gettalk.sid');
@@ -98,6 +121,12 @@ export async function logout(req, res, next) {
 
 export async function session(req, res, next) {
   try {
+    if (req.sessionID && sessionsRepo.isSessionRevoked(req.sessionID)) {
+      if (req.session) {
+        req.session.destroy(() => {});
+      }
+      return next(new AppError('Unauthorized', 401, UNAUTHORIZED));
+    }
     const userId = req.session?.userId;
     if (!userId) {
       return next(new AppError('Unauthorized', 401, UNAUTHORIZED));
@@ -110,11 +139,7 @@ export async function session(req, res, next) {
       return next(new AppError('Unauthorized', 401, UNAUTHORIZED));
     }
     return res.json({
-      user: {
-        id: user.id,
-        username: user.username,
-        mfaEnabled: user.mfaEnabled,
-      },
+      user,
     });
   } catch (err) {
     return next(err);
@@ -156,14 +181,9 @@ export async function mfaVerify(req, res, next) {
     }
 
     await regenerateSession(req);
-    req.session.userId = user.id;
-    await saveSession(req.session);
+    await persistAuthenticatedSession(req, user.id);
     return res.json({
-      user: {
-        id: user.id,
-        username: user.username,
-        mfaEnabled: user.mfaEnabled,
-      },
+      user,
     });
   } catch (err) {
     return next(err);
@@ -174,7 +194,10 @@ export async function mfaStatus(req, res, next) {
   try {
     const user = await authService.getSession(req.user.id);
     if (!user) return next(new AppError('Unauthorized', 401, UNAUTHORIZED));
-    return res.json({ enabled: user.mfaEnabled });
+    return res.json({
+      enabled: user.mfaEnabled,
+      remainingRecoveryCodesCount: user.remainingRecoveryCodesCount,
+    });
   } catch (err) {
     return next(err);
   }
@@ -210,7 +233,12 @@ export async function mfaEnable(req, res, next) {
     );
     delete req.session.pendingMfaSetup;
     await saveSession(req.session);
-    return res.json({ enabled: true, recoveryCodes });
+    return res.json({
+      enabled: true,
+      recoveryCodes,
+      remainingRecoveryCodesCount: recoveryCodes.length,
+      recoveryCodesRemaining: recoveryCodes.length,
+    });
   } catch (err) {
     return next(err);
   }
@@ -221,7 +249,141 @@ export async function mfaDisable(req, res, next) {
     await mfaService.disable(req.user.id, req.body.password, req.body.code);
     delete req.session.pendingMfaSetup;
     await saveSession(req.session);
-    return res.json({ enabled: false });
+    return res.json({ enabled: false, remainingRecoveryCodesCount: 0, recoveryCodesRemaining: 0 });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function regenerateRecoveryCodes(req, res, next) {
+  try {
+    const password = req.body.password ?? req.body.currentPassword;
+    const code = req.body.code ?? req.body.mfaCode;
+    const recoveryCodes = await mfaService.regenerateRecoveryCodes(
+      req.user.id,
+      password,
+      code,
+      {
+        ipAddress: req.ip || req.socket?.remoteAddress || null,
+      }
+    );
+    return res.json({
+      recoveryCodes,
+      remainingRecoveryCodesCount: recoveryCodes.length,
+      recoveryCodesRemaining: recoveryCodes.length,
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function changePassword(req, res, next) {
+  try {
+    const { currentPassword, newPassword, mfaCode, code } = req.body;
+    const result = await authService.changePassword(req.user.id, {
+      currentPassword,
+      newPassword,
+      mfaCode: mfaCode ?? code ?? null,
+      currentSid: req.sessionID || null,
+      ipAddress: req.ip || req.socket?.remoteAddress || null,
+    });
+    return res.json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function requestEmailChange(req, res, next) {
+  try {
+    const newEmail = req.body.newEmail ?? req.body.email;
+    const currentPassword = req.body.currentPassword ?? req.body.password;
+    const result = await authService.requestEmailChange(req.user.id, {
+      newEmail,
+      currentPassword,
+      ipAddress: req.ip || req.socket?.remoteAddress || null,
+    });
+    return res.json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function verifyEmailChange(req, res, next) {
+  try {
+    const newEmail = req.body.newEmail ?? req.body.email ?? null;
+    const otp = req.body.otp ?? req.body.code ?? req.body.token;
+    const result = await authService.verifyEmailChange(req.user.id, {
+      newEmail,
+      otp,
+      ipAddress: req.ip || req.socket?.remoteAddress || null,
+    });
+    return res.json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function listSessions(req, res, next) {
+  try {
+    if (req.sessionID && req.session?.userId) {
+      const expireDate = req.session.cookie?.expires
+        ? new Date(req.session.cookie.expires)
+        : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      await sessionsRepo.upsertSession(
+        req.sessionID,
+        {
+          userId: req.user.id,
+          userAgent: req.session.userAgent || req.get('user-agent') || null,
+          ipAddress: req.session.ipAddress || req.ip || req.socket?.remoteAddress || null,
+          createdAt: req.session.createdAt || new Date().toISOString(),
+          lastActiveAt: new Date().toISOString(),
+        },
+        expireDate
+      );
+    }
+
+    const { limit, offset, cursor } = parseOffsetPaginationQuery(req.query, {
+      defaultLimit: 20,
+      cursorParam: 'after',
+    });
+
+    const rows = await authService.listSessions(req.user.id, req.sessionID, {
+      limit,
+      offset,
+      after: cursor,
+    });
+    const total = rows.total ?? rows.length;
+    const nextCursor =
+      offset + rows.length < total && rows.length > 0 ? rows[rows.length - 1].sid : null;
+    const page = buildOffsetPage(rows, { limit, offset, total, nextCursor });
+
+    return res.json({
+      ...page,
+      sessions: rows,
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function revokeSession(req, res, next) {
+  try {
+    const { sessionId } = req.params;
+    const result = await authService.revokeSession(req.user.id, sessionId, req.sessionID, {
+      ipAddress: req.ip || req.socket?.remoteAddress || null,
+    });
+    return res.json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function revokeAllOtherSessions(req, res, next) {
+  try {
+    const result = await authService.revokeAllOtherSessions(req.user.id, req.sessionID, {
+      ipAddress: req.ip || req.socket?.remoteAddress || null,
+    });
+    return res.json(result);
   } catch (err) {
     return next(err);
   }
@@ -229,10 +391,6 @@ export async function mfaDisable(req, res, next) {
 
 /**
  * POST /api/auth/password/forgot
- *
- * Always returns the exact same generic response regardless of whether the
- * email exists in the system (anti user-enumeration). Never exposes the
- * raw OTP token in the HTTP response body.
  */
 export async function forgotPassword(req, res, next) {
   try {
@@ -251,8 +409,6 @@ export async function forgotPassword(req, res, next) {
 
 /**
  * POST /api/auth/password/reset
- *
- * Validates the 6-digit OTP token, updates the password, and revokes all sessions.
  */
 export async function resetPassword(req, res, next) {
   try {

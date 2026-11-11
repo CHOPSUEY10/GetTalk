@@ -2,6 +2,7 @@ import { Server } from 'socket.io';
 import { socketAuth, socketConnectionLimit } from './middleware.js';
 import { registerHandlers } from './handlers.js';
 import * as rooms from './rooms.js';
+import * as usersRepo from '../repositories/users.repository.js';
 import { createCorsOptions } from '../config/cors.js';
 import sessionMiddleware from '../config/session.js';
 import logger from '../utils/logger.js';
@@ -26,12 +27,17 @@ export function createSocketServer(httpServer, env) {
     const userId = socket.data.user?.id;
     logger.info(`Socket connected: ${socket.id} (user: ${userId})`);
 
+    if (userId) {
+      usersRepo.updateLastSeen(userId, new Date()).catch(() => {});
+    }
+
     // Register domain event handlers on authenticated socket
     registerHandlers(socket, io);
 
     socket.on('disconnect', (reason) => {
       if (userId) {
         socket.leave(rooms.userRoom(userId));
+        usersRepo.updateLastSeen(userId, new Date()).catch(() => {});
       }
       logger.info(`Socket disconnected: ${socket.id}`, { reason, userId });
     });

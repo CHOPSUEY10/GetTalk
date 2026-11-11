@@ -1,6 +1,7 @@
 <script>
     import { onMount } from "svelte";
     import { authStore } from "../../stores/auth.store.js";
+    import { userStore } from "../../stores/user.store.js";
     import { socketStore } from "../../stores/socket.store.js";
     import { friendsStore } from "../../stores/friends.store.js";
     import { conversationsStore } from "../../stores/conversations.store.js";
@@ -39,6 +40,7 @@
     onMount(() => {
         syncCurrentPath();
         if ($authStore.authenticated) {
+            userStore.loadProfile().catch(() => {});
             conversationsStore.loadConversations().catch(() => {});
             if (!$friendsStore.friends?.length && !$friendsStore.loading) {
                 friendsStore.loadAll().catch(() => {});
@@ -239,18 +241,18 @@
                         </li>
                         <li>
                             <a
-                                href="#/settings/security"
+                                href="#/settings"
                                 class="group"
                                 class:nav-active={currentPath.startsWith("/settings")}
                                 aria-current={currentPath.startsWith("/settings") ? "page" : undefined}
                                 on:click={() => uiStore.setSidebarOpen(false)}
                             >
                                 <Icon
-                                    name="shield"
+                                    name="settings"
                                     size="md"
                                     className={currentPath.startsWith("/settings") ? "text-indigo-600" : "text-slate-400 group-hover:text-indigo-600 transition-colors"}
                                 />
-                                <span>Keamanan & MFA</span>
+                                <span>Pengaturan & Privasi</span>
                             </a>
                         </li>
                     </ul>
@@ -295,7 +297,7 @@
                         {:else}
                             {#each conversations as conv (conv.id)}
                                 {@const isCurrentChat = currentPath === `/chat/${conv.id}`}
-                                {@const peerName = conv.peer?.username || conv.name || "Ruang Obrolan"}
+                                {@const peerName = conv.peer?.nickname || conv.peer?.username || conv.name || "Ruang Obrolan"}
                                 <a
                                     href="#/chat/{conv.id}"
                                     on:click={() => uiStore.setSidebarOpen(false)}
@@ -338,19 +340,24 @@
 
             <!-- User Profile Footer & Logout -->
             <div class="user-info shrink-0">
-                <div class="flex items-center gap-2.5 min-w-0">
+                <a
+                    href="#/settings/profile"
+                    on:click={() => uiStore.setSidebarOpen(false)}
+                    class="flex items-center gap-2.5 min-w-0 no-underline hover:opacity-90 transition-opacity"
+                    title="Kelola profil & akun"
+                >
                     <div class="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs uppercase shrink-0">
-                        {($authStore.user?.username || "U").slice(0, 2)}
+                        {($userStore.nickname || $authStore.user?.nickname || $authStore.user?.username || "U").slice(0, 2)}
                     </div>
                     <div class="min-w-0">
                         <span class="truncate text-sm font-semibold text-slate-900 block leading-tight">
-                            {$authStore.user?.username || "User"}
+                            {$userStore.nickname || $authStore.user?.nickname || $authStore.user?.username || "User"}
                         </span>
                         <span class="truncate text-[11px] text-slate-500 block">
-                            {$authStore.user?.email || "Sesi Terautentikasi"}
+                            @{$userStore.username || $authStore.user?.username || "user"}
                         </span>
                     </div>
-                </div>
+                </a>
                 <button
                     type="button"
                     class="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors border border-rose-200 hover:border-rose-300 shrink-0 cursor-pointer"

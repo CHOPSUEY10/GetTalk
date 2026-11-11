@@ -264,3 +264,174 @@ export async function getPeerSafetyNumber(currentUserId, peerUserId) {
         fingerprintComparison,
     };
 }
+
+/**
+ * Compute the current device's own E2EE Identity Key Fingerprint & Safety Number summary.
+ *
+ * @param {string} userId
+ * @returns {Promise<{
+ *   userId: string,
+ *   publicKey: string,
+ *   fingerprint: string,
+ *   fingerprintBlocks: string[],
+ *   formattedFingerprint: string,
+ *   safetyNumber: string,
+ *   safetyNumberBlocks: string[]
+ * }>}
+ */
+export async function getOwnIdentityFingerprint(userId) {
+    const ownIdentity = await getOrCreateIdentityKeyPair(userId);
+    const digest = await crypto.subtle.digest('SHA-256', fromBase64Url(ownIdentity.publicKeyBase64));
+    const fingerprint = toBase64Url(digest);
+    const fingerprintBlocks = formatFingerprintBlocks(fingerprint);
+    const safety = await deriveSafetyNumber(
+        ownIdentity.publicKeyBase64,
+        ownIdentity.publicKeyBase64,
+        { userAId: userId, userBId: userId }
+    );
+
+    return {
+        userId,
+        publicKey: ownIdentity.publicKeyBase64,
+        fingerprint,
+        fingerprintBlocks,
+        formattedFingerprint: fingerprintBlocks.join(' '),
+        safetyNumber: safety.formatted,
+        safetyNumberBlocks: safety.blocks,
+    };
+}
+
+// ── Local App Passcode Lock (Client-Side Key Protection) ──────────────────────
+
+const appLockMemoryStore = new Map();
+
+function getAppLockStorageKey(userId) {
+    return `gettalk_app_lock_${userId || 'default'}`;
+}
+
+function readAppLockRecord(userId) {
+    const key = getAppLockStorageKey(userId);
+    if (appLockMemoryStore.has(key)) {
+        return appLockMemoryStore.get(key);
+    }
+    try {
+        if (typeof globalThis.localStorage !== 'undefined') {
+            const raw = globalThis.localStorage.getItem(key);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                appLockMemoryStore.set(key, parsed);
+                return parsed;
+            }
+        }
+    } catch {
+        // Fallback to memory store
+    }
+    return null;
+}
+
+function writeAppLockRecord(userId, record) {
+    const key = getAppLockStorageKey(userId);
+    if (record === null) {
+        appLockMemoryStore.delete(key);
+        try {
+            if (typeof globalThis.localStorage !== 'undefined') {
+                globalThis.localStorage.removeItem(key);
+            }
+        } catch {
+            // Ignore storage errors
+        }
+        return;
+    }
+    appLockMemoryStore.set(key, record);
+    try {
+        if (typeof globalThis.localStorage !== 'undefined') {
+            globalThis.localStorage.setItem(key, JSON.stringify(record));
+        }
+    } catch {
+        // Ignore storage errors
+    }
+}
+
+async function hashPasscodeWithSalt(passcode, saltBase64) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(`gettalk-app-lock:v1:${saltBase64}:${String(passcode).trim()}`);
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    return toBase64Url(digest);
+}
+
+/**
+ * Retrieve local App Passcode Lock configuration for a user.
+ * @param {string} userId
+ */
+export function getAppLockConfig(userId) {
+    const record = readAppLockRecord(userId);
+    if (!record || !record.enabled || !record.hash) {
+        return {
+            enabled: false,
+            autoLockMinutes: 5,
+            updatedAt: null,
+        };
+    }
+    return {
+        enabled: true,
+        autoLockMinutes: record.autoLockMinutes || 5,
+        updatedAt: record.updatedAt || null,
+    };
+}
+
+/**
+ * Configure a local App Passcode Lock PIN using Web Crypto SHA-256 + salt.
+ * Never stores the raw PIN.
+ *
+ * @param {string} userId
+ * @param {string} passcode
+ * @param {number} [autoLockMinutes=5]
+ */
+export async function setAppPasscode(userId, passcode, autoLockMinutes = 5) {
+    const saltBytes = crypto.getRandomValues(new Uint8Array(16));
+    const salt = toBase64Url(saltBytes.buffer);
+    const hash = await hashPasscodeWithSalt(passcode, salt);
+    const record = {
+        enabled: true,
+        salt,
+        hash,
+        autoLockMinutes: Number(autoLockMinutes) || 5,
+        updatedAt: Date.now(),
+    };
+    writeAppLockRecord(userId, record);
+    return {
+        enabled: true,
+        autoLockMinutes: record.autoLockMinutes,
+        updatedAt: record.updatedAt,
+    };
+}
+
+/**
+ * Verify a candidate PIN against the stored salted hash.
+ * @param {string} userId
+ * @param {string} passcode
+ * @returns {Promise<boolean>}
+ */
+export async function verifyAppPasscode(userId, passcode) {
+    const record = readAppLockRecord(userId);
+    if (!record || !record.enabled || !record.salt || !record.hash) {
+        return true;
+    }
+    const candidateHash = await hashPasscodeWithSalt(passcode, record.salt);
+    return candidateHash === record.hash;
+}
+
+/**
+ * Disable the local App Passcode Lock after verifying the current PIN.
+ * @param {string} userId
+ * @param {string} passcode
+ * @returns {Promise<boolean>}
+ */
+export async function disableAppPasscode(userId, passcode) {
+    const valid = await verifyAppPasscode(userId, passcode);
+    if (!valid) {
+        return false;
+    }
+    writeAppLockRecord(userId, null);
+    return true;
+}

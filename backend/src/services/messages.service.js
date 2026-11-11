@@ -2,11 +2,10 @@ import * as messagesRepo from '../repositories/messages.repository.js';
 import * as convRepo from '../repositories/conversations.repository.js';
 import * as receiptsRepo from '../repositories/receipts.repository.js';
 import * as securityEventsRepo from '../repositories/security-events.repository.js';
+import * as usersService from './users.service.js';
 import AppError from '../errors/AppError.js';
 import { buildPage } from '../utils/pagination.js';
 import {
-  FORBIDDEN,
-  CONVERSATION_NOT_FOUND,
   MESSAGE_NOT_FOUND,
   NOT_CONVERSATION_MEMBER,
   NOT_MESSAGE_OWNER,
@@ -51,6 +50,13 @@ export async function create(userId, conversationId, { bodyCiphertext, nonce, cl
   const isMember = await convRepo.isMember(userId, conversationId);
   if (!isMember) {
     throw new AppError('Not a member of this conversation', 403, NOT_CONVERSATION_MEMBER);
+  }
+
+  // Enforce block & whoCanMessage privacy rules for direct conversations
+  const members = await convRepo.getMembers(conversationId);
+  const peer = members.find((m) => m.id !== userId);
+  if (peer) {
+    await usersService.assertCanMessageUser(userId, peer.id);
   }
 
   const validation = validateSendMessage({ bodyCiphertext, nonce, clientMessageId });
@@ -155,5 +161,14 @@ export async function markReceipt(userId, messageId, status) {
     throw new AppError('Not a member of this conversation', 403, NOT_CONVERSATION_MEMBER);
   }
 
+  // Enforce reciprocal readReceiptsEnabled setting for direct chats
+  if (status === 'read' && msg.sender_id && msg.sender_id !== userId) {
+    const allowed = await usersService.shouldSendReadReceipt(userId, msg.sender_id);
+    if (!allowed) {
+      return { suppressed: true };
+    }
+  }
+
   await receiptsRepo.create({ messageId, userId, status });
+  return { suppressed: false };
 }

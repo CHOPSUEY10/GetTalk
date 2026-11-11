@@ -13,6 +13,7 @@ import {
   FRIENDSHIP_ALREADY_EXISTS,
   FORBIDDEN,
   USER_NOT_FOUND,
+  USER_BLOCKED,
   BAD_REQUEST,
 } from '../errors/error-codes.js';
 
@@ -114,6 +115,12 @@ export async function sendRequest(fromUserId, toUserId) {
     throw new AppError('User not found', 404, USER_NOT_FOUND);
   }
 
+  // Blocked users cannot send or receive friend requests
+  const blocked = await usersRepo.isBlockedBetween(fromUserId, toUserId);
+  if (blocked) {
+    throw new AppError('Cannot send friend request due to block settings', 403, USER_BLOCKED);
+  }
+
   // Check if friendship already exists
   const existing = await friendsRepo.findExisting(fromUserId, toUserId);
   if (existing) {
@@ -139,7 +146,12 @@ export async function acceptRequest(userId, requestId) {
 
   // Return the new friend info
   const friend = await usersRepo.findById(request.from_user_id);
-  return { userId: friend.id, username: friend.username };
+  return {
+    userId: friend.id,
+    username: friend.username,
+    nickname: friend.nickname || null,
+    bio: friend.bio || null,
+  };
 }
 
 export async function rejectRequest(userId, requestId) {

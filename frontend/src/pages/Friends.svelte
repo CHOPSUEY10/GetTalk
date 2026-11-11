@@ -189,8 +189,10 @@
     };
 
     $: filteredFriends = friends.filter((f) => {
-        const name = (f.username || f.name || "").toLowerCase();
-        return name.includes(searchQuery.toLowerCase());
+        const name = (f.nickname || f.username || f.name || "").toLowerCase();
+        const uname = (f.username || "").toLowerCase();
+        const q = searchQuery.toLowerCase();
+        return name.includes(q) || uname.includes(q);
     });
 
     onMount(() => {
@@ -329,14 +331,14 @@
                             <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between gap-3 hover:border-indigo-200 transition-all">
                                 <div class="flex items-center gap-3 min-w-0">
                                     <div class="w-11 h-11 rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white font-bold flex items-center justify-center text-sm uppercase shrink-0 shadow-xs">
-                                        {(friend.username || friend.name || "U").slice(0, 2)}
+                                        {(friend.nickname || friend.username || friend.name || "U").slice(0, 2)}
                                     </div>
                                     <div class="min-w-0">
                                         <h4 class="font-bold text-slate-900 text-sm truncate">
-                                            {friend.username || friend.name || "User"}
+                                            {friend.nickname || friend.username || friend.name || "User"}
                                         </h4>
                                         <p class="text-xs text-slate-500 truncate">
-                                            {friend.email || "Kontak Terenkripsi GetTalk"}
+                                            {friend.bio || `@${friend.username || "user"}`}
                                         </p>
                                     </div>
                                 </div>

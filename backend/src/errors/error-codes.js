@@ -14,11 +14,15 @@ export const MFA_NOT_ENABLED = 'MFA_NOT_ENABLED';
 export const LOGIN_LOCKED = 'LOGIN_LOCKED';
 export const INVALID_RESET_TOKEN = 'INVALID_RESET_TOKEN';
 export const RESET_TOKEN_EXPIRED = 'RESET_TOKEN_EXPIRED';
+export const INVALID_OTP_TOKEN = 'INVALID_OTP_TOKEN';
+export const OTP_TOKEN_EXPIRED = 'OTP_TOKEN_EXPIRED';
 
 // ── Authorization ──────────────────────────────────────────────
 export const FORBIDDEN = 'FORBIDDEN';
 export const NOT_CONVERSATION_MEMBER = 'NOT_CONVERSATION_MEMBER';
 export const NOT_MESSAGE_OWNER = 'NOT_MESSAGE_OWNER';
+export const USER_BLOCKED = 'USER_BLOCKED';
+export const PRIVACY_RESTRICTED = 'PRIVACY_RESTRICTED';
 
 // ── Validation ─────────────────────────────────────────────────
 export const VALIDATION_ERROR = 'VALIDATION_ERROR';
@@ -30,6 +34,7 @@ export const RESOURCE_NOT_FOUND = 'RESOURCE_NOT_FOUND';
 export const USER_NOT_FOUND = 'USER_NOT_FOUND';
 export const CONVERSATION_NOT_FOUND = 'CONVERSATION_NOT_FOUND';
 export const MESSAGE_NOT_FOUND = 'MESSAGE_NOT_FOUND';
+export const SESSION_NOT_FOUND = 'SESSION_NOT_FOUND';
 
 // ── Conflict ───────────────────────────────────────────────────
 export const CONFLICT = 'CONFLICT';

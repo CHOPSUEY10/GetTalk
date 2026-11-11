@@ -5,6 +5,60 @@ export const getCurrentUser = () => {
 };
 
 /**
+ * Update the current user's profile (`username`, `nickname`, `bio`).
+ * @param {{ username?: string, nickname?: string | null, bio?: string | null }} payload
+ */
+export const updateProfile = (payload) => {
+  return api.patch('/api/users/me/profile', payload);
+};
+
+/**
+ * Fetch the current user's chat privacy settings.
+ */
+export const getPrivacySettings = () => {
+  return api.get('/api/users/me/privacy');
+};
+
+/**
+ * Update the current user's chat privacy settings.
+ * @param {Record<string, any>} payload
+ */
+export const updatePrivacySettings = (payload) => {
+  return api.patch('/api/users/me/privacy', payload);
+};
+
+/**
+ * Fetch blocked users with pagination (`limit`, `offset`, `after`).
+ * @param {{ limit?: number, offset?: number, after?: string }} [params]
+ */
+export const getBlockedUsers = ({ limit = 20, offset = 0, after } = {}) => {
+  const searchParams = new URLSearchParams();
+  if (limit !== undefined && limit !== null) searchParams.set('limit', String(limit));
+  if (offset !== undefined && offset !== null) searchParams.set('offset', String(offset));
+  if (after) searchParams.set('after', String(after));
+  const qs = searchParams.toString();
+  return api.get(`/api/users/me/blocked${qs ? `?${qs}` : ''}`);
+};
+
+/**
+ * Block a user by ID.
+ * @param {string} userId
+ */
+export const blockUser = (userId) => {
+  const safeId = encodeURIComponent(userId);
+  return api.post(`/api/users/${safeId}/block`, {});
+};
+
+/**
+ * Unblock a user by ID.
+ * @param {string} userId
+ */
+export const unblockUser = (userId) => {
+  const safeId = encodeURIComponent(userId);
+  return api.delete(`/api/users/${safeId}/block`);
+};
+
+/**
  * Search users by username with optional pagination params (`limit`, `offset`).
  * Supports both `searchUsers('alice', { limit, offset })` and `searchUsers({ q: 'alice', limit, offset })`.
  *

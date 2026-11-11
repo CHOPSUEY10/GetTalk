@@ -48,7 +48,7 @@ export async function findAllByUserId(
   }
 
   const result = await query(
-    `SELECT u.id AS "userId", u.username
+    `SELECT u.id AS "userId", u.username, u.nickname, u.bio, u.last_seen_at AS "lastSeenAt"
      FROM friendships f
      JOIN users u ON (
        CASE WHEN f.from_user_id = $1 THEN f.to_user_id
@@ -103,7 +103,7 @@ export async function findPendingRequests(userId, { limit = 21, before = null } 
 
   const result = await query(
     `SELECT f.id, f.created_at AS "createdAt",
-            u.id AS "fromUserId", u.username AS "fromUsername"
+            u.id AS "fromUserId", u.username AS "fromUsername", u.nickname AS "fromNickname"
      FROM friendships f
      JOIN users u ON f.from_user_id = u.id
      WHERE f.to_user_id = $1 AND f.status = 'pending'
@@ -114,9 +114,23 @@ export async function findPendingRequests(userId, { limit = 21, before = null } 
   );
   return result.rows.map((r) => ({
     id: r.id,
-    fromUser: { id: r.fromUserId, username: r.fromUsername },
+    fromUser: { id: r.fromUserId, username: r.fromUsername, nickname: r.fromNickname || null },
     createdAt: r.createdAt,
   }));
+}
+
+export async function areFriends(userA, userB) {
+  if (!userA || !userB || userA === userB) return false;
+  const result = await query(
+    `SELECT 1
+     FROM friendships
+     WHERE ((from_user_id = $1 AND to_user_id = $2)
+         OR (from_user_id = $2 AND to_user_id = $1))
+       AND status = 'accepted'
+     LIMIT 1`,
+    [userA, userB]
+  );
+  return result.rows.length > 0;
 }
 
 export async function findRequestById(requestId) {

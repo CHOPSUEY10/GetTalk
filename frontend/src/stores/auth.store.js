@@ -9,6 +9,13 @@ import {
   setupMfa as apiSetupMfa,
   enableMfa as apiEnableMfa,
   disableMfa as apiDisableMfa,
+  regenerateRecoveryCodes as apiRegenerateRecoveryCodes,
+  changePassword as apiChangePassword,
+  requestEmailChange as apiRequestEmailChange,
+  verifyEmailChange as apiVerifyEmailChange,
+  getSessions as apiGetSessions,
+  revokeSession as apiRevokeSession,
+  revokeOtherSessions as apiRevokeOtherSessions,
   forgotPassword as apiForgotPassword,
   resetPassword as apiResetPassword,
 } from '../services/api/auth.api.js';
@@ -206,7 +213,16 @@ function createAuthStore() {
       try {
         const result = await apiEnableMfa(payload);
         update((state) => {
-          const updatedUser = state.user ? { ...state.user, mfaEnabled: true } : state.user;
+          const updatedUser = state.user
+            ? {
+                ...state.user,
+                mfaEnabled: true,
+                remainingRecoveryCodesCount:
+                  result?.remainingRecoveryCodesCount ??
+                  result?.recoveryCodes?.length ??
+                  10,
+              }
+            : state.user;
           userStore.set(updatedUser);
           return { ...state, user: updatedUser };
         });
@@ -223,7 +239,13 @@ function createAuthStore() {
       try {
         const result = await apiDisableMfa(payload);
         update((state) => {
-          const updatedUser = state.user ? { ...state.user, mfaEnabled: false } : state.user;
+          const updatedUser = state.user
+            ? {
+                ...state.user,
+                mfaEnabled: false,
+                remainingRecoveryCodesCount: 0,
+              }
+            : state.user;
           userStore.set(updatedUser);
           return { ...state, user: updatedUser };
         });
@@ -231,6 +253,107 @@ function createAuthStore() {
       } catch (err) {
         throw handleApiError(err, {
           endpoint: '/api/auth/mfa',
+          method: 'DELETE',
+        });
+      }
+    },
+    /** @param {{ password: string, code: string }} payload */
+    regenerateRecoveryCodes: async (payload) => {
+      try {
+        const result = await apiRegenerateRecoveryCodes(payload);
+        update((state) => {
+          const updatedUser = state.user
+            ? {
+                ...state.user,
+                remainingRecoveryCodesCount:
+                  result?.remainingRecoveryCodesCount ??
+                  result?.recoveryCodes?.length ??
+                  10,
+              }
+            : state.user;
+          userStore.set(updatedUser);
+          return { ...state, user: updatedUser };
+        });
+        return result;
+      } catch (err) {
+        throw handleApiError(err, {
+          endpoint: '/api/auth/mfa/recovery-codes/regenerate',
+          method: 'POST',
+        });
+      }
+    },
+    /** @param {{ currentPassword: string, newPassword: string, mfaCode?: string }} payload */
+    changePassword: async (payload) => {
+      try {
+        return await apiChangePassword(payload);
+      } catch (err) {
+        throw handleApiError(err, {
+          endpoint: '/api/auth/password',
+          method: 'POST',
+        });
+      }
+    },
+    /** @param {{ newEmail: string, currentPassword: string }} payload */
+    requestEmailChange: async (payload) => {
+      try {
+        return await apiRequestEmailChange(payload);
+      } catch (err) {
+        throw handleApiError(err, {
+          endpoint: '/api/auth/email/change-request',
+          method: 'POST',
+        });
+      }
+    },
+    /** @param {{ otp: string, newEmail?: string }} payload */
+    verifyEmailChange: async (payload) => {
+      try {
+        const result = await apiVerifyEmailChange(payload);
+        const updatedUserFromApi = result?.user;
+        update((state) => {
+          const updatedUser = updatedUserFromApi
+            ? { ...(state.user || {}), ...updatedUserFromApi }
+            : state.user
+              ? { ...state.user, email: payload.newEmail || state.user.email }
+              : state.user;
+          userStore.set(updatedUser);
+          return { ...state, user: updatedUser };
+        });
+        return result;
+      } catch (err) {
+        throw handleApiError(err, {
+          endpoint: '/api/auth/email/verify',
+          method: 'POST',
+        });
+      }
+    },
+    /** @param {{ limit?: number, offset?: number, after?: string }} [params] */
+    getSessions: async (params = {}) => {
+      try {
+        return await apiGetSessions(params);
+      } catch (err) {
+        throw handleApiError(err, {
+          endpoint: '/api/auth/sessions',
+          method: 'GET',
+        });
+      }
+    },
+    /** @param {string} sessionId */
+    revokeSession: async (sessionId) => {
+      try {
+        return await apiRevokeSession(sessionId);
+      } catch (err) {
+        throw handleApiError(err, {
+          endpoint: `/api/auth/sessions/${sessionId}`,
+          method: 'DELETE',
+        });
+      }
+    },
+    revokeOtherSessions: async () => {
+      try {
+        return await apiRevokeOtherSessions();
+      } catch (err) {
+        throw handleApiError(err, {
+          endpoint: '/api/auth/sessions',
           method: 'DELETE',
         });
       }

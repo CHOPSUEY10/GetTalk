@@ -9,6 +9,12 @@ export const MAX_MESSAGE_TEXT_BYTES = 10 * 1024;
  * Maximum attachment file size before encryption: 25 MB per Rule #21 & #26.
  */
 export const MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024;
+export const MAX_NICKNAME_LENGTH = 60;
+export const MAX_BIO_LENGTH = 160;
+
+const USERNAME_REGEX = /^[a-zA-Z0-9_-]{3,50}$/;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PASSCODE_REGEX = /^\d{4,8}$/;
 
 const utf8Encoder = new TextEncoder();
 
@@ -133,10 +139,136 @@ export function validateAttachmentFile(file) {
   };
 }
 
+/**
+ * Validate profile update fields (`username`, `nickname`, `bio`).
+ * @param {{ username?: string, nickname?: string | null, bio?: string | null }} input
+ */
+export function validateProfileInput({ username, nickname, bio } = {}) {
+  if (username !== undefined) {
+    if (typeof username !== 'string' || !USERNAME_REGEX.test(username.trim())) {
+      return {
+        valid: false,
+        code: PAGE_ERROR_CODES.INVALID_USERNAME_FORMAT,
+      };
+    }
+  }
+
+  if (nickname !== undefined && nickname !== null) {
+    if (typeof nickname !== 'string' || nickname.trim().length > MAX_NICKNAME_LENGTH) {
+      return {
+        valid: false,
+        code: PAGE_ERROR_CODES.NICKNAME_TOO_LONG,
+      };
+    }
+  }
+
+  if (bio !== undefined && bio !== null) {
+    if (typeof bio !== 'string' || bio.trim().length > MAX_BIO_LENGTH) {
+      return {
+        valid: false,
+        code: PAGE_ERROR_CODES.BIO_TOO_LONG,
+      };
+    }
+  }
+
+  return { valid: true, code: null };
+}
+
+/**
+ * Validate password change fields before submitting to API.
+ */
+export function validatePasswordChangeInput({
+  currentPassword,
+  newPassword,
+  confirmPassword,
+  mfaEnabled = false,
+  mfaCode = '',
+} = {}) {
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    return { valid: false, code: PAGE_ERROR_CODES.REQUIRED_FIELDS };
+  }
+
+  if (typeof newPassword !== 'string' || newPassword.length < 8) {
+    return { valid: false, code: PAGE_ERROR_CODES.PASSWORD_TOO_SHORT };
+  }
+
+  if (newPassword !== confirmPassword) {
+    return { valid: false, code: PAGE_ERROR_CODES.PASSWORD_MISMATCH };
+  }
+
+  if (newPassword === currentPassword) {
+    return { valid: false, code: PAGE_ERROR_CODES.PASSWORD_SAME_AS_CURRENT };
+  }
+
+  if (mfaEnabled) {
+    const trimmedCode = String(mfaCode || '').trim();
+    if (!trimmedCode) {
+      return { valid: false, code: PAGE_ERROR_CODES.MFA_CODE_REQUIRED };
+    }
+  }
+
+  return { valid: true, code: null };
+}
+
+/**
+ * Validate email change request input (`newEmail` and `currentPassword`).
+ */
+export function validateEmailChangeRequestInput({ newEmail, currentPassword } = {}) {
+  if (!newEmail || !String(newEmail).trim()) {
+    return { valid: false, code: PAGE_ERROR_CODES.EMAIL_REQUIRED };
+  }
+
+  if (!EMAIL_REGEX.test(String(newEmail).trim())) {
+    return { valid: false, code: PAGE_ERROR_CODES.INVALID_EMAIL_FORMAT };
+  }
+
+  if (!currentPassword) {
+    return { valid: false, code: PAGE_ERROR_CODES.REQUIRED_FIELDS };
+  }
+
+  return { valid: true, code: null };
+}
+
+/**
+ * Validate 6-digit email change OTP input.
+ */
+export function validateEmailChangeVerifyInput(input = {}) {
+  const raw =
+    typeof input === 'string'
+      ? input
+      : input?.otp ?? input?.token ?? input?.code ?? '';
+  const trimmed = String(raw || '').trim();
+  if (!/^\d{6}$/.test(trimmed)) {
+    return { valid: false, code: PAGE_ERROR_CODES.INVALID_OTP_CODE };
+  }
+  return { valid: true, code: null };
+}
+
+/**
+ * Validate 4-8 digit local App Passcode Lock PIN.
+ */
+export function validatePasscodeInput(passcode, confirmPasscode = undefined) {
+  const trimmed = String(passcode || '').trim();
+  if (!PASSCODE_REGEX.test(trimmed)) {
+    return { valid: false, code: PAGE_ERROR_CODES.PASSCODE_INVALID };
+  }
+  if (confirmPasscode !== undefined && String(confirmPasscode || '').trim() !== trimmed) {
+    return { valid: false, code: PAGE_ERROR_CODES.PASSWORD_MISMATCH };
+  }
+  return { valid: true, code: null };
+}
+
 export default {
   MAX_MESSAGE_TEXT_BYTES,
   MAX_ATTACHMENT_SIZE_BYTES,
+  MAX_NICKNAME_LENGTH,
+  MAX_BIO_LENGTH,
   getUtf8ByteLength,
   validateMessageText,
   validateAttachmentFile,
+  validateProfileInput,
+  validatePasswordChangeInput,
+  validateEmailChangeRequestInput,
+  validateEmailChangeVerifyInput,
+  validatePasscodeInput,
 };

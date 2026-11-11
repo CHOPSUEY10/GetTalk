@@ -1,6 +1,7 @@
 import AppError from '../errors/AppError.js';
 import { UNAUTHORIZED } from '../errors/error-codes.js';
 import * as usersRepo from '../repositories/users.repository.js';
+import { isSessionRevoked } from '../repositories/sessions.repository.js';
 
 /**
  * Authentication middleware (plan §19, rule §11).
@@ -15,6 +16,15 @@ import * as usersRepo from '../repositories/users.repository.js';
  */
 export async function authenticate(req, res, next) {
   try {
+    if (req.sessionID && isSessionRevoked(req.sessionID)) {
+      if (req.session) {
+        req.session.destroy(() => {});
+      }
+      return next(
+        new AppError('Session has been revoked', 401, UNAUTHORIZED)
+      );
+    }
+
     const userId = req.session?.userId;
     if (!userId) {
       return next(

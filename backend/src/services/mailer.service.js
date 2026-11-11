@@ -212,6 +212,105 @@ export async function sendPasswordResetEmail({ email, token } = {}) {
 }
 
 /**
+ * Send email change verification OTP to the new email address.
+ * @param {{ email: string, token: string }} param0
+ */
+export async function sendEmailChangeOtp({ email, token } = {}) {
+  if (!email || typeof email !== 'string' || !email.trim()) {
+    throw new AppError('Email penerima wajib diisi', 400, VALIDATION_ERROR);
+  }
+
+  if (!token || typeof token !== 'string' || !token.trim()) {
+    throw new AppError('Kode OTP wajib diisi', 400, VALIDATION_ERROR);
+  }
+
+  const primaryOrigin =
+    Array.isArray(env.corsOrigins) && env.corsOrigins.length > 0
+      ? env.corsOrigins[0]
+      : env.corsOrigin;
+  const verifyUrl = `${primaryOrigin}/#/settings/profile?email=${encodeURIComponent(email)}`;
+
+  if (env.nodeEnv !== 'production') {
+    lastSentEmail = {
+      to: email,
+      verifyUrl,
+      resetUrl: verifyUrl,
+      token,
+      purpose: 'email_change',
+      sentAt: new Date(),
+    };
+  }
+
+  const transportInfo = await getTransporter();
+  if (transportInfo) {
+    const { transporter, isEthereal } = transportInfo;
+    try {
+      const info = await transporter.sendMail({
+        from: env.smtpFrom,
+        to: email,
+        subject: `${token} adalah kode verifikasi perubahan email GetTalk Anda`,
+        text: [
+          'Halo,',
+          '',
+          'Kami menerima permintaan untuk mengubah alamat email akun GetTalk Anda ke alamat ini.',
+          `Kode Verifikasi OTP 6-Digit Anda adalah: ${token}`,
+          '',
+          'Kode ini berlaku selama 15 menit dan hanya dapat digunakan satu kali.',
+          '',
+          'Jika Anda tidak meminta perubahan alamat email, abaikan email ini.',
+        ].join('\n'),
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+            <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">Verifikasi Email Baru GetTalk</h2>
+            <p style="color: #475569; font-size: 14px; line-height: 1.6;">
+              Masukkan kode OTP 6-digit berikut di halaman Pengaturan Profil GetTalk untuk mengonfirmasi perubahan alamat email Anda:
+            </p>
+            <div style="margin: 24px 0; padding: 18px; background: #f8fafc; border: 2px dashed #6366f1; border-radius: 10px; text-align: center;">
+              <span style="font-size: 32px; font-weight: 800; letter-spacing: 10px; color: #4f46e5; font-family: monospace;">${token}</span>
+            </div>
+            <p style="color: #475569; font-size: 13px; line-height: 1.5;">
+              Kode ini berlaku selama <strong>15 menit</strong> dan hanya dapat digunakan <strong>1 kali</strong>.
+            </p>
+          </div>
+        `,
+      });
+
+      const previewUrl = isEthereal ? nodemailer.getTestMessageUrl(info) : false;
+      if (lastSentEmail && previewUrl) {
+        lastSentEmail.previewUrl = previewUrl;
+      }
+
+      logger.info('Email change OTP dispatched', {
+        recipient: maskEmail(email),
+        transport: isEthereal ? 'ethereal-dev-inbox' : 'smtp',
+        messageId: info.messageId,
+      });
+    } catch (err) {
+      logger.error('Failed to send email change OTP via SMTP', {
+        recipient: maskEmail(email),
+        error: err.message,
+      });
+
+      if (err instanceof AppError) {
+        throw err;
+      }
+
+      throw new AppError(
+        'Gagal mengirim email kode verifikasi perubahan email',
+        500,
+        INTERNAL_ERROR
+      );
+    }
+  } else {
+    logger.info('Email change OTP dispatched (in-memory test sink)', {
+      recipient: maskEmail(email),
+    });
+  }
+
+  return { success: true };
+}
+
+/**
  * Test helper to retrieve the last sent email.
  */
 export function getLastSentEmail() {

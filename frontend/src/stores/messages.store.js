@@ -3,7 +3,8 @@ import {
   listMessages,
   sendMessage as apiSendMessage,
   updateMessage as apiUpdateMessage,
-  deleteMessage as apiDeleteMessage
+  deleteMessage as apiDeleteMessage,
+  sendReceipt as apiSendReceipt
 } from '../services/api/messages.api.js';
 import {
   uploadAttachment,
@@ -13,7 +14,10 @@ import {
   sendEncryptedMessage,
   editEncryptedMessage,
   deleteEncryptedMessage,
-  markMessageDelivered
+  markMessageDelivered,
+  markMessageRead as socketMarkMessageRead,
+  emitTypingStart,
+  emitTypingStop
 } from '../services/socket/client.js';
 import { registerSocketListeners } from '../services/socket/handlers.js';
 import { encryptMessage, decryptMessage } from '../services/crypto/message-crypto.js';
@@ -30,6 +34,7 @@ import {
   conversationsStore,
   registerKeyChangeAcceptedFlushHandler
 } from './conversations.store.js';
+import { userStore } from './user.store.js';
 import { validateMessageText, validateAttachmentFile } from '../lib/validators.js';
 import { ApiError, API_ERROR_CODES, handleApiError } from '../lib/errors/apierror.js';
 import { ENCRYPTION_ERROR_CODES, EncryptionError } from '../lib/errors/encryptionerror.js';
@@ -240,7 +245,8 @@ const initialState = {
   hasMoreByConversation: {},
   paginationByConversation: {},
   errorByConversation: {},
-  errorCodeByConversation: {}
+  errorCodeByConversation: {},
+  typingByConversation: {}
 };
 
 function createMessagesStore() {
@@ -283,6 +289,24 @@ function createMessagesStore() {
     onAttachmentNew: (payload) => {
       if (payload?.attachment) {
         messagesStore.handleAttachmentNew(payload.attachment);
+      }
+    },
+    onTypingStart: (payload) => {
+      const convId = payload?.conversationId;
+      if (convId) {
+        update((s) => ({
+          ...s,
+          typingByConversation: { ...(s.typingByConversation || {}), [convId]: true }
+        }));
+      }
+    },
+    onTypingStop: (payload) => {
+      const convId = payload?.conversationId;
+      if (convId) {
+        update((s) => ({
+          ...s,
+          typingByConversation: { ...(s.typingByConversation || {}), [convId]: false }
+        }));
       }
     }
   });
@@ -1572,6 +1596,12 @@ function createMessagesStore() {
      * @param {'delivered' | 'read'} newStatus
      */
     handleStatusUpdate: (messageId, newStatus) => {
+      if (newStatus === 'read') {
+        const userState = get(userStore);
+        if (userState?.privacySettings?.readReceiptsEnabled === false) {
+          return;
+        }
+      }
       update((s) => {
         /** @type {Record<string, MessageItem[]>} */
         const next = {};
@@ -1582,6 +1612,44 @@ function createMessagesStore() {
         }
         return { ...s, messagesByConversation: next };
       });
+    },
+
+    /**
+     * Send read receipt for a message if `readReceiptsEnabled` is active.
+     * @param {string} messageId
+     */
+    markMessageRead: async (messageId) => {
+      if (!messageId) return { suppressed: true };
+      const userState = get(userStore);
+      if (userState?.privacySettings?.readReceiptsEnabled === false) {
+        return { suppressed: true };
+      }
+      socketMarkMessageRead(messageId);
+      try {
+        await apiSendReceipt(messageId, 'read');
+      } catch {
+        // Non-fatal fallback
+      }
+      return { suppressed: false };
+    },
+
+    /**
+     * Emit typing start/stop indicator if `typingIndicatorEnabled` is active.
+     * @param {string} conversationId
+     * @param {boolean} isTyping
+     */
+    sendTypingIndicator: (conversationId, isTyping) => {
+      if (!conversationId) return { suppressed: true };
+      const userState = get(userStore);
+      if (isTyping && userState?.privacySettings?.typingIndicatorEnabled === false) {
+        return { suppressed: true };
+      }
+      if (isTyping) {
+        emitTypingStart(conversationId);
+      } else {
+        emitTypingStop(conversationId);
+      }
+      return { suppressed: false };
     },
 
     reset: () => {
@@ -1595,7 +1663,8 @@ function createMessagesStore() {
         hasMoreByConversation: {},
         paginationByConversation: {},
         errorByConversation: {},
-        errorCodeByConversation: {}
+        errorCodeByConversation: {},
+        typingByConversation: {}
       });
     }
   };
