@@ -1,6 +1,4 @@
-import fs from 'node:fs';
 import http from 'node:http';
-import https from 'node:https';
 
 import app from './app.js';
 import env from './src/config/env.js';
@@ -9,22 +7,7 @@ import { closeRedis } from './src/config/redis.js';
 import { createSocketServer } from './src/socket/index.js';
 import logger from './src/utils/logger.js';
 
-function createServerInstance() {
-  if (env.ssl?.enabled) {
-    const tlsOptions = {
-      key: fs.readFileSync(env.ssl.keyPath),
-      cert: fs.readFileSync(env.ssl.certPath),
-    };
-    if (env.ssl.caPath) {
-      tlsOptions.ca = fs.readFileSync(env.ssl.caPath);
-    }
-    return { server: https.createServer(tlsOptions, app), protocol: 'https' };
-  }
-
-  return { server: http.createServer(app), protocol: 'http' };
-}
-
-const { server: httpServer, protocol } = createServerInstance();
+const httpServer = http.createServer(app);
 
 const io = createSocketServer(httpServer, env);
 
@@ -33,7 +16,7 @@ app.set('io', io);
 
 httpServer.listen(env.port, env.host, () => {
   console.log(
-    `GetTalk backend running on ${protocol}://${env.host}:${env.port}`
+    `GetTalk backend running on http://${env.host}:${env.port}`
   );
 
   console.log(

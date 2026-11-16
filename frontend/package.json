@@ -11,7 +11,6 @@
     "build": "vite build",
     "test": "node --test tests/crypto.test.js tests/auth-flow.test.js tests/error-handling.test.js tests/pagination.test.js tests/device-change-queue.test.js tests/safety-number.test.js tests/settings.test.js",
     "preview": "vite preview",
-    "start": "vite preview --host 0.0.0.0",
     "dev:staging": "vite --mode staging",
     "build:staging": "vite --mode staging"
   },
