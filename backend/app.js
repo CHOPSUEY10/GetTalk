@@ -12,6 +12,9 @@ import { securityHeaders } from './src/middleware/security-headers.middleware.js
 const app = express();
 
 app.disable('x-powered-by');
+if (env.trustProxy) {
+  app.set('trust proxy', env.trustProxy);
+}
 app.use(securityHeaders);
 app.use(corsMiddleware);
 

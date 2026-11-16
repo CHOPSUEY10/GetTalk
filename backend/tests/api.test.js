@@ -9,8 +9,15 @@ import { createSecurityHeadersMiddleware } from '../src/middleware/security-head
 
 let server;
 let baseUrl;
+let dbAvailable = true;
 
 before(async () => {
+  try {
+    await query('SELECT 1');
+  } catch {
+    dbAvailable = false;
+  }
+
   server = http.createServer(app);
   await new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
@@ -206,7 +213,8 @@ describe('Authentication API & Validation', () => {
     assert.equal((await res.json()).error.code, 'UNAUTHORIZED');
   });
 
-  test('register → session → login round trip persists to the database', async () => {
+  test('register → session → login round trip persists to the database', async (t) => {
+    if (!dbAvailable) return t.skip('PostgreSQL is not reachable');
     const suffix = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
     const username = `e2e_${suffix}`;
     const email = `e2e_${suffix}@example.com`;

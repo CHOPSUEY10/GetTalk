@@ -1,5 +1,3 @@
-import process from "process";
-
 const getEnvValue = (name) => {
   if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[name] !== undefined) {
     return import.meta.env[name];

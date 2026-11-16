@@ -39,3 +39,5 @@ temp/
 *.md
 !README.md
 !docs/APP_LAYER_SECURITY.md
+certs/
+*.pem

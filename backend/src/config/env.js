@@ -138,6 +138,70 @@ function validateEnvironment() {
     smtpUser ||
     'GetTalk Security <no-reply@gettalk.local>';
 
+  // Reverse-proxy / Cloudflare trust (1 hop by default in production)
+  const rawTrustProxy = process.env.TRUST_PROXY?.trim();
+  const trustProxy =
+    rawTrustProxy !== undefined && rawTrustProxy !== ''
+      ? rawTrustProxy === 'true'
+        ? 1
+        : rawTrustProxy === 'false'
+          ? false
+          : Number.isInteger(Number(rawTrustProxy))
+            ? Number(rawTrustProxy)
+            : 1
+      : nodeEnv === 'production'
+        ? 1
+        : false;
+
+  // Native Node.js HTTPS / TLS configuration (for VPS deployment without Nginx/Caddy)
+  const defaultCertPath = resolve(backendRoot, 'certs/cert.pem');
+  const defaultKeyPath = resolve(backendRoot, 'certs/key.pem');
+  const sslCertPath = process.env.SSL_CERT_PATH?.trim()
+    ? resolve(backendRoot, process.env.SSL_CERT_PATH.trim())
+    : defaultCertPath;
+  const sslKeyPath = process.env.SSL_KEY_PATH?.trim()
+    ? resolve(backendRoot, process.env.SSL_KEY_PATH.trim())
+    : defaultKeyPath;
+  const sslCaPath = process.env.SSL_CA_PATH?.trim()
+    ? resolve(backendRoot, process.env.SSL_CA_PATH.trim())
+    : undefined;
+  const sslEnabled =
+    process.env.SSL_ENABLED === 'true'
+      ? true
+      : process.env.SSL_ENABLED === 'false'
+        ? false
+        : existsSync(sslCertPath) && existsSync(sslKeyPath);
+
+  const ssl = {
+    enabled: sslEnabled,
+    certPath: sslCertPath,
+    keyPath: sslKeyPath,
+    caPath: sslCaPath && existsSync(sslCaPath) ? sslCaPath : undefined,
+  };
+
+  // Session cookie configuration (supports cross-subdomain / 2-subdomain deployment)
+  const cookieSecure =
+    process.env.COOKIE_SECURE !== undefined && process.env.COOKIE_SECURE.trim() !== ''
+      ? process.env.COOKIE_SECURE.trim() === 'true'
+      : nodeEnv === 'production';
+
+  const rawSameSite = process.env.COOKIE_SAME_SITE?.trim().toLowerCase();
+  if (rawSameSite && !['lax', 'strict', 'none'].includes(rawSameSite)) {
+    throw new Error(
+      `COOKIE_SAME_SITE tidak valid: ${rawSameSite} (gunakan lax, strict, atau none)`
+    );
+  }
+  // For two separate subdomains in production over HTTPS, 'none' + Secure ensures
+  // fetch(credentials: 'include') and Socket.IO (withCredentials: true) always work.
+  const cookieSameSite = rawSameSite || (cookieSecure && nodeEnv === 'production' ? 'none' : 'lax');
+  const cookieDomain = process.env.COOKIE_DOMAIN?.trim() || undefined;
+
+  const cookie = {
+    secure: cookieSecure,
+    sameSite: cookieSameSite === 'none' && !cookieSecure ? 'lax' : cookieSameSite,
+    domain: cookieDomain,
+  };
+
   return {
     nodeEnv,
     host,
@@ -156,6 +220,9 @@ function validateEnvironment() {
     smtpUser,
     smtpPass,
     smtpFrom,
+    trustProxy,
+    ssl,
+    cookie,
   };
 }
 

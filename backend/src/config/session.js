@@ -16,6 +16,7 @@ if (env.nodeEnv !== 'test' && process.env.USE_MEMORY_SESSION !== 'true') {
       // app alter schema at startup (rule.md §9, §10).
       createTableIfMissing: false,
     });
+    store.pruneTimer?.unref?.();
     store.on('error', (err) => {
       logger.error('Session store error', { message: err.message });
     });
@@ -27,19 +28,27 @@ if (env.nodeEnv !== 'test' && process.env.USE_MEMORY_SESSION !== 'true') {
 /**
  * Express session middleware configured with PostgreSQL session store.
  * HttpOnly + Secure + SameSite per rule.md §12.
+ * Supports two-subdomain deployment via configurable SameSite/Secure/Domain.
  */
+const cookieOptions = {
+  httpOnly: true,
+  secure: env.cookie?.secure ?? env.nodeEnv === 'production',
+  sameSite: env.cookie?.sameSite ?? 'lax',
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+};
+
+if (env.cookie?.domain) {
+  cookieOptions.domain = env.cookie.domain;
+}
+
 const sessionMiddleware = session({
   store,
   secret: env.sessionSecret,
   resave: false,
   saveUninitialized: false,
+  proxy: Boolean(env.trustProxy),
   name: 'gettalk.sid',
-  cookie: {
-    httpOnly: true,
-    secure: env.nodeEnv === 'production',
-    sameSite: 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-  },
+  cookie: cookieOptions,
 });
 
 export default sessionMiddleware;
