@@ -610,9 +610,10 @@ func (c *Collector) processErrorLine(line string, now time.Time, sink collector.
 	}
 
 	severity := models.SeverityLow
-	if parsed.Level == "crit" || parsed.Level == "alert" || parsed.Level == "emerg" {
+	switch parsed.Level {
+	case "crit", "alert", "emerg":
 		severity = models.SeverityHigh
-	} else if parsed.Level == "error" {
+	case "error":
 		severity = models.SeverityMedium
 	}
 

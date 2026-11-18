@@ -5,13 +5,12 @@ export interface EnvConfig {
 }
 
 function getEnvValue(name: string): string | undefined {
-  try {
-    const meta = import.meta as any;
-    if (meta && meta.env && meta.env[name] !== undefined) {
-      return String(meta.env[name]);
-    }
-  } catch {
-    // Fallback for Node.js test runner
+  if (
+    typeof import.meta !== 'undefined' &&
+    (import.meta as any).env &&
+    (import.meta as any).env[name] !== undefined
+  ) {
+    return String((import.meta as any).env[name]);
   }
   if (typeof process !== 'undefined' && process.env && process.env[name] !== undefined) {
     return String(process.env[name]);
@@ -24,7 +23,24 @@ export function validateEnvironment(): EnvConfig {
   const allowed: EnvConfig['appEnv'][] = ['development', 'staging', 'production'];
   const appEnv = allowed.includes(rawEnv) ? rawEnv : 'development';
 
-  const rawApiUrl = (getEnvValue('VITE_API_URL') || 'http://localhost:4100').trim().replace(/\/+$/, '');
+  const isBrowserRemoteHost =
+    typeof window !== 'undefined' &&
+    Boolean(window.location?.origin) &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1';
+
+  const defaultOrigin = isBrowserRemoteHost
+    ? window.location.origin
+    : 'http://localhost:4100';
+
+  const configuredApiUrl = (getEnvValue('VITE_API_URL') || '').trim().replace(/\/+$/, '');
+  const rawApiUrl =
+    !configuredApiUrl ||
+    (isBrowserRemoteHost &&
+      /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(configuredApiUrl))
+      ? defaultOrigin
+      : configuredApiUrl;
+
   try {
     new URL(rawApiUrl);
   } catch {
@@ -49,4 +65,3 @@ export function validateEnvironment(): EnvConfig {
 
 export const env: EnvConfig = validateEnvironment();
 export default env;
-
