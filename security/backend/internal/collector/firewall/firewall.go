@@ -211,7 +211,7 @@ func defaultJournaldStreamOpener(ctx context.Context) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("journalctl binary unavailable: %w", err)
 	}
-	cmd := exec.CommandContext(ctx, path, "-k", "-o", "short-iso", "-f", "-n", "0")
+	cmd := exec.CommandContext(ctx, path, "-k", "-o", "short-iso", "-f", "-n", "200")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err

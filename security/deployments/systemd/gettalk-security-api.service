@@ -1,30 +1,32 @@
 [Unit]
-Description=GetTalk Security — Telemetry & IDS REST API and SSE Service
-After=network.target postgresql.service
+Description=GetTalk Security — Unified Telemetry Collector, IDS Engine, REST API and SSE Service
+After=network.target postgresql.service nginx.service firewalld.service
 Wants=postgresql.service
 
 [Service]
 Type=simple
-# Run as dedicated non-root least-privilege user
+# Run as dedicated non-root user with read capabilities for journald, nginx logs, and PM2 socket
 User=gettalk-sec-api
 Group=gettalk-sec-api
+SupplementaryGroups=systemd-journal adm nginx
 WorkingDirectory=/opt/gettalk/security/backend
 EnvironmentFile=/etc/gettalk-security/api.env
-ExecStart=/opt/gettalk/security/backend/bin/gettalk-telemetry --mode=api --config=/opt/gettalk/security/configs/telemetry.yaml
+Environment="PM2_HOME=/root/.pm2"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin"
+ExecStart=/opt/gettalk/security/backend/bin/gettalk-telemetry --mode=all --config=/opt/gettalk/security/configs/telemetry.yaml
 Restart=on-failure
 RestartSec=5s
 
-# Security Hardening (Systemd Sandboxing)
+# Grant minimal capabilities to read kernel logs (journalctl -k), /var/log/nginx, and PM2 rpc.sock without running as UID 0
+AmbientCapabilities=CAP_SYSLOG CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
+CapabilityBoundingSet=CAP_SYSLOG CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
+ProtectSystem=full
+ProtectHome=false
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-RestrictSUIDSGID=true
-LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target
-
