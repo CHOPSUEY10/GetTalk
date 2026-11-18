@@ -1,0 +1,141 @@
+# ==============================================================================
+# GetTalk Security — Initial IDS Detection Rules (detection-rules.yaml)
+# Passive detection only — no automatic blocking or process termination.
+# ==============================================================================
+
+rules:
+  - id: "NET-001"
+    rule_name: "Repeated Firewall Rejection"
+    rule_type: "threshold"
+    threshold: 50
+    time_window: 60
+    severity: "medium"
+    enabled: true
+    configuration:
+      source: "firewalld"
+      event_types: ["connection_reject", "packet_drop"]
+      group_by: "source_ip"
+      description: "Repeated firewall packet drops or connection rejections from a single source IP (>= 50/min)."
+
+  - id: "NET-002"
+    rule_name: "Port Scanning Indicators"
+    rule_type: "distinct_count"
+    threshold: 10
+    time_window: 60
+    severity: "high"
+    enabled: true
+    configuration:
+      source: "firewalld"
+      event_types: ["connection_reject", "packet_drop"]
+      distinct_field: "destination_port"
+      group_by: "source_ip"
+      description: "Single source IP probing 10 or more distinct destination ports within 60 seconds."
+
+  - id: "WEB-001"
+    rule_name: "HTTP Request Flood"
+    rule_type: "threshold"
+    threshold: 100
+    time_window: 60
+    severity: "high"
+    enabled: true
+    configuration:
+      source: "nginx"
+      event_types: ["http_request"]
+      group_by: "source_ip"
+      description: "High-frequency HTTP traffic (>= 100 requests/min) from a single client IP."
+
+  - id: "WEB-002"
+    rule_name: "Authentication Failure Burst"
+    rule_type: "threshold"
+    threshold: 30
+    time_window: 60
+    severity: "medium"
+    enabled: true
+    configuration:
+      source: "nginx"
+      event_types: ["http_request"]
+      path_prefixes: ["/api/auth/login", "/api/auth/mfa/verify", "/api/v1/auth/login"]
+      status_codes: [401, 403, 423, 429]
+      group_by: "source_ip"
+      description: "Repeated authentication failures (>= 30 failures/min) from a single source IP."
+
+  - id: "WEB-003"
+    rule_name: "Suspicious Request Patterns"
+    rule_type: "signature"
+    threshold: 1
+    time_window: 60
+    severity: "high"
+    enabled: true
+    configuration:
+      source: "nginx"
+      event_types: ["http_request"]
+      signatures:
+        - "../"
+        - "..%2f"
+        - "/etc/passwd"
+        - "/.env"
+        - "/.git/"
+        - "union select"
+        - "<script"
+        - "jndi:ldap"
+        - "/wp-admin"
+        - "/phpmyadmin"
+        - "cmd.exe"
+        - "/bin/sh"
+      group_by: "source_ip"
+      description: "HTTP requests containing path traversal, sensitive file probes, SQLi, XSS, or exploit signatures."
+
+  - id: "APP-001"
+    rule_name: "High CPU Usage"
+    rule_type: "metric_sustained"
+    threshold: 80
+    time_window: 300
+    severity: "medium"
+    enabled: true
+    configuration:
+      source: "pm2"
+      metric_name: "cpu_percent"
+      comparison: "gt"
+      min_samples: 3
+      description: "PM2 application process sustaining CPU usage above 80% over 5 minutes."
+
+  - id: "APP-002"
+    rule_name: "High Memory Usage"
+    rule_type: "metric_sustained"
+    threshold: 80
+    time_window: 60
+    severity: "high"
+    enabled: true
+    configuration:
+      source: "pm2"
+      metric_name: "memory_percent"
+      max_memory_bytes: 1073741824
+      comparison: "gt"
+      min_samples: 1
+      description: "PM2 application process exceeding 80% of configured memory limit."
+
+  - id: "APP-003"
+    rule_name: "Repeated Process Restart"
+    rule_type: "metric_delta"
+    threshold: 3
+    time_window: 300
+    severity: "high"
+    enabled: true
+    configuration:
+      source: "pm2"
+      metric_name: "restart_count"
+      description: "PM2 managed process restarting 3 or more times within 5 minutes."
+
+  - id: "COR-001"
+    rule_name: "Cross-Layer Suspicious Activity"
+    rule_type: "correlation"
+    threshold: 2
+    time_window: 300
+    severity: "critical"
+    enabled: true
+    configuration:
+      required_sources: ["firewalld", "nginx"]
+      optional_sources: ["pm2"]
+      require_trusted_proxy_validation: true
+      description: "Correlated multi-layer security anomalies from the same verified source IP or coinciding with PM2 degradation."
+

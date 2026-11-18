@@ -1,0 +1,519 @@
+openapi: 3.0.3
+info:
+  title: GetTalk Security — Telemetry & Intrusion Detection System (IDS) API
+  version: 1.0.0
+  description: |
+    Versioned REST API (`/api/v1`) and Server-Sent Events (`/api/v1/stream`) for passive host-based
+    infrastructure telemetry (Firewalld, Nginx, PM2) and rule-based intrusion detection.
+servers:
+  - url: http://localhost:4100/api/v1
+    description: Local Development Server
+  - url: https://monitor.gettalk.example/api/v1
+    description: Production Monitoring Subdomain
+
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: gt_sec_session
+    BearerSession:
+      type: http
+      scheme: bearer
+    CSRFToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: Request validation failed
+
+    PaginationMeta:
+      type: object
+      properties:
+        limit:
+          type: integer
+        offset:
+          type: integer
+        total:
+          type: integer
+        hasMore:
+          type: boolean
+        nextCursor:
+          type: string
+
+    TelemetryEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        source:
+          type: string
+          enum: [firewalld, nginx, pm2]
+        eventType:
+          type: string
+        sourceIp:
+          type: string
+        destinationIp:
+          type: string
+        eventData:
+          type: object
+          additionalProperties: true
+        severity:
+          type: string
+          enum: [info, low, medium, high, critical]
+        occurredAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    SecurityAlert:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        ruleId:
+          type: string
+          example: NET-001
+        title:
+          type: string
+        description:
+          type: string
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        sourceIp:
+          type: string
+        status:
+          type: string
+          enum: [open, acknowledged, resolved]
+        firstSeen:
+          type: string
+          format: date-time
+        lastSeen:
+          type: string
+          format: date-time
+        eventCount:
+          type: integer
+        evidence:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+
+    DetectionRule:
+      type: object
+      required: [id, ruleName, ruleType, threshold, timeWindow, severity, enabled]
+      properties:
+        id:
+          type: string
+          example: NET-001
+        ruleName:
+          type: string
+        ruleType:
+          type: string
+          enum: [threshold, distinct_count, signature, metric_sustained, metric_delta, correlation]
+        threshold:
+          type: number
+        timeWindow:
+          type: integer
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        enabled:
+          type: boolean
+        configuration:
+          type: object
+          additionalProperties: true
+
+security:
+  - SessionCookie: []
+
+paths:
+  /auth/login:
+    post:
+      summary: Authenticate security administrator
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Authenticated or MFA challenge issued
+        '401':
+          description: Invalid credentials
+        '423':
+          description: Account temporarily locked
+        '429':
+          description: Rate limit exceeded
+
+  /auth/mfa/verify:
+    post:
+      summary: Verify 6-digit TOTP code to complete login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challengeId, code]
+              properties:
+                challengeId:
+                  type: string
+                code:
+                  type: string
+      responses:
+        '200':
+          description: MFA verified and session cookie issued
+        '401':
+          description: Invalid or expired MFA code
+
+  /auth/session:
+    get:
+      summary: Retrieve current administrator session and CSRF token
+      responses:
+        '200':
+          description: Active session details
+        '401':
+          description: Unauthenticated
+
+  /auth/logout:
+    post:
+      summary: Revoke active administrator session
+      responses:
+        '200':
+          description: Session terminated
+
+  /dashboard/overview:
+    get:
+      summary: Aggregate infrastructure health, KPIs, collector status, and recent events/alerts
+      parameters:
+        - in: query
+          name: range
+          schema:
+            type: string
+            enum: [15m, 1h, 6h, 24h, 7d, 30d]
+      responses:
+        '200':
+          description: Dashboard overview payload
+
+  /dashboard/traffic:
+    get:
+      summary: Time-series traffic and anomaly buckets
+      parameters:
+        - in: query
+          name: range
+          schema:
+            type: string
+        - in: query
+          name: bucketMinutes
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Time-series buckets
+
+  /network/events:
+    get:
+      summary: Paginated Firewalld telemetry events
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: offset
+          schema:
+            type: integer
+        - in: query
+          name: sourceIp
+          schema:
+            type: string
+        - in: query
+          name: eventType
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated firewalld events
+
+  /network/statistics:
+    get:
+      summary: Firewalld statistics (dropped/rejected totals, top source IPs, protocols, ports)
+      responses:
+        '200':
+          description: Network statistics payload
+
+  /web/requests:
+    get:
+      summary: Paginated Nginx HTTP access and error events
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: offset
+          schema:
+            type: integer
+        - in: query
+          name: sourceIp
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated Nginx events
+
+  /web/statistics:
+    get:
+      summary: Nginx statistics (status distribution, avg/P95/P99 latency, top endpoints, top IPs)
+      responses:
+        '200':
+          description: Web statistics payload
+
+  /application/processes:
+    get:
+      summary: Latest PM2 process inventory and status metrics
+      responses:
+        '200':
+          description: Paginated PM2 process summaries
+
+  /application/metrics:
+    get:
+      summary: Paginated historical PM2 metrics
+      parameters:
+        - in: query
+          name: metricName
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: offset
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Paginated system metrics
+
+  /events:
+    get:
+      summary: Unified paginated security telemetry timeline across all layers
+      parameters:
+        - in: query
+          name: source
+          schema:
+            type: string
+        - in: query
+          name: severity
+          schema:
+            type: string
+        - in: query
+          name: sourceIp
+          schema:
+            type: string
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: offset
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Paginated telemetry events
+
+  /alerts:
+    get:
+      summary: Paginated IDS security alerts
+      parameters:
+        - in: query
+          name: severity
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [open, acknowledged, resolved]
+        - in: query
+          name: ruleId
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated security alerts
+
+  /alerts/{id}:
+    patch:
+      summary: Update alert status (acknowledge or resolve) — requires admin or analyst role
+      security:
+        - SessionCookie: []
+          CSRFToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [open, acknowledged, resolved]
+      responses:
+        '200':
+          description: Updated security alert
+        '403':
+          description: Insufficient role permissions or invalid CSRF token
+
+  /rules:
+    get:
+      summary: List IDS detection rules
+      responses:
+        '200':
+          description: Paginated detection rules
+    post:
+      summary: Create a new IDS detection rule — requires admin role
+      security:
+        - SessionCookie: []
+          CSRFToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DetectionRule'
+      responses:
+        '201':
+          description: Created detection rule
+        '403':
+          description: Insufficient role permissions
+
+  /rules/{id}:
+    patch:
+      summary: Update detection rule threshold, time window, severity, or enabled flag — requires admin role
+      security:
+        - SessionCookie: []
+          CSRFToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ruleName:
+                  type: string
+                threshold:
+                  type: number
+                timeWindow:
+                  type: integer
+                severity:
+                  type: string
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Updated detection rule
+
+  /audit-logs:
+    get:
+      summary: Paginated administrator and security audit logs — requires admin or analyst role
+      responses:
+        '200':
+          description: Paginated audit logs
+
+  /settings:
+    get:
+      summary: Retrieve collector health, collection intervals, and retention policy
+      responses:
+        '200':
+          description: System settings payload
+
+  /settings/retention:
+    patch:
+      summary: Update configurable data retention policy — requires admin role
+      security:
+        - SessionCookie: []
+          CSRFToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [telemetryEventsDays, systemMetricsDays, securityAlertsDays]
+              properties:
+                cleanupIntervalHours:
+                  type: integer
+                telemetryEventsDays:
+                  type: integer
+                systemMetricsDays:
+                  type: integer
+                securityAlertsDays:
+                  type: integer
+      responses:
+        '200':
+          description: Updated settings
+
+  /stream:
+    get:
+      summary: Server-Sent Events (SSE) real-time telemetry and alert stream
+      responses:
+        '200':
+          description: Event stream (`text/event-stream`)
+

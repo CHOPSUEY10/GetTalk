@@ -1,0 +1,30 @@
+[Unit]
+Description=GetTalk Security — Telemetry & IDS REST API and SSE Service
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+# Run as dedicated non-root least-privilege user
+User=gettalk-sec-api
+Group=gettalk-sec-api
+WorkingDirectory=/opt/gettalk/security/backend
+EnvironmentFile=/etc/gettalk-security/api.env
+ExecStart=/opt/gettalk/security/backend/bin/gettalk-telemetry --mode=api --config=/opt/gettalk/security/configs/telemetry.yaml
+Restart=on-failure
+RestartSec=5s
+
+# Security Hardening (Systemd Sandboxing)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,69 @@
+# ==============================================================================
+# GetTalk Security — Telemetry & IDS Configuration (telemetry.yaml)
+# Passive host-based monitoring for Firewalld, Nginx, and PM2
+# ==============================================================================
+
+server:
+  host: "127.0.0.1"
+  port: 4100
+  environment: "development" # development | staging | production
+  request_timeout_seconds: 15
+  cors_allowed_origins:
+    - "http://localhost:5174"
+    - "https://monitor.gettalk.example"
+  trusted_proxies:
+    - "127.0.0.1"
+    - "::1"
+
+collectors:
+  queue_size: 2048
+  batch_size: 100
+  flush_interval_ms: 1000
+
+  firewalld:
+    enabled: true
+    mode: "journald" # journald | file
+    journald_unit: "firewalld.service"
+    kernel_grep: "FINAL_REJECT|DROP|REJECT"
+    fallback_log_path: "/var/log/messages"
+    dedup_window_seconds: 5
+
+  nginx:
+    enabled: true
+    access_log_path: "/var/log/nginx/access.log"
+    error_log_path: "/var/log/nginx/error.log"
+    poll_interval_ms: 500
+    checkpoint_key_prefix: "nginx"
+    max_line_bytes: 16384
+    trusted_reverse_proxy: true
+
+  pm2:
+    enabled: true
+    binary_path: "pm2"
+    interval_seconds: 5
+    command_timeout_seconds: 4
+    default_memory_limit_bytes: 1073741824 # 1 GiB
+
+detection:
+  enabled: true
+  evaluation_interval_seconds: 10
+  rules_config_path: "./configs/detection-rules.yaml"
+  dedup_cooldown_seconds: 300
+  passive_mode_only: true
+
+retention:
+  cleanup_interval_hours: 6
+  telemetry_events_days: 30
+  system_metrics_days: 90
+  security_alerts_days: 180
+
+security:
+  session_ttl_hours: 12
+  cookie_name: "gt_sec_session"
+  cookie_secure: false
+  cookie_same_site: "lax" # lax | strict | none
+  rate_limit_requests_per_minute: 120
+  auth_rate_limit_per_minute: 10
+  max_failed_login_attempts: 5
+  lockout_duration_minutes: 15
+

@@ -1,0 +1,27 @@
+# Un-ignore markdown documentation inside the security module
+!*.md
+!docs/**/*.md
+
+# Go binaries and test artifacts
+backend/bin/
+backend/*.exe
+backend/*.out
+backend/coverage.txt
+
+# Frontend dependencies and build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+
+# Environment files (keep only .env.example)
+.env*
+!.env.example
+backend/.env*
+!backend/.env.example
+frontend/.env*
+!frontend/.env.example
+
+# Runtime checkpoints / local logs
+*.log
+*.checkpoint.json
+

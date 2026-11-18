@@ -1,0 +1,32 @@
+[Unit]
+Description=GetTalk Security — Passive Host Telemetry Collector & IDS Engine
+After=network.target postgresql.service nginx.service firewalld.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+# Run as non-root collector account with read-only access to systemd-journal and nginx logs
+User=gettalk-sec-collector
+Group=gettalk-sec-collector
+SupplementaryGroups=systemd-journal adm nginx
+WorkingDirectory=/opt/gettalk/security/backend
+EnvironmentFile=/etc/gettalk-security/collector.env
+ExecStart=/opt/gettalk/security/backend/bin/gettalk-telemetry --mode=collector --config=/opt/gettalk/security/configs/telemetry.yaml
+Restart=on-failure
+RestartSec=5s
+
+# Security Hardening (Least Privilege Sandboxing)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/var/log/nginx
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
+
