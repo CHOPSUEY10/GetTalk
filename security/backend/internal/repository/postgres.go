@@ -815,9 +815,9 @@ func (p *PostgresRepository) UpsertOrDeduplicateAlert(ctx context.Context, alert
 func (p *PostgresRepository) UpdateAlertStatus(ctx context.Context, id, status, actorID string) (*models.SecurityAlert, error) {
 	const q = `
 		UPDATE security_alerts
-		SET status = $2,
-		    acknowledged_by = CASE WHEN $2 IN ('acknowledged', 'resolved') THEN $3 ELSE acknowledged_by END,
-		    acknowledged_at = CASE WHEN $2 IN ('acknowledged', 'resolved') THEN NOW() ELSE acknowledged_at END
+		SET status = $2::text,
+		    acknowledged_by = CASE WHEN $2::text IN ('acknowledged', 'resolved') THEN $3::text ELSE acknowledged_by END,
+		    acknowledged_at = CASE WHEN $2::text IN ('acknowledged', 'resolved') THEN NOW() ELSE acknowledged_at END
 		WHERE id = $1::uuid
 	`
 	tag, err := p.pool.Exec(ctx, q, id, status, actorID)
@@ -1056,4 +1056,3 @@ func sanitizeLimitOffset(limit, offset int) (int, int) {
 	}
 	return limit, offset
 }
-
