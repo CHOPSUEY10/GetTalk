@@ -2,12 +2,26 @@
 set -euo pipefail
 
 REPO_DIR="$HOME/GetTalk"
+FORCE_INSTALL="${1:-}"
+
+install_deps_if_needed() {
+  if [ ! -d "node_modules" ] || [ "$FORCE_INSTALL" = "--install" ]; then
+    echo "-> Menginstal dependencies untuk $(pwd)..."
+    npm install || {
+      echo "-> Mendeteksi konflik package-lock lintas OS, melakukan clean install..."
+      rm -rf node_modules package-lock.json
+      npm install
+    }
+  else
+    echo "-> node_modules sudah ada, melewati npm install (gunakan './deploy.sh --install' jika ada package baru)."
+  fi
+}
 
 echo "============================================================"
 echo " [1/4] Build & Deploy Frontend Aplikasi Utama (GetTalk)"
 echo "============================================================"
 cd "$REPO_DIR/frontend"
-npm install
+install_deps_if_needed
 npm run build
 # Bersihkan folder target Nginx dan salin hasil build frontend/dist ke sana
 sudo mkdir -p /var/www/GetTalk/frontend/dist
@@ -21,7 +35,7 @@ echo "============================================================"
 echo " [2/4] Build & Deploy Backend Aplikasi Utama (Node.js/PM2)"
 echo "============================================================"
 cd "$REPO_DIR/backend"
-npm install
+install_deps_if_needed
 npm run db:generate
 npm run db:deploy
 # Restart proses backend utama di PM2
@@ -31,7 +45,7 @@ echo "============================================================"
 echo " [3/4] Build & Deploy Frontend SecAdmin (Security Dashboard)"
 echo "============================================================"
 cd "$REPO_DIR/security/frontend"
-npm install
+install_deps_if_needed
 npm run build
 # Bersihkan folder target Nginx dan salin hasil build security/frontend/dist ke sana
 sudo mkdir -p /var/www/GetTalk/security/frontend/dist
