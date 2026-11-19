@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import Icon from '../components/common/Icon.svelte';
   import SeverityBadge from '../components/common/SeverityBadge.svelte';
+  import { generateQrCodeSvg } from '../lib/qrcode.ts';
   import { validateRetentionInput } from '../lib/validators.ts';
   import { authStore } from '../stores/auth.store.ts';
   import { settingsStore } from '../stores/settings.store.ts';
@@ -15,9 +16,24 @@
 
   let mfaSecret = '';
   let mfaOtpUri = '';
+  let mfaQrSvg = '';
   let mfaCode = '';
+  let copiedMfaSecret = false;
 
   $: isAdmin = $authStore.user?.role === 'admin';
+
+  $: if (mfaOtpUri) {
+    try {
+      mfaQrSvg = generateQrCodeSvg(mfaOtpUri, {
+        size: 196,
+        title: 'GetTalk Security TOTP MFA QR Code',
+      });
+    } catch {
+      mfaQrSvg = '';
+    }
+  } else {
+    mfaQrSvg = '';
+  }
 
   $: if ($settingsStore.settings) {
     eventsDays = $settingsStore.settings.retention.telemetryEventsDays;
@@ -61,12 +77,26 @@
     }
   }
 
+  async function handleCopyMfaSecret() {
+    if (!mfaSecret) return;
+    try {
+      await navigator.clipboard?.writeText(mfaSecret);
+      copiedMfaSecret = true;
+      setTimeout(() => {
+        copiedMfaSecret = false;
+      }, 2000);
+    } catch {
+      copiedMfaSecret = false;
+    }
+  }
+
   async function handleEnableMfa(e: SubmitEvent) {
     e.preventDefault();
     try {
       await authStore.enableMfa(mfaCode.trim());
       mfaSecret = '';
       mfaOtpUri = '';
+      mfaQrSvg = '';
       mfaCode = '';
       uiStore.notify('Two-Factor Authentication (TOTP) enabled.', 'success');
     } catch (err: any) {
@@ -236,21 +266,83 @@
             Generate TOTP MFA Secret
           </button>
         {:else}
-          <form on:submit={handleEnableMfa} class="space-y-3 max-w-md pt-2">
-            <div class="text-xs text-slate-300">
-              Secret Key: <code class="font-mono text-indigo-300 bg-slate-950 px-2 py-1 rounded">{mfaSecret}</code>
+          <form on:submit={handleEnableMfa} class="space-y-4 max-w-xl pt-2">
+            <div class="flex flex-col sm:flex-row items-center sm:items-start gap-5 p-4 rounded-xl bg-slate-950 border border-slate-800">
+              <div
+                class="w-[212px] h-[212px] p-2 rounded-xl bg-white border border-slate-700 flex items-center justify-center shrink-0"
+                data-testid="sec-mfa-qr-container"
+              >
+                {#if mfaQrSvg}
+                  {@html mfaQrSvg}
+                {:else}
+                  <span class="text-xs text-slate-400">QR Code Unavailable</span>
+                {/if}
+              </div>
+
+              <div class="flex-1 min-w-0 space-y-3 text-xs">
+                <div>
+                  <p class="font-semibold text-white">1. Scan QR Code with Authenticator App</p>
+                  <p class="text-slate-400 mt-0.5">
+                    Open Google Authenticator, Authy, 1Password, or Microsoft Authenticator and scan this QR code.
+                  </p>
+                </div>
+
+                <div class="space-y-1.5">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-slate-300 font-medium">Manual Setup Secret Key:</span>
+                    <button
+                      type="button"
+                      on:click={handleCopyMfaSecret}
+                      class="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 cursor-pointer"
+                    >
+                      {copiedMfaSecret ? '✓ Copied' : 'Copy Secret'}
+                    </button>
+                  </div>
+                  <code class="block select-all break-all font-mono text-indigo-300 bg-slate-900 border border-slate-800 px-2.5 py-1.5 rounded-lg">
+                    {mfaSecret}
+                  </code>
+                </div>
+
+                <details class="text-[11px] text-slate-500">
+                  <summary class="cursor-pointer hover:text-slate-400 select-none">
+                    Show raw otpauth:// URI
+                  </summary>
+                  <div class="mt-1.5 p-2 rounded-lg bg-slate-900/80 border border-slate-800 break-all font-mono text-slate-400 select-all">
+                    {mfaOtpUri}
+                  </div>
+                </details>
+              </div>
             </div>
-            <div class="text-[11px] text-slate-400 break-all font-mono">{mfaOtpUri}</div>
-            <div class="flex items-center gap-2">
-              <input
-                type="text"
-                bind:value={mfaCode}
-                maxlength="6"
-                placeholder="6-digit code"
-                required
-                class="sec-input font-mono"
-              />
-              <button type="submit" class="sec-btn-primary">Verify & Enable MFA</button>
+
+            <div class="space-y-1.5">
+              <label for="sec-mfa-verify-code" class="block text-xs text-slate-300 font-medium">
+                2. Enter 6-Digit Authenticator Verification Code
+              </label>
+              <div class="flex flex-wrap items-center gap-2">
+                <input
+                  id="sec-mfa-verify-code"
+                  type="text"
+                  inputmode="numeric"
+                  bind:value={mfaCode}
+                  maxlength="6"
+                  placeholder="123456"
+                  required
+                  class="sec-input font-mono tracking-widest w-40"
+                />
+                <button type="submit" class="sec-btn-primary">Verify & Enable MFA</button>
+                <button
+                  type="button"
+                  on:click={() => {
+                    mfaSecret = '';
+                    mfaOtpUri = '';
+                    mfaQrSvg = '';
+                    mfaCode = '';
+                  }}
+                  class="sec-btn-secondary"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </form>
         {/if}

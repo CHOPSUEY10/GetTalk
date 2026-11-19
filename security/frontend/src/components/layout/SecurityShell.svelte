@@ -1,29 +1,31 @@
 <script lang="ts">
-  import { authStore } from '../../stores/auth.store.ts';
-  import { streamStore } from '../../stores/stream.store.ts';
-  import { uiStore } from '../../stores/ui.store.ts';
-  import Icon from '../common/Icon.svelte';
-  import SeverityBadge from '../common/SeverityBadge.svelte';
+  import { authStore } from "../../stores/auth.store.ts";
+  import { streamStore } from "../../stores/stream.store.ts";
+  import { uiStore } from "../../stores/ui.store.ts";
+  import Icon from "../common/Icon.svelte";
+  import SeverityBadge from "../common/SeverityBadge.svelte";
 
-  export let currentRoute = '/';
+  export let currentRoute = "/";
   export let navigate: (path: string) => void;
 
   const navItems = [
-    { path: '/', label: 'Overview', icon: 'overview' },
-    { path: '/network', label: 'Network (Firewalld)', icon: 'network' },
-    { path: '/web', label: 'Web Layer (Nginx)', icon: 'web' },
-    { path: '/application', label: 'Application (PM2)', icon: 'application' },
-    { path: '/events', label: 'Security Events', icon: 'events' },
-    { path: '/alerts', label: 'IDS Alerts', icon: 'alerts' },
-    { path: '/rules', label: 'Detection Rules', icon: 'rules' },
-    { path: '/audit-logs', label: 'Audit Logs', icon: 'audit' },
-    { path: '/settings', label: 'Settings & Health', icon: 'settings' },
+    { path: "/", label: "Overview", icon: "overview" },
+    { path: "/network", label: "Network (Firewalld)", icon: "network" },
+    { path: "/web", label: "Web Layer (Nginx)", icon: "web" },
+    { path: "/application", label: "Application (PM2)", icon: "application" },
+    { path: "/events", label: "Security Events", icon: "events" },
+    { path: "/alerts", label: "IDS Alerts", icon: "alerts" },
+    { path: "/rules", label: "Detection Rules", icon: "rules" },
+    { path: "/audit-logs", label: "Audit Logs", icon: "audit" },
+    { path: "/settings", label: "Settings & Health", icon: "settings" },
   ];
 </script>
 
 <div class="min-h-screen flex flex-col md:flex-row bg-slate-950 text-slate-100">
   <!-- Mobile Header -->
-  <header class="md:hidden flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-800">
+  <header
+    class="md:hidden flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-800"
+  >
     <div class="flex items-center gap-2.5">
       <button
         type="button"
@@ -35,25 +37,35 @@
       </button>
       <span class="font-bold text-sm tracking-tight">GetTalk Security IDS</span>
     </div>
-    <SeverityBadge level={$streamStore.status === 'connected' ? 'healthy' : 'degraded'} />
+    <SeverityBadge
+      level={$streamStore.status === "connected" ? "healthy" : "degraded"}
+    />
   </header>
 
   <!-- Sidebar Navigation -->
   <aside
-    class="w-64 shrink-0 bg-slate-900 border-r border-slate-800 flex flex-col justify-between {
-      $uiStore.sidebarOpen ? 'block' : 'hidden md:flex'
-    }"
+    class="w-64 shrink-0 bg-slate-900 border-r border-slate-800 flex flex-col justify-between {$uiStore.sidebarOpen
+      ? 'block'
+      : 'hidden md:flex'}"
     aria-label="Security monitoring navigation"
   >
     <div>
-      <div class="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
+      <div
+        class="px-5 py-4 border-b border-slate-800 flex items-center justify-between"
+      >
         <div class="flex items-center gap-2.5">
-          <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white">
+          <div
+            class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white"
+          >
             <Icon name="shield" size="sm" />
           </div>
           <div>
-            <div class="font-bold text-sm text-white leading-tight">GetTalk Security</div>
-            <div class="text-[11px] text-slate-400">Telemetry & Passive IDS</div>
+            <div class="font-bold text-sm text-white leading-tight">
+              GetTalk Security
+            </div>
+            <div class="text-[11px] text-slate-400">
+              Telemetry & Passive IDS
+            </div>
           </div>
         </div>
       </div>
@@ -70,7 +82,7 @@
             class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors cursor-pointer {active
               ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
               : 'text-slate-400 hover:bg-slate-800/70 hover:text-slate-200'}"
-            aria-current={active ? 'page' : undefined}
+            aria-current={active ? "page" : undefined}
           >
             <Icon name={item.icon} size="sm" />
             <span>{item.label}</span>
@@ -81,9 +93,9 @@
 
     <div class="p-4 border-t border-slate-800 space-y-3">
       <div class="flex items-center justify-between text-xs">
-        <span class="text-slate-400">SSE Telemetry Stream</span>
         <span
-          class="inline-flex items-center gap-1.5 font-medium {$streamStore.status === 'connected'
+          class="inline-flex items-center gap-1.5 font-medium {$streamStore.status ===
+          'connected'
             ? 'text-emerald-400'
             : 'text-amber-400'}"
         >
@@ -97,10 +109,16 @@
       </div>
 
       {#if $authStore.user}
-        <div class="flex items-center justify-between pt-2 border-t border-slate-800/80">
+        <div
+          class="flex items-center justify-between pt-2 border-t border-slate-800/80"
+        >
           <div class="min-w-0">
-            <div class="text-xs font-semibold text-slate-200 truncate">{$authStore.user.username}</div>
-            <div class="text-[11px] text-indigo-400 uppercase font-mono">{$authStore.user.role}</div>
+            <div class="text-xs font-semibold text-slate-200 truncate">
+              {$authStore.user.username}
+            </div>
+            <div class="text-[11px] text-indigo-400 uppercase font-mono">
+              {$authStore.user.role}
+            </div>
           </div>
           <button
             type="button"
@@ -145,4 +163,3 @@
     </main>
   </div>
 </div>
-

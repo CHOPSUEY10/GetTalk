@@ -11,6 +11,7 @@ import {
   validateRetentionInput,
   validateRuleInput,
 } from '../src/lib/validators.ts';
+import { generateQrCodeMatrix, generateQrCodeSvg } from '../src/lib/qrcode.ts';
 import { buildQueryString, getCsrfToken, setCsrfToken } from '../src/services/api/client.ts';
 
 test('Error normalization maps HTTP status codes and redacts SQL/internal leaks', () => {
@@ -116,4 +117,26 @@ test('API client query string builder and CSRF token state work as expected', ()
   const qs = buildQueryString({ limit: 20, offset: 0, source: 'nginx', empty: '' });
   assert.equal(qs, '?limit=20&offset=0&source=nginx');
 });
+
+test('Local TOTP QR Code generator produces standards-compliant SVG for otpauth:// URIs', () => {
+  const otpUri =
+    'otpauth://totp/GetTalkSecurity:requiemstand90@gmail.com?secret=TH6G6VHRVEESBZ6HRNQNXPCVY7ERHLKF&issuer=GetTalkSecurity&algorithm=SHA1&digits=6&period=30';
+
+  const matrix = generateQrCodeMatrix(otpUri);
+  assert.ok(Array.isArray(matrix));
+  assert.ok(matrix.length >= 21);
+  assert.equal(matrix.length, matrix[0].length);
+
+  const svg = generateQrCodeSvg(otpUri, {
+    size: 196,
+    title: 'GetTalk Security TOTP MFA QR Code',
+  });
+  assert.ok(svg.startsWith('<svg '));
+  assert.ok(svg.includes('width="196"'));
+  assert.ok(svg.includes('GetTalk Security TOTP MFA QR Code'));
+  assert.ok(svg.includes('<path d="M'));
+
+  assert.throws(() => generateQrCodeMatrix(''), /non-empty string/);
+});
+
 

@@ -3,6 +3,7 @@
   import { authStore } from "../../stores/auth.store.js";
   import { userStore } from "../../stores/user.store.js";
   import Icon from "../common/Icon.svelte";
+  import { generateQrCodeSvg } from "../../services/crypto/safety-number.js";
   import {
     validatePasswordChangeInput,
     validatePasscodeInput,
@@ -30,6 +31,8 @@
   let mfaCode = "";
   let setupSecret = "";
   let otpauthUri = "";
+  let mfaQrSvg = "";
+  let copiedMfaSecret = false;
   let recoveryCodes = [];
   let showRegenerateForm = false;
   let regeneratePassword = "";
@@ -52,6 +55,18 @@
     0;
   $: securityChangeNotifications =
     $userStore?.privacySettings?.securityChangeNotifications ?? true;
+  $: if (otpauthUri) {
+    try {
+      mfaQrSvg = generateQrCodeSvg(otpauthUri, {
+        size: 196,
+        title: "Kode QR TOTP MFA GetTalk",
+      });
+    } catch {
+      mfaQrSvg = "";
+    }
+  } else {
+    mfaQrSvg = "";
+  }
 
   onMount(async () => {
     try {
@@ -153,6 +168,7 @@
       remainingRecoveryCodes = res.remainingRecoveryCodesCount ?? recoveryCodes.length;
       setupSecret = "";
       otpauthUri = "";
+      mfaQrSvg = "";
       mfaCode = "";
       mfaMessage = "MFA berhasil diaktifkan. Simpan kode pemulihan sekali pakai Anda di tempat aman.";
     } catch (err) {
@@ -504,25 +520,74 @@
         </button>
       </form>
     {:else if !mfaEnabled && setupSecret}
-      <form class="mt-5 space-y-4 max-w-md" on:submit|preventDefault={handleConfirmEnableMfa}>
-        <div class="rounded-xl bg-slate-50 dark:bg-slate-800/70 p-4 border border-slate-200 dark:border-slate-700">
-          <p class="text-xs font-semibold text-slate-700 dark:text-slate-200">
-            Kunci Rahasia TOTP (Masukkan ke Google Authenticator / Authy / 1Password)
-          </p>
-          <p class="mt-2 select-all break-all font-mono text-sm font-bold text-indigo-600 dark:text-indigo-400">
-            {setupSecret}
-          </p>
-          <p class="mt-2 break-all font-mono text-[11px] text-slate-500 dark:text-slate-400">
-            {otpauthUri}
-          </p>
+      <form class="mt-5 space-y-4 max-w-xl" on:submit|preventDefault={handleConfirmEnableMfa}>
+        <div class="flex flex-col sm:flex-row items-center sm:items-start gap-5 rounded-xl bg-slate-50 dark:bg-slate-800/70 p-4 border border-slate-200 dark:border-slate-700">
+          <div
+            class="w-[212px] h-[212px] p-2 rounded-xl bg-white border border-slate-200 dark:border-slate-700 shadow-xs flex items-center justify-center shrink-0"
+            data-testid="mfa-qr-container"
+          >
+            {#if mfaQrSvg}
+              {@html mfaQrSvg}
+            {:else}
+              <span class="text-xs text-slate-400">QR tidak tersedia</span>
+            {/if}
+          </div>
+
+          <div class="flex-1 min-w-0 space-y-3">
+            <div>
+              <p class="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                1. Pindai Kode QR dengan Aplikasi Autentikator
+              </p>
+              <p class="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                Gunakan Google Authenticator, Authy, 1Password, atau Microsoft Authenticator.
+              </p>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  Kunci Rahasia TOTP (Input Manual):
+                </span>
+                <button
+                  type="button"
+                  on:click={async () => {
+                    try {
+                      await navigator.clipboard?.writeText(setupSecret);
+                      copiedMfaSecret = true;
+                      setTimeout(() => {
+                        copiedMfaSecret = false;
+                      }, 2000);
+                    } catch {
+                      copiedMfaSecret = false;
+                    }
+                  }}
+                  class="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                >
+                  {copiedMfaSecret ? "✓ Tersalin" : "Salin Kunci"}
+                </button>
+              </div>
+              <p class="mt-1.5 select-all break-all font-mono text-sm font-bold text-indigo-600 dark:text-indigo-400 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                {setupSecret}
+              </p>
+            </div>
+
+            <details class="text-[11px] text-slate-500 dark:text-slate-400">
+              <summary class="cursor-pointer hover:text-slate-700 dark:hover:text-slate-300 select-none">
+                Tampilkan URI otpauth://
+              </summary>
+              <p class="mt-1.5 break-all font-mono text-[11px] text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 p-2 rounded-lg border border-slate-200 dark:border-slate-700 select-all">
+                {otpauthUri}
+              </p>
+            </details>
+          </div>
         </div>
 
-        <div>
+        <div class="max-w-md">
           <label
             for="mfa-enable-code"
             class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5"
           >
-            Kode Verifikasi 6-Digit dari Aplikasi Autentikator
+            2. Kode Verifikasi 6-Digit dari Aplikasi Autentikator
           </label>
           <input
             id="mfa-enable-code"
@@ -549,6 +614,7 @@
             on:click={() => {
               setupSecret = "";
               otpauthUri = "";
+              mfaQrSvg = "";
               mfaCode = "";
             }}
             class="rounded-xl border border-slate-300 dark:border-slate-700 px-3.5 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 cursor-pointer"
