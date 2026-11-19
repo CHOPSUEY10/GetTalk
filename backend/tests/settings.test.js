@@ -22,6 +22,7 @@ import { generateTotp } from '../src/utils/mfa.js';
 
 let server;
 let baseUrl;
+let dbAvailable = true;
 
 const ts = Date.now();
 const USER_A = {
@@ -66,6 +67,12 @@ async function loginAndGetCookie(email, password, headers = {}) {
 }
 
 before(async () => {
+  try {
+    await query('SELECT 1');
+  } catch {
+    dbAvailable = false;
+  }
+
   await flushRateLimitKeys();
   server = http.createServer(app);
   await new Promise((resolve) => {
@@ -75,6 +82,8 @@ before(async () => {
       resolve();
     });
   });
+
+  if (!dbAvailable) return;
 
   const regA = await fetch(`${baseUrl}/api/auth/register`, {
     method: 'POST',
@@ -104,16 +113,22 @@ before(async () => {
 });
 
 after(async () => {
-  if (userAId || userBId) {
-    await query(`DELETE FROM users WHERE id = ANY($1::uuid[])`, [[userAId, userBId].filter(Boolean)]);
+  try {
+    if (dbAvailable && (userAId || userBId)) {
+      await query(`DELETE FROM users WHERE id = ANY($1::uuid[])`, [[userAId, userBId].filter(Boolean)]);
+    }
+  } finally {
+    await flushRateLimitKeys();
+    await closeRedis();
+    if (server) {
+      await new Promise((resolve) => server.close(resolve));
+    }
   }
-  await flushRateLimitKeys();
-  await closeRedis();
-  await new Promise((resolve) => server.close(resolve));
 });
 
 describe('1. Profile & Account Settings — PATCH /api/users/me/profile', () => {
-  test('updates nickname, bio, and username and reflects in GET /api/users/me', async () => {
+  test('updates nickname, bio, and username and reflects in GET /api/users/me', async (t) => {
+    if (!dbAvailable) return t.skip('PostgreSQL is not reachable');
     const newUsername = `alice_updated_${ts}`;
     const patchRes = await fetch(`${baseUrl}/api/users/me/profile`, {
       method: 'PATCH',
@@ -144,7 +159,8 @@ describe('1. Profile & Account Settings — PATCH /api/users/me/profile', () => 
     assert.equal(meBody.user.bio, 'Enkripsi end-to-end selalu aktif.');
   });
 
-  test('rejects duplicate username with 409 CONFLICT and invalid nickname length with 400', async () => {
+  test('rejects duplicate username with 409 CONFLICT and invalid nickname length with 400', async (t) => {
+    if (!dbAvailable) return t.skip('PostgreSQL is not reachable');
     const conflictRes = await fetch(`${baseUrl}/api/users/me/profile`, {
       method: 'PATCH',
       headers: {
@@ -168,7 +184,8 @@ describe('1. Profile & Account Settings — PATCH /api/users/me/profile', () => 
 });
 
 describe('2. Email Change OTP Flow — /api/auth/email/change-request & /verify', () => {
-  test('verifies currentPassword, dispatches 6-digit OTP, updates email, and logs security_event', async () => {
+  test('verifies currentPassword, dispatches 6-digit OTP, updates email, and logs security_event', async (t) => {
+    if (!dbAvailable) return t.skip('PostgreSQL is not reachable');
     await flushRateLimitKeys();
     clearLastSentEmail();
 
@@ -226,7 +243,8 @@ describe('2. Email Change OTP Flow — /api/auth/email/change-request & /verify'
 });
 
 describe('3. Active Sessions & Change Password — /api/auth/sessions & /api/auth/password', () => {
-  test('lists active sessions with pagination and revokes other sessions on password change', async () => {
+  test('lists active sessions with pagination and revokes other sessions on password change', async (t) => {
+    if (!dbAvailable) return t.skip('PostgreSQL is not reachable');
     await flushRateLimitKeys();
 
     // Create a second active session for Alice on another device
@@ -281,7 +299,8 @@ describe('3. Active Sessions & Change Password — /api/auth/sessions & /api/aut
     assert.equal(eventsRes.rowCount, 1);
   });
 
-  test('revokes specific session and terminates all other sessions via DELETE /api/auth/sessions', async () => {
+  test('revokes specific session and terminates all other sessions via DELETE /api/auth/sessions', async (t) => {
+    if (!dbAvailable) return t.skip('PostgreSQL is not reachable');
     await flushRateLimitKeys();
 
     const extraCookie1 = await loginAndGetCookie(USER_A.email, USER_A.password);
@@ -324,7 +343,8 @@ describe('3. Active Sessions & Change Password — /api/auth/sessions & /api/aut
 });
 
 describe('4. MFA Recovery Codes Regeneration — POST /api/auth/mfa/recovery-codes/regenerate', () => {
-  test('enables MFA, returns recoveryCodesRemaining, and regenerates 10 new recovery codes', async () => {
+  test('enables MFA, returns recoveryCodesRemaining, and regenerates 10 new recovery codes', async (t) => {
+    if (!dbAvailable) return t.skip('PostgreSQL is not reachable');
     await flushRateLimitKeys();
 
     const setupRes = await fetch(`${baseUrl}/api/auth/mfa/setup`, {
@@ -389,7 +409,8 @@ describe('4. MFA Recovery Codes Regeneration — POST /api/auth/mfa/recovery-cod
 });
 
 describe('5. Chat Privacy Settings & Blocked Users', () => {
-  test('gets and updates privacy settings and enforces whoCanMessage & reciprocal lastSeenVisibility', async () => {
+  test('gets and updates privacy settings and enforces whoCanMessage & reciprocal lastSeenVisibility', async (t) => {
+    if (!dbAvailable) return t.skip('PostgreSQL is not reachable');
     const getRes = await fetch(`${baseUrl}/api/users/me/privacy`, {
       headers: { Cookie: cookieA },
     });
@@ -444,7 +465,8 @@ describe('5. Chat Privacy Settings & Blocked Users', () => {
     assert.equal(bobProfile.user.lastSeenAt, null);
   });
 
-  test('blocks and unblocks user with paginated list and enforces block on friend requests & chats', async () => {
+  test('blocks and unblocks user with paginated list and enforces block on friend requests & chats', async (t) => {
+    if (!dbAvailable) return t.skip('PostgreSQL is not reachable');
     // Alice blocks Bob
     const blockRes = await fetch(`${baseUrl}/api/users/${userBId}/block`, {
       method: 'POST',
