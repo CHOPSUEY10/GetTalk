@@ -73,6 +73,7 @@ GetTalk/
 │   ├── scripts/            # Skrip migrasi DB telemetri & pemeriksaan permission
 │   └── docs/               # OpenAPI 3.0 spec, DEPLOYMENT.md, & SECURITY_MODEL.md
 │
+├── deploy.sh               # Skrip Bash otomasi build & deploy seluruh modul di VPS
 └── SECURITY.md             # Kebijakan keamanan repositori
 ```
 
@@ -285,13 +286,108 @@ npm test
 
 ---
 
-## Production Deployment
+## Production Deployment (Rocky Linux / RHEL VPS)
 
-1. **Aplikasi Utama (2 Subdomain dengan Nginx Reverse Proxy):**
-   - Gunakan konfigurasi [`infra/nginx/gettalk.conf`](infra/nginx/gettalk.conf) untuk menyajikan hasil build statis frontend (`frontend/dist`) pada subdomain aplikasi dan meneruskan trafik REST API + WebSocket (`/socket.io/`) ke Node.js (`127.0.0.1:3000`).
-   - Pastikan `client_max_body_size 30M` aktif di blok Nginx API agar unggahan lampiran terenkripsi hingga 25 MB tidak ditolak.
-   - Atur `TRUST_PROXY=1`, `COOKIE_SECURE=true`, dan `COOKIE_SAME_SITE=none` pada `backend/.env.production` untuk mendukung sesi lintas subdomain melalui HTTPS.
-2. **Modul Security Telemetry & IDS:**
-   - Gunakan database PostgreSQL terpisah (`gettalk_security`) dan akun layanan *least-privilege* (`gettalk-sec-api` serta `gettalk-sec-collector`).
-   - Unit `systemd` tersedia di [`security/deployments/systemd/`](security/deployments/systemd/) dan konfigurasi reverse proxy tersedia di [`security/deployments/nginx/monitor.gettalk.conf`](security/deployments/nginx/monitor.gettalk.conf).
-   - Panduan lengkap instalasi produksi dan model ancaman dapat dilihat di [`security/docs/DEPLOYMENT.md`](security/docs/DEPLOYMENT.md) dan [`security/docs/SECURITY_MODEL.md`](security/docs/SECURITY_MODEL.md).
+Deployment produksi mencakup 4 komponen utama yang disajikan melalui **Nginx Reverse Proxy**:
+1. **Frontend Aplikasi Chat Utama** (`/var/www/GetTalk/frontend/dist`)
+2. **Backend Aplikasi Chat Utama** (Node.js + Express + Socket.IO pada `127.0.0.1:3000`, dikelola oleh **PM2**)
+3. **Frontend SecAdmin / Security Dashboard** (`/var/www/GetTalk/security/frontend/dist`)
+4. **Backend SecAdmin / Go Telemetry & IDS** (`/opt/gettalk/security/backend/bin/gettalk-telemetry` pada `127.0.0.1:4100`, dikelola oleh **systemd**)
+
+---
+
+### A. Otomasi Build & Deploy Seluruh Komponen (`deploy.sh`)
+
+Repositori menyediakan skrip [`deploy.sh`](deploy.sh) untuk mengotomasi proses build, penyalinan *static assets*, sinkronisasi binary Go, pengaturan *permission* & label **SELinux**, hingga *restart* layanan di VPS (`~/GetTalk`).
+
+```bash
+cd ~/GetTalk
+chmod +x deploy.sh
+
+# 1. Build & deploy cepat (melewati npm install jika node_modules sudah tersedia)
+./deploy.sh
+
+# 2. Build & deploy dengan instalasi ulang dependencies (gunakan jika ada perubahan package.json)
+./deploy.sh --install
+```
+
+> **Catatan Lintas OS (`package-lock.json`):** Apabila terjadi konflik *optional native dependency* (seperti `@tailwindcss/oxide-*`) akibat `package-lock.json` yang dibuat di sistem operasi berbeda, fungsi `install_deps_if_needed` di dalam `deploy.sh` akan otomatis melakukan *clean install* (`rm -rf node_modules package-lock.json && npm install`).
+
+---
+
+### B. Langkah Manual Build & Deploy per Komponen
+
+Jika Anda ingin mem-build atau memperbarui salah satu komponen secara terpisah di VPS:
+
+#### 1. Frontend Aplikasi Utama (`frontend/`)
+```bash
+cd ~/GetTalk/frontend
+npm install
+npm run build
+
+# Salin hasil build ke direktori root Nginx
+sudo mkdir -p /var/www/GetTalk/frontend/dist
+sudo rm -rf /var/www/GetTalk/frontend/dist/*
+sudo cp -r dist/* /var/www/GetTalk/frontend/dist/
+
+# Atur permission baca untuk Nginx & konteks SELinux
+sudo chmod -R a+rX /var/www/GetTalk/frontend/dist
+sudo chcon -Rt httpd_sys_content_t /var/www/GetTalk/frontend/dist
+```
+
+#### 2. Backend Aplikasi Utama (`backend/`)
+Pastikan `backend/.env.production` telah dikonfigurasi (termasuk `TRUST_PROXY=1`, `COOKIE_SECURE=true`, dan `COOKIE_SAME_SITE=none` untuk skenario 2 subdomain HTTPS):
+```bash
+cd ~/GetTalk/backend
+npm install
+npm run db:generate
+npm run db:deploy
+pm2 restart all
+```
+
+#### 3. Frontend SecAdmin / Security Dashboard (`security/frontend/`)
+```bash
+cd ~/GetTalk/security/frontend
+npm install
+npm run build
+
+# Salin hasil build ke direktori root Nginx untuk subdomain monitor
+sudo mkdir -p /var/www/GetTalk/security/frontend/dist
+sudo rm -rf /var/www/GetTalk/security/frontend/dist/*
+sudo cp -r dist/* /var/www/GetTalk/security/frontend/dist/
+
+# Atur permission baca untuk Nginx & konteks SELinux
+sudo chmod -R a+rX /var/www/GetTalk/security/frontend/dist
+sudo chcon -Rt httpd_sys_content_t /var/www/GetTalk/security/frontend/dist
+```
+
+#### 4. Backend SecAdmin / Go Telemetry & IDS (`security/backend/`)
+Gunakan database PostgreSQL terdedikasi (`gettalk_security`) dan akun sistem non-root (`gettalk-sec-api`):
+```bash
+cd ~/GetTalk/security/backend
+mkdir -p bin
+go build -o bin/gettalk-telemetry.new ./cmd/telemetry
+
+# Pindahkan binary ke /opt/gettalk/security/backend/bin & sinkronkan konfigurasi YAML
+sudo mkdir -p /opt/gettalk/security/backend/bin /opt/gettalk/security/configs
+sudo mv bin/gettalk-telemetry.new /opt/gettalk/security/backend/bin/gettalk-telemetry
+sudo cp -r ~/GetTalk/security/configs/* /opt/gettalk/security/configs/
+
+# Atur kepemilikan, izin eksekusi (755), dan konteks SELinux bin_t (mencegah error systemd 203/EXEC)
+sudo chown gettalk-sec-api:gettalk-sec-api /opt/gettalk/security/backend/bin/gettalk-telemetry
+sudo chmod 755 /opt/gettalk/security/backend/bin/gettalk-telemetry
+sudo chcon -t bin_t /opt/gettalk/security/backend/bin/gettalk-telemetry
+
+# Restart service systemd & verifikasi statusnya
+sudo systemctl restart gettalk-security-api
+sudo systemctl status gettalk-security-api
+```
+
+#### 5. Konfigurasi Nginx Reverse Proxy & SELinux Network Connect
+- Salin template Nginx aplikasi utama [`infra/nginx/gettalk.conf`](infra/nginx/gettalk.conf) (pastikan `client_max_body_size 30M` aktif agar unggahan lampiran E2EE hingga 25 MB tidak ditolak) dan template dashboard keamanan [`security/deployments/nginx/monitor.gettalk.conf`](security/deployments/nginx/monitor.gettalk.conf) ke `/etc/nginx/conf.d/`.
+- Izinkan Nginx melakukan koneksi *reverse proxy* lokal pada SELinux serta muat ulang konfigurasi:
+  ```bash
+  sudo setsebool -P httpd_can_network_connect 1
+  sudo nginx -t && sudo systemctl reload nginx
+  ```
+- Panduan lengkap penyediaan awal database telemetri, unit [`security/deployments/systemd/`](security/deployments/systemd/), dan model keamanan dapat dilihat di [`security/docs/DEPLOYMENT.md`](security/docs/DEPLOYMENT.md) serta [`security/docs/SECURITY_MODEL.md`](security/docs/SECURITY_MODEL.md).
