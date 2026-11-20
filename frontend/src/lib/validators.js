@@ -245,6 +245,65 @@ export function validateEmailChangeVerifyInput(input = {}) {
 }
 
 /**
+ * Validate account registration input before calling POST /api/auth/register.
+ * @param {{ username?: string, email?: string, password?: string, confirmPassword?: string }} [input]
+ */
+export function validateRegistrationInput({
+  username = '',
+  email = '',
+  password = '',
+  confirmPassword = '',
+} = {}) {
+  const trimmedUsername = String(username || '').trim();
+  const trimmedEmail = String(email || '').trim();
+
+  if (!trimmedUsername || !trimmedEmail || !password) {
+    return { valid: false, code: PAGE_ERROR_CODES.REQUIRED_FIELDS };
+  }
+
+  if (!USERNAME_REGEX.test(trimmedUsername)) {
+    return { valid: false, code: PAGE_ERROR_CODES.INVALID_USERNAME_FORMAT };
+  }
+
+  if (!EMAIL_REGEX.test(trimmedEmail)) {
+    return { valid: false, code: PAGE_ERROR_CODES.INVALID_EMAIL_FORMAT };
+  }
+
+  if (typeof password !== 'string' || password.length < 8) {
+    return { valid: false, code: PAGE_ERROR_CODES.PASSWORD_TOO_SHORT };
+  }
+
+  if (password !== confirmPassword) {
+    return { valid: false, code: PAGE_ERROR_CODES.PASSWORD_MISMATCH };
+  }
+
+  return { valid: true, code: null };
+}
+
+/**
+ * Validate email and 6-digit registration OTP input.
+ * @param {{ email?: string, otp?: string, token?: string, code?: string }} [input]
+ */
+export function validateRegistrationOtpInput(input = {}) {
+  const trimmedEmail = String(input?.email || '').trim();
+  if (!trimmedEmail) {
+    return { valid: false, code: PAGE_ERROR_CODES.EMAIL_REQUIRED };
+  }
+
+  if (!EMAIL_REGEX.test(trimmedEmail)) {
+    return { valid: false, code: PAGE_ERROR_CODES.INVALID_EMAIL_FORMAT };
+  }
+
+  const rawOtp = input?.otp ?? input?.token ?? input?.code ?? '';
+  const trimmedOtp = String(rawOtp || '').trim();
+  if (!/^\d{6}$/.test(trimmedOtp)) {
+    return { valid: false, code: PAGE_ERROR_CODES.INVALID_OTP_CODE };
+  }
+
+  return { valid: true, code: null };
+}
+
+/**
  * Validate 4-8 digit local App Passcode Lock PIN.
  */
 export function validatePasscodeInput(passcode, confirmPasscode = undefined) {
@@ -270,5 +329,7 @@ export default {
   validatePasswordChangeInput,
   validateEmailChangeRequestInput,
   validateEmailChangeVerifyInput,
+  validateRegistrationInput,
+  validateRegistrationOtpInput,
   validatePasscodeInput,
 };

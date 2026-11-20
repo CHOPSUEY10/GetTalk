@@ -5,6 +5,7 @@ import http from 'node:http';
 import app from '../app.js';
 import { query } from '../src/config/database.js';
 import { closeRedis } from '../src/config/redis.js';
+import { getLastSentEmail, clearLastSentEmail } from '../src/services/mailer.service.js';
 
 let server;
 let baseUrl;
@@ -49,13 +50,17 @@ function api(path, { method = 'GET', cookie, body } = {}) {
 
 async function registerUser(label) {
   const suffix = `${Date.now()}${Math.floor(Math.random() * 1_000_000)}${label}`;
+  const email = `${suffix}@example.com`;
+  const password = 'correct-horse-battery';
+  clearLastSentEmail();
+
   const res = await fetch(`${baseUrl}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       username: suffix,
-      email: `${suffix}@example.com`,
-      password: 'correct-horse-battery',
+      email,
+      password,
     }),
   });
 
@@ -64,7 +69,26 @@ async function registerUser(label) {
   }
 
   const { user } = await res.json();
-  const [cookie] = res.headers.getSetCookie();
+  const otp = getLastSentEmail()?.token;
+  const verifyRes = await fetch(`${baseUrl}/api/auth/register/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, otp }),
+  });
+  if (verifyRes.status !== 200) {
+    throw new Error(`verify ${label} failed: ${verifyRes.status} ${await verifyRes.text()}`);
+  }
+
+  const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (loginRes.status !== 200) {
+    throw new Error(`login ${label} failed: ${loginRes.status} ${await loginRes.text()}`);
+  }
+
+  const [cookie] = loginRes.headers.getSetCookie();
   return { user, cookie };
 }
 

@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import {
   sendPasswordResetEmail,
   sendEmailChangeOtp,
+  sendRegistrationVerificationOtp,
   getLastSentEmail,
   clearLastSentEmail,
   maskEmail,
@@ -20,6 +21,8 @@ import {
   validateForgotPassword,
   validateVerifyResetOtp,
   validateResetPassword,
+  validateVerifyRegistrationOtp,
+  validateResendRegistrationOtp,
 } from '../src/validators/auth.validator.js';
 
 const backendRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -142,6 +145,22 @@ describe('Mailer Service & OTP Validation', () => {
     assert.equal(sent.purpose, 'email_change');
   });
 
+  test('captures registration verification OTP in test sink', async () => {
+    clearLastSentEmail();
+    const res = await sendRegistrationVerificationOtp({
+      email: 'alice@example.com',
+      username: 'alice',
+      token: '739104',
+    });
+    assert.deepEqual(res, { success: true });
+    const sent = getLastSentEmail();
+    assert.ok(sent);
+    assert.equal(sent.to, 'alice@example.com');
+    assert.equal(sent.token, '739104');
+    assert.equal(sent.purpose, 'registration_verification');
+    assert.match(sent.verifyUrl, /\/#\/register\/verify\?email=alice%40example\.com$/);
+  });
+
   test('rejects missing email or OTP token with 400 VALIDATION_ERROR', async () => {
     await assert.rejects(
       () => sendPasswordResetEmail({ email: '', token: '123456' }),
@@ -181,6 +200,27 @@ describe('Mailer Service & OTP Validation', () => {
     );
     assert.equal(
       validateResetPassword({ email: 'user@example.com', token: '123456', newPassword: 'short' }).valid,
+      false
+    );
+
+    assert.equal(
+      validateVerifyRegistrationOtp({ email: 'user@example.com', otp: '123456' }).valid,
+      true
+    );
+    assert.equal(
+      validateVerifyRegistrationOtp({ email: 'user@example.com', token: '123456' }).valid,
+      true
+    );
+    assert.equal(
+      validateVerifyRegistrationOtp({ email: 'user@example.com', otp: '12345' }).valid,
+      false
+    );
+    assert.equal(
+      validateResendRegistrationOtp({ email: 'user@example.com' }).valid,
+      true
+    );
+    assert.equal(
+      validateResendRegistrationOtp({ email: 'invalid' }).valid,
       false
     );
   });

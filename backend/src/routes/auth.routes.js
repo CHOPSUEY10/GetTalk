@@ -6,6 +6,8 @@ import { authenticate } from '../middleware/auth.middleware.js';
 import { createPaginationValidator } from '../validators/pagination.validator.js';
 import {
   validateRegister,
+  validateVerifyRegistrationOtp,
+  validateResendRegistrationOtp,
   validateLogin,
   validateMfaVerify,
   validateMfaCode,
@@ -23,6 +25,18 @@ import {
 const router = Router();
 
 router.post('/register', rateLimiter({ name: 'auth:register', limit: 10, windowSeconds: 60 }), validate(validateRegister), authController.register);
+router.post(
+  '/register/verify',
+  rateLimiter({ name: 'auth:register:verify', limit: 10, windowSeconds: 900 }),
+  validate(validateVerifyRegistrationOtp),
+  authController.verifyRegistrationOtp
+);
+router.post(
+  '/register/resend',
+  rateLimiter({ name: 'auth:register:resend', limit: 3, windowSeconds: 900 }),
+  validate(validateResendRegistrationOtp),
+  authController.resendRegistrationOtp
+);
 router.post('/login', rateLimiter({ name: 'auth:login', limit: 10, windowSeconds: 60 }), validate(validateLogin), authController.login);
 router.post('/logout', authController.logout);
 router.get('/session', authController.session);

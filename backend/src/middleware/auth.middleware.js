@@ -33,7 +33,7 @@ export async function authenticate(req, res, next) {
     }
 
     const user = await usersRepo.findById(userId);
-    if (!user) {
+    if (!user || !user.email_verified) {
       if (req.session) {
         req.session.destroy(() => {});
       }

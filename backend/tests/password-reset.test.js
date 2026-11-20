@@ -69,7 +69,8 @@ before(async () => {
 
   if (!dbAvailable) return;
 
-  // Register a test user
+  // Register and verify a test user
+  clearLastSentEmail();
   const res = await fetch(`${baseUrl}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -78,6 +79,16 @@ before(async () => {
   assert.equal(res.status, 201, 'Test user registration should succeed');
   const regBody = await res.json();
   testUserId = regBody.user.id;
+
+  const verifyOtp = getLastSentEmail()?.token;
+  assert.ok(verifyOtp, 'Registration OTP should be sent for test user');
+  const verifyRes = await fetch(`${baseUrl}/api/auth/register/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: TEST_USER.email, otp: verifyOtp }),
+  });
+  assert.equal(verifyRes.status, 200, 'Test user email verification should succeed');
+  clearLastSentEmail();
 });
 
 after(async () => {

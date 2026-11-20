@@ -428,6 +428,152 @@ export async function sendEmailChangeOtp({ email, token } = {}) {
 }
 
 /**
+ * Send registration email verification OTP (6 digits) to activate a newly registered account.
+ * @param {{ email: string, username?: string, token: string }} param0
+ */
+export async function sendRegistrationVerificationOtp({ email, username = '', token } = {}) {
+  const recipient = typeof email === 'string' ? email.trim() : '';
+  const otpToken = typeof token === 'string' ? token.trim() : '';
+  const safeUsername = typeof username === 'string'
+    ? username.trim().replace(/[<>&"']/g, '')
+    : '';
+
+  if (!recipient) {
+    throw new AppError('Email penerima wajib diisi', 400, VALIDATION_ERROR);
+  }
+
+  if (!otpToken) {
+    throw new AppError('Kode OTP wajib diisi', 400, VALIDATION_ERROR);
+  }
+
+  const primaryOrigin =
+    Array.isArray(env.corsOrigins) && env.corsOrigins.length > 0
+      ? env.corsOrigins[0]
+      : env.corsOrigin;
+  const verifyUrl = `${primaryOrigin}/#/register/verify?email=${encodeURIComponent(recipient)}`;
+
+  if (env.nodeEnv !== 'production' || isTestRunner()) {
+    lastSentEmail = {
+      to: recipient,
+      verifyUrl,
+      resetUrl: verifyUrl,
+      token: otpToken,
+      purpose: 'registration_verification',
+      sentAt: new Date(),
+    };
+  }
+
+  const isLocalhostOrigin = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(primaryOrigin);
+  const hasSmtpUserEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(env.smtpUser || '');
+  const greeting = safeUsername ? `Halo ${safeUsername},` : 'Halo,';
+
+  try {
+    const info = await sendMailWithFallback({
+      from: env.smtpFrom,
+      to: recipient,
+      ...(hasSmtpUserEmail
+        ? {
+            replyTo: env.smtpUser,
+            envelope: {
+              from: env.smtpUser,
+              to: recipient,
+            },
+          }
+        : {}),
+      subject: `${otpToken} adalah kode verifikasi akun GetTalk Anda`,
+      text: [
+        greeting,
+        '',
+        'Terima kasih telah mendaftar di GetTalk.',
+        `Kode Verifikasi OTP 6-Digit Anda adalah: ${otpToken}`,
+        '',
+        'Masukkan 6 digit angka di atas pada halaman Verifikasi Email untuk mengaktifkan akun Anda sebelum masuk (login).',
+        'Kode ini berlaku selama 15 menit dan hanya dapat digunakan satu kali.',
+        '',
+        'Jika Anda tidak merasa mendaftar akun GetTalk, abaikan email ini.',
+      ].join('\n'),
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">Verifikasi Akun GetTalk</h2>
+          <p style="color: #475569; font-size: 14px; line-height: 1.6;">
+            ${greeting} Terima kasih telah mendaftar di GetTalk. Masukkan kode OTP 6-digit berikut pada halaman verifikasi untuk mengaktifkan akun Anda sebelum masuk:
+          </p>
+          <div style="margin: 24px 0; padding: 18px; background: #f8fafc; border: 2px dashed #6366f1; border-radius: 10px; text-align: center;">
+            <span style="font-size: 32px; font-weight: 800; letter-spacing: 10px; color: #4f46e5; font-family: monospace;">${otpToken}</span>
+          </div>
+          <p style="color: #475569; font-size: 13px; line-height: 1.5;">
+            Kode ini berlaku selama <strong>15 menit</strong> dan hanya dapat digunakan <strong>1 kali</strong>.
+          </p>
+          ${
+            !isLocalhostOrigin
+              ? `<p style="margin-top: 20px;">
+                  <a href="${verifyUrl}" style="display: inline-block; padding: 10px 20px; background: #4f46e5; color: #ffffff; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;">
+                    Buka Halaman Verifikasi Email
+                  </a>
+                </p>`
+              : ''
+          }
+          <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+          <p style="color: #94a3b8; font-size: 12px; margin-bottom: 0;">
+            Jika Anda tidak mendaftar akun GetTalk, abaikan email ini.
+          </p>
+        </div>
+      `,
+    });
+
+    if (info) {
+      const acceptedCount = Array.isArray(info.accepted) ? info.accepted.length : 0;
+      const rejectedCount = Array.isArray(info.rejected) ? info.rejected.length : 0;
+
+      if (acceptedCount === 0 || rejectedCount > 0) {
+        logger.error('SMTP server rejected registration verification OTP recipient', {
+          recipient: maskEmail(recipient),
+          messageId: info.messageId,
+          accepted: acceptedCount,
+          rejected: rejectedCount,
+          response: info.response,
+        });
+        throw new AppError(
+          'Gagal mengirim email kode verifikasi akun',
+          500,
+          INTERNAL_ERROR
+        );
+      }
+
+      logger.info('Registration verification OTP email dispatched', {
+        recipient: maskEmail(recipient),
+        transport: 'smtp',
+        messageId: info.messageId,
+        accepted: acceptedCount,
+        rejected: rejectedCount,
+      });
+    } else {
+      logger.info('Registration verification OTP email dispatched (in-memory test sink)', {
+        recipient: maskEmail(recipient),
+      });
+    }
+  } catch (err) {
+    logger.error('Failed to send registration verification OTP via SMTP', {
+      recipient: maskEmail(recipient),
+      error: err.message,
+      code: err.code,
+    });
+
+    if (err instanceof AppError) {
+      throw err;
+    }
+
+    throw new AppError(
+      'Gagal mengirim email kode verifikasi akun',
+      500,
+      INTERNAL_ERROR
+    );
+  }
+
+  return { success: true };
+}
+
+/**
  * Test helper to retrieve the last sent email.
  */
 export function getLastSentEmail() {

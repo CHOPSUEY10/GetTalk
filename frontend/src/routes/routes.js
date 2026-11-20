@@ -8,11 +8,14 @@ import SecuritySettings from '../pages/SecuritySettings.svelte';
 import Settings from '../pages/Settings.svelte';
 import ForgotPassword from '../pages/ForgotPassword.svelte';
 import VerifyOTP from '../pages/VerifyOTP.svelte';
+import VerifyEmail from '../pages/VerifyEmail.svelte';
 import ResetPassword from '../pages/ResetPassword.svelte';
 
 export const routeConfig = {
     '/login': { type: 'PUBLIC' },
     '/register': { type: 'PUBLIC' },
+    '/register/verify': { type: 'PUBLIC' },
+    '/verify-email': { type: 'PUBLIC' },
     '/forgot-password': { type: 'PUBLIC' },
     '/forgot-password/verify': { type: 'PUBLIC' },
     '/reset-password/verify': { type: 'PUBLIC' },
@@ -29,6 +32,8 @@ export const routeConfig = {
 export const rawRoutes = {
     '/login': Login,
     '/register': Register,
+    '/register/verify': VerifyEmail,
+    '/verify-email': VerifyEmail,
     '/forgot-password': ForgotPassword,
     '/forgot-password/verify': VerifyOTP,
     '/reset-password/verify': VerifyOTP,

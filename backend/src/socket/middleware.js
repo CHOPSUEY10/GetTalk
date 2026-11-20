@@ -30,7 +30,7 @@ export async function socketAuth(socket, next) {
     }
 
     const user = await usersRepo.findById(userId);
-    if (!user) {
+    if (!user || !user.email_verified) {
       const error = new Error('User not found');
       /** @type {any} */ (error).data = { code: UNAUTHORIZED };
       return next(error);

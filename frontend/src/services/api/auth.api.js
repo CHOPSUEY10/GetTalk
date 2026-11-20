@@ -2,7 +2,17 @@ import { api } from './client.js';
 
 /** @param {any} payload */
 export const register = (payload) => {
-  return api.post('/api/auth/register', payload);
+  return api.post('/api/auth/register', payload, { suppressUnauthorizedEvent: true });
+};
+
+/** @param {{ email: string, otp?: string, token?: string, code?: string }} payload */
+export const verifyRegistrationOtp = (payload) => {
+  return api.post('/api/auth/register/verify', payload, { suppressUnauthorizedEvent: true });
+};
+
+/** @param {{ email: string }} payload */
+export const resendRegistrationOtp = (payload) => {
+  return api.post('/api/auth/register/resend', payload, { suppressUnauthorizedEvent: true });
 };
 
 /** @param {any} payload */

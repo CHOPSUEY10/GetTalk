@@ -16,6 +16,7 @@ export const INVALID_RESET_TOKEN = 'INVALID_RESET_TOKEN';
 export const RESET_TOKEN_EXPIRED = 'RESET_TOKEN_EXPIRED';
 export const INVALID_OTP_TOKEN = 'INVALID_OTP_TOKEN';
 export const OTP_TOKEN_EXPIRED = 'OTP_TOKEN_EXPIRED';
+export const EMAIL_NOT_VERIFIED = 'EMAIL_NOT_VERIFIED';
 
 // ── Authorization ──────────────────────────────────────────────
 export const FORBIDDEN = 'FORBIDDEN';

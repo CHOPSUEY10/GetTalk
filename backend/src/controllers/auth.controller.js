@@ -57,10 +57,52 @@ export async function register(req, res, next) {
   try {
     const { username, email, password, nickname, bio } = req.body;
 
-    const user = await authService.register({ username, email, password, nickname, bio });
-    await persistAuthenticatedSession(req, user.id);
-    return res.status(201).json({
-      user,
+    const result = await authService.register({
+      username,
+      email,
+      password,
+      nickname,
+      bio,
+      ipAddress: req.ip || req.socket?.remoteAddress || null,
+    });
+
+    // Do NOT create an authenticated session during registration.
+    // The user must verify their email via 6-digit OTP and then log in.
+    return res.status(201).json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function verifyRegistrationOtp(req, res, next) {
+  try {
+    const { email } = req.body;
+    const otp = req.body.otp ?? req.body.token ?? req.body.code;
+
+    const result = await authService.verifyRegistrationOtp({
+      email: String(email).trim(),
+      otp: String(otp).trim(),
+      ipAddress: req.ip || req.socket?.remoteAddress || null,
+    });
+
+    return res.json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function resendRegistrationOtp(req, res, next) {
+  try {
+    const { email } = req.body;
+
+    const result = await authService.resendRegistrationOtp({
+      email: String(email).trim(),
+      ipAddress: req.ip || req.socket?.remoteAddress || null,
+    });
+
+    return res.json({
+      message: 'Jika email terdaftar dan belum diverifikasi, kode OTP verifikasi baru telah dikirimkan.',
+      expiresInSeconds: result.expiresInSeconds,
     });
   } catch (err) {
     return next(err);

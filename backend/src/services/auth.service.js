@@ -6,7 +6,9 @@ import * as securityEventsRepo from '../repositories/security-events.repository.
 import * as mfaService from './mfa.service.js';
 import * as mailerService from './mailer.service.js';
 import AppError from '../errors/AppError.js';
+import logger from '../utils/logger.js';
 import {
+  EMAIL_NOT_VERIFIED,
   INVALID_CREDENTIALS,
   INVALID_OTP_TOKEN,
   LOGIN_LOCKED,
@@ -20,6 +22,7 @@ import {
 
 const SALT_ROUNDS = 12;
 const EMAIL_OTP_TTL_MS = 15 * 60 * 1000;
+const MAX_EMAIL_VERIFICATION_ATTEMPTS = 5;
 
 function formatAuthUser(user) {
   return {
@@ -28,11 +31,31 @@ function formatAuthUser(user) {
     email: user.email || null,
     nickname: user.nickname || null,
     bio: user.bio || null,
+    emailVerified: Boolean(user.email_verified),
     mfaEnabled: Boolean(user.mfa_enabled),
     remainingRecoveryCodesCount: Array.isArray(user.mfa_recovery_codes)
       ? user.mfa_recovery_codes.length
       : 0,
   };
+}
+
+function generateSixDigitOtp() {
+  return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+}
+
+export function hashRegistrationOtp(email, otp) {
+  return crypto
+    .createHash('sha256')
+    .update(`register-verify:${String(email).trim().toLowerCase()}:${String(otp).trim()}`)
+    .digest('hex');
+}
+
+function safeCompareHex(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a, 'hex');
+  const bufB = Buffer.from(b, 'hex');
+  if (bufA.length === 0 || bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
 }
 
 function hashEmailOtp(email, otp) {
@@ -52,8 +75,15 @@ function loginLockedError(retryAfterSeconds) {
   return error;
 }
 
-export async function register({ username, email, password, nickname = null, bio = null }) {
-  const normalizedEmail = String(email).trim();
+export async function register({
+  username,
+  email,
+  password,
+  nickname = null,
+  bio = null,
+  ipAddress = null,
+}) {
+  const normalizedEmail = String(email).trim().toLowerCase();
   const normalizedUsername = String(username).trim();
 
   const existingEmail = await usersRepo.findByEmail(normalizedEmail);
@@ -67,15 +97,193 @@ export async function register({ username, email, password, nickname = null, bio
   }
 
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+  const otp = generateSixDigitOtp();
+  const tokenHash = hashRegistrationOtp(normalizedEmail, otp);
+  const expiresAt = new Date(Date.now() + EMAIL_OTP_TTL_MS);
+
   const user = await usersRepo.create({
     username: normalizedUsername,
     email: normalizedEmail,
     passwordHash,
     nickname,
     bio,
+    emailVerified: false,
+    emailVerificationTokenHash: tokenHash,
+    emailVerificationExpiresAt: expiresAt,
   });
 
-  return formatAuthUser(user);
+  try {
+    await mailerService.sendRegistrationVerificationOtp({
+      email: normalizedEmail,
+      username: normalizedUsername,
+      token: otp,
+    });
+  } catch (err) {
+    // Roll back unverified user row so the user can retry registration cleanly if SMTP fails
+    await usersRepo.deleteUnverifiedById(user.id).catch(() => {});
+    throw err;
+  }
+
+  await securityEventsRepo.create({
+    userId: user.id,
+    eventType: 'USER_REGISTERED_PENDING_VERIFICATION',
+    ipAddress,
+    metadata: {},
+  });
+
+  logger.info('New account registered pending email OTP verification', {
+    userId: user.id,
+    recipient: mailerService.maskEmail(normalizedEmail),
+  });
+
+  return {
+    user: formatAuthUser(user),
+    verificationRequired: true,
+    expiresInSeconds: Math.floor(EMAIL_OTP_TTL_MS / 1000),
+    message: 'Pendaftaran berhasil. Kode verifikasi OTP 6 digit telah dikirim ke email Anda.',
+  };
+}
+
+/**
+ * Verify a 6-digit registration OTP and activate the user's email address.
+ * Does NOT establish an authenticated session — the user proceeds to login.
+ */
+export async function verifyRegistrationOtp({ email, otp, ipAddress = null }) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const rawOtp = String(otp || '').trim();
+  const candidateHash = hashRegistrationOtp(normalizedEmail, rawOtp);
+
+  const user = await usersRepo.findByEmail(normalizedEmail);
+  if (!user) {
+    safeCompareHex(candidateHash, candidateHash);
+    throw new AppError('Invalid or expired verification code', 400, INVALID_OTP_TOKEN);
+  }
+
+  if (
+    user.email_verified ||
+    !user.email_verification_token_hash ||
+    !user.email_verification_expires_at
+  ) {
+    safeCompareHex(candidateHash, candidateHash);
+    throw new AppError('Invalid or expired verification code', 400, INVALID_OTP_TOKEN);
+  }
+
+  if (new Date(user.email_verification_expires_at) <= new Date()) {
+    throw new AppError('Verification OTP has expired', 400, OTP_TOKEN_EXPIRED);
+  }
+
+  if ((user.email_verification_attempts ?? 0) >= MAX_EMAIL_VERIFICATION_ATTEMPTS) {
+    await usersRepo.setEmailVerificationToken(user.id, {
+      tokenHash: null,
+      expiresAt: null,
+      attempts: user.email_verification_attempts,
+    });
+    throw new AppError(
+      'Too many invalid verification attempts. Please request a new OTP code.',
+      400,
+      OTP_TOKEN_EXPIRED
+    );
+  }
+
+  const matched = safeCompareHex(user.email_verification_token_hash, candidateHash);
+  if (!matched) {
+    const updated = await usersRepo.incrementEmailVerificationAttempts(
+      user.id,
+      MAX_EMAIL_VERIFICATION_ATTEMPTS
+    );
+    if ((updated?.email_verification_attempts ?? 0) >= MAX_EMAIL_VERIFICATION_ATTEMPTS) {
+      throw new AppError(
+        'Too many invalid verification attempts. Please request a new OTP code.',
+        400,
+        OTP_TOKEN_EXPIRED
+      );
+    }
+    throw new AppError('Invalid verification code', 400, INVALID_OTP_TOKEN);
+  }
+
+  const verifiedUser = await usersRepo.confirmEmailVerification(user.id, candidateHash);
+  if (!verifiedUser) {
+    throw new AppError('Invalid or expired verification code', 400, INVALID_OTP_TOKEN);
+  }
+
+  await securityEventsRepo.create({
+    userId: verifiedUser.id,
+    eventType: 'EMAIL_VERIFIED',
+    ipAddress,
+    metadata: {},
+  });
+
+  logger.info('Account email verified via registration OTP', {
+    userId: verifiedUser.id,
+    recipient: mailerService.maskEmail(normalizedEmail),
+  });
+
+  return {
+    verified: true,
+    user: formatAuthUser(verifiedUser),
+    message: 'Email berhasil diverifikasi. Silakan masuk ke akun Anda.',
+  };
+}
+
+/**
+ * Resend a fresh 6-digit registration verification OTP to an unverified account.
+ * Anti user-enumeration: returns a generic success payload even when the email
+ * does not exist or is already verified.
+ */
+export async function resendRegistrationOtp({ email, ipAddress = null }) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const expiresInSeconds = Math.floor(EMAIL_OTP_TTL_MS / 1000);
+  const user = await usersRepo.findByEmail(normalizedEmail);
+
+  if (!user || user.email_verified) {
+    hashRegistrationOtp(normalizedEmail, generateSixDigitOtp());
+    logger.warn('Registration OTP resend requested for unregistered or already verified email', {
+      recipient: mailerService.maskEmail(normalizedEmail),
+    });
+    return { sent: false, expiresInSeconds };
+  }
+
+  const previousToken = {
+    tokenHash: user.email_verification_token_hash || null,
+    expiresAt: user.email_verification_expires_at || null,
+    attempts: user.email_verification_attempts ?? 0,
+  };
+
+  const otp = generateSixDigitOtp();
+  const tokenHash = hashRegistrationOtp(normalizedEmail, otp);
+  const expiresAt = new Date(Date.now() + EMAIL_OTP_TTL_MS);
+
+  await usersRepo.setEmailVerificationToken(user.id, {
+    tokenHash,
+    expiresAt,
+    attempts: 0,
+  });
+
+  try {
+    await mailerService.sendRegistrationVerificationOtp({
+      email: String(user.email).trim(),
+      username: user.username,
+      token: otp,
+    });
+  } catch (err) {
+    // Restore previous active OTP if SMTP dispatch fails
+    await usersRepo.setEmailVerificationToken(user.id, previousToken).catch(() => {});
+    throw err;
+  }
+
+  await securityEventsRepo.create({
+    userId: user.id,
+    eventType: 'EMAIL_VERIFICATION_RESENT',
+    ipAddress,
+    metadata: {},
+  });
+
+  logger.info('Registration verification OTP resent', {
+    userId: user.id,
+    recipient: mailerService.maskEmail(String(user.email).trim()),
+  });
+
+  return { sent: true, expiresInSeconds };
 }
 
 export async function login({ email, password }) {
@@ -102,12 +310,21 @@ export async function login({ email, password }) {
   }
 
   await usersRepo.resetFailedLogins(user.id);
+
+  if (!user.email_verified) {
+    throw new AppError(
+      'Email address has not been verified. Please verify your email with the OTP code before logging in.',
+      403,
+      EMAIL_NOT_VERIFIED
+    );
+  }
+
   return formatAuthUser(user);
 }
 
 export async function getSession(userId) {
   const user = await usersRepo.findById(userId);
-  if (!user) return null;
+  if (!user || !user.email_verified) return null;
   return formatAuthUser(user);
 }
 

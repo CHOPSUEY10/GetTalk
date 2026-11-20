@@ -35,6 +35,49 @@ export function validateRegister(body) {
   };
 }
 
+export function validateVerifyRegistrationOtp(body) {
+  const errors = [];
+
+  if (!body || typeof body !== 'object') {
+    return { valid: false, errors: ['Request body is required'] };
+  }
+
+  const { email } = body;
+  const otp = body.otp ?? body.token ?? body.code;
+
+  if (!email || typeof email !== 'string' || !EMAIL_REGEX.test(email.trim())) {
+    errors.push('A valid email address is required');
+  }
+
+  if (!otp || typeof otp !== 'string' || !/^\d{6}$/.test(otp.trim())) {
+    errors.push('A valid 6-digit verification OTP code is required');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+export function validateResendRegistrationOtp(body) {
+  const errors = [];
+
+  if (!body || typeof body !== 'object') {
+    return { valid: false, errors: ['Request body is required'] };
+  }
+
+  const { email } = body;
+
+  if (!email || typeof email !== 'string' || !EMAIL_REGEX.test(email.trim())) {
+    errors.push('A valid email address is required');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
 export function validateLogin(body) {
   const errors = [];
 

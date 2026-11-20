@@ -107,6 +107,8 @@ export const DEFAULT_USER_MESSAGES = Object.freeze({
     'Kode verifikasi OTP tidak valid. Periksa kembali kode 6 digit Anda.',
   [PAGE_ERROR_CODES.OTP_TOKEN_EXPIRED]:
     'Kode verifikasi OTP telah kedaluwarsa. Silakan minta kode baru.',
+  [PAGE_ERROR_CODES.EMAIL_NOT_VERIFIED]:
+    'Email akun Anda belum diverifikasi. Silakan verifikasi email menggunakan kode OTP sebelum masuk.',
 
   // Authorization
   [PAGE_ERROR_CODES.FORBIDDEN]:
@@ -351,6 +353,16 @@ export const CONTEXT_USER_MESSAGES = Object.freeze({
       'Kode OTP tidak valid. Periksa kembali 6 digit kode Anda.',
     [PAGE_ERROR_CODES.VALIDATION_ERROR]:
       'Kode OTP tidak valid. Periksa kembali 6 digit kode Anda.'
+  }),
+  'register-verify': Object.freeze({
+    [PAGE_ERROR_CODES.BAD_REQUEST]:
+      'Kode verifikasi OTP tidak valid. Periksa kembali 6 digit kode Anda.',
+    [PAGE_ERROR_CODES.VALIDATION_ERROR]:
+      'Kode verifikasi OTP tidak valid. Periksa kembali 6 digit kode Anda.',
+    [PAGE_ERROR_CODES.INVALID_OTP_TOKEN]:
+      'Kode verifikasi OTP tidak valid atau sudah digunakan. Periksa kembali kode 6 digit Anda.',
+    [PAGE_ERROR_CODES.OTP_TOKEN_EXPIRED]:
+      'Kode verifikasi OTP telah kedaluwarsa. Silakan kirim ulang kode OTP baru.'
   }),
   'security-settings': Object.freeze({
     [PAGE_ERROR_CODES.UNAUTHORIZED]:

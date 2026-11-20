@@ -14,6 +14,7 @@ import {
 } from '../src/socket/middleware.js';
 import * as rooms from '../src/socket/rooms.js';
 import { MAX_CONCURRENT_SOCKETS_EXCEEDED } from '../src/errors/error-codes.js';
+import { getLastSentEmail, clearLastSentEmail } from '../src/services/mailer.service.js';
 
 let server;
 let io;
@@ -52,20 +53,24 @@ after(async () => {
 async function registerUser(label) {
   try {
     const redis = await connectRedis();
-    const keys = await redis.keys('ratelimit:auth:register:*');
+    const keys = await redis.keys('ratelimit:auth:*');
     if (keys.length > 0) await redis.del(keys);
   } catch {
     // Redis optional
   }
 
   const suffix = `sock${Date.now()}${Math.floor(Math.random() * 1_000_000)}${label}`;
+  const email = `${suffix}@example.com`;
+  const password = 'correct-horse-battery';
+  clearLastSentEmail();
+
   const res = await fetch(`${baseUrl}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       username: suffix,
-      email: `${suffix}@example.com`,
-      password: 'correct-horse-battery',
+      email,
+      password,
     }),
   });
 
@@ -74,7 +79,26 @@ async function registerUser(label) {
   }
 
   const { user } = await res.json();
-  const [rawCookie] = res.headers.getSetCookie();
+  const otp = getLastSentEmail()?.token;
+  const verifyRes = await fetch(`${baseUrl}/api/auth/register/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, otp }),
+  });
+  if (verifyRes.status !== 200) {
+    throw new Error(`verify ${label} failed: ${verifyRes.status} ${await verifyRes.text()}`);
+  }
+
+  const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (loginRes.status !== 200) {
+    throw new Error(`login ${label} failed: ${loginRes.status} ${await loginRes.text()}`);
+  }
+
+  const [rawCookie] = loginRes.headers.getSetCookie();
   const cookie = rawCookie ? rawCookie.split(';')[0] : '';
   return { user, cookie };
 }

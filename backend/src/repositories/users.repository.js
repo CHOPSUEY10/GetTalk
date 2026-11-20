@@ -48,6 +48,8 @@ export async function findById(id) {
   const result = await query(
     `SELECT id, username, email, nickname, bio, last_seen_at,
             password_hash, mfa_secret, mfa_enabled, mfa_recovery_codes, mfa_last_totp_step,
+            email_verified, email_verified_at,
+            email_verification_token_hash, email_verification_expires_at, email_verification_attempts,
             pending_email, email_change_token_hash, email_change_expires_at,
             created_at, updated_at
      FROM users WHERE id = $1`,
@@ -62,6 +64,8 @@ export async function findByEmail(email) {
     `SELECT id, username, email, nickname, bio, last_seen_at,
             password_hash, failed_login_attempts,
             mfa_secret, mfa_enabled, mfa_recovery_codes, mfa_last_totp_step,
+            email_verified, email_verified_at,
+            email_verification_token_hash, email_verification_expires_at, email_verification_attempts,
             pending_email, email_change_token_hash, email_change_expires_at,
             login_locked_until,
             CASE
@@ -165,20 +169,114 @@ export async function resetFailedLogins(id) {
 
 export async function findByUsername(username) {
   const result = await query(
-    'SELECT id, username, email, nickname, bio, last_seen_at, created_at FROM users WHERE username = $1',
+    'SELECT id, username, email, nickname, bio, last_seen_at, email_verified, created_at FROM users WHERE username = $1',
     [username]
   );
   return result.rows[0] || null;
 }
 
-export async function create({ username, email, passwordHash, nickname = null, bio = null }) {
+export async function create({
+  username,
+  email,
+  passwordHash,
+  nickname = null,
+  bio = null,
+  emailVerified = false,
+  emailVerificationTokenHash = null,
+  emailVerificationExpiresAt = null,
+}) {
   const result = await query(
-    `INSERT INTO users (username, email, password_hash, nickname, bio)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, username, email, nickname, bio, last_seen_at, mfa_enabled, created_at`,
-    [username, email, passwordHash, nickname, bio]
+    `INSERT INTO users (
+       username, email, password_hash, nickname, bio,
+       email_verified, email_verified_at,
+       email_verification_token_hash, email_verification_expires_at, email_verification_attempts
+     )
+     VALUES (
+       $1, $2, $3, $4, $5,
+       $6, CASE WHEN $6 THEN NOW() ELSE NULL END,
+       $7, $8, 0
+     )
+     RETURNING id, username, email, nickname, bio, last_seen_at,
+               email_verified, email_verified_at,
+               mfa_enabled, mfa_recovery_codes, created_at`,
+    [
+      username,
+      email,
+      passwordHash,
+      nickname,
+      bio,
+      Boolean(emailVerified),
+      emailVerificationTokenHash,
+      emailVerificationExpiresAt,
+    ]
   );
   return result.rows[0];
+}
+
+export async function deleteUnverifiedById(userId) {
+  const result = await query(
+    `DELETE FROM users
+     WHERE id = $1 AND email_verified = FALSE`,
+    [userId]
+  );
+  return result.rowCount === 1;
+}
+
+export async function setEmailVerificationToken(
+  userId,
+  { tokenHash, expiresAt, attempts = 0 }
+) {
+  const result = await query(
+    `UPDATE users
+     SET email_verification_token_hash = $2,
+         email_verification_expires_at = $3,
+         email_verification_attempts = $4,
+         updated_at = NOW()
+     WHERE id = $1 AND email_verified = FALSE`,
+    [userId, tokenHash, expiresAt, attempts]
+  );
+  return result.rowCount === 1;
+}
+
+export async function incrementEmailVerificationAttempts(userId, maxAttempts = 5) {
+  const result = await query(
+    `UPDATE users
+     SET email_verification_attempts = email_verification_attempts + 1,
+         email_verification_token_hash = CASE
+           WHEN email_verification_attempts + 1 >= $2 THEN NULL
+           ELSE email_verification_token_hash
+         END,
+         email_verification_expires_at = CASE
+           WHEN email_verification_attempts + 1 >= $2 THEN NULL
+           ELSE email_verification_expires_at
+         END,
+         updated_at = NOW()
+     WHERE id = $1 AND email_verified = FALSE
+     RETURNING email_verification_attempts`,
+    [userId, maxAttempts]
+  );
+  return result.rows[0] || null;
+}
+
+export async function confirmEmailVerification(userId, tokenHash) {
+  const result = await query(
+    `UPDATE users
+     SET email_verified = TRUE,
+         email_verified_at = NOW(),
+         email_verification_token_hash = NULL,
+         email_verification_expires_at = NULL,
+         email_verification_attempts = 0,
+         updated_at = NOW()
+     WHERE id = $1
+       AND email_verified = FALSE
+       AND email_verification_token_hash = $2
+       AND email_verification_expires_at > NOW()
+     RETURNING id, username, email, nickname, bio, last_seen_at,
+               email_verified, email_verified_at,
+               mfa_enabled, mfa_recovery_codes, created_at, updated_at`,
+    [userId, tokenHash]
+  );
+  return result.rows[0] || null;
 }
 
 /**
@@ -204,7 +302,8 @@ export async function search(q, optionsOrLimit = {}) {
   const countRes = await query(
     `SELECT COUNT(*)::int AS total
      FROM users
-     WHERE username ILIKE $1 OR COALESCE(nickname, '') ILIKE $1`,
+     WHERE email_verified = TRUE
+       AND (username ILIKE $1 OR COALESCE(nickname, '') ILIKE $1)`,
     [pattern]
   );
   const total = countRes.rows[0]?.total ?? 0;
@@ -212,7 +311,8 @@ export async function search(q, optionsOrLimit = {}) {
   const result = await query(
     `SELECT id, username, nickname, bio, last_seen_at
      FROM users
-     WHERE username ILIKE $1 OR COALESCE(nickname, '') ILIKE $1
+     WHERE email_verified = TRUE
+       AND (username ILIKE $1 OR COALESCE(nickname, '') ILIKE $1)
      ORDER BY username ASC, id ASC
      LIMIT $2 OFFSET $3`,
     [pattern, limit, offset]
@@ -283,7 +383,7 @@ export async function updateProfile(userId, { username, nickname, bio }) {
     `UPDATE users
      SET ${sets.join(', ')}
      WHERE id = $1
-     RETURNING id, username, email, nickname, bio, last_seen_at, mfa_enabled, mfa_recovery_codes, created_at, updated_at`,
+     RETURNING id, username, email, nickname, bio, last_seen_at, email_verified, email_verified_at, mfa_enabled, mfa_recovery_codes, created_at, updated_at`,
     params
   );
   return result.rows[0] || null;
@@ -306,12 +406,14 @@ export async function confirmEmailChange(userId, newEmail) {
   const result = await query(
     `UPDATE users
      SET email = $2,
+         email_verified = TRUE,
+         email_verified_at = COALESCE(email_verified_at, NOW()),
          pending_email = NULL,
          email_change_token_hash = NULL,
          email_change_expires_at = NULL,
          updated_at = NOW()
      WHERE id = $1
-     RETURNING id, username, email, nickname, bio, last_seen_at, mfa_enabled, mfa_recovery_codes, created_at, updated_at`,
+     RETURNING id, username, email, nickname, bio, last_seen_at, email_verified, email_verified_at, mfa_enabled, mfa_recovery_codes, created_at, updated_at`,
     [userId, newEmail]
   );
   return result.rows[0] || null;

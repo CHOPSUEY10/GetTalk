@@ -45,6 +45,7 @@ export const API_ERROR_CODES = Object.freeze({
   RESET_TOKEN_EXPIRED: 'RESET_TOKEN_EXPIRED',
   INVALID_OTP_TOKEN: 'INVALID_OTP_TOKEN',
   OTP_TOKEN_EXPIRED: 'OTP_TOKEN_EXPIRED',
+  EMAIL_NOT_VERIFIED: 'EMAIL_NOT_VERIFIED',
 
   // Authorization
   FORBIDDEN: 'FORBIDDEN',
@@ -172,6 +173,8 @@ function defaultTechnicalMessage(code, status) {
     case API_ERROR_CODES.SESSION_EXPIRED:
     case API_ERROR_CODES.INVALID_CREDENTIALS:
       return 'Authentication required or failed';
+    case API_ERROR_CODES.EMAIL_NOT_VERIFIED:
+      return 'Email verification required before login';
     case API_ERROR_CODES.FORBIDDEN:
       return 'Access forbidden';
     case API_ERROR_CODES.NOT_FOUND:

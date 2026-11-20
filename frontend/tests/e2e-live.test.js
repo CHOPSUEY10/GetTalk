@@ -30,13 +30,15 @@ function api(path, { method = 'GET', cookie, body } = {}) {
 
 async function registerUser(label) {
   const suffix = `e2e${Date.now()}${Math.floor(Math.random() * 1_000_000)}${label}`;
+  const email = `${suffix}@example.com`;
+  const password = 'correct-horse-battery';
   const res = await fetch(`${baseUrl}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       username: suffix,
-      email: `${suffix}@example.com`,
-      password: 'correct-horse-battery',
+      email,
+      password,
     }),
   });
 
@@ -45,7 +47,28 @@ async function registerUser(label) {
   }
 
   const { user } = await res.json();
-  const [cookie] = res.headers.getSetCookie();
+  // Live E2E runs against an external backend process (separate SMTP sink); mark verified via DB then log in.
+  await query(
+    `UPDATE users
+     SET email_verified = TRUE,
+         email_verified_at = NOW(),
+         email_verification_token_hash = NULL,
+         email_verification_expires_at = NULL
+     WHERE id = $1`,
+    [user.id]
+  );
+
+  const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+
+  if (loginRes.status !== 200) {
+    throw new Error(`login ${label} failed: ${loginRes.status} ${await loginRes.text()}`);
+  }
+
+  const [cookie] = loginRes.headers.getSetCookie();
   return { user, cookie };
 }
 

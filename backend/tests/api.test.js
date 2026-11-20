@@ -6,6 +6,7 @@ import app from '../app.js';
 import { query } from '../src/config/database.js';
 import { closeRedis } from '../src/config/redis.js';
 import { createSecurityHeadersMiddleware } from '../src/middleware/security-headers.middleware.js';
+import { getLastSentEmail, clearLastSentEmail } from '../src/services/mailer.service.js';
 
 let server;
 let baseUrl;
@@ -213,38 +214,111 @@ describe('Authentication API & Validation', () => {
     assert.equal((await res.json()).error.code, 'UNAUTHORIZED');
   });
 
-  test('register → session → login round trip persists to the database', async (t) => {
+  test('POST /api/auth/register/verify fails validation on invalid OTP or email', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/register/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'invalid-email', otp: '12ab' }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.error.code, 'VALIDATION_ERROR');
+  });
+
+  test('POST /api/auth/register/resend fails validation on missing or invalid email', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/register/resend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: '' }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.error.code, 'VALIDATION_ERROR');
+  });
+
+  test('register → email OTP verification → login → session round trip persists to the database', async (t) => {
     if (!dbAvailable) return t.skip('PostgreSQL is not reachable');
     const suffix = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
     const username = `e2e_${suffix}`;
     const email = `e2e_${suffix}@example.com`;
     const password = 'correct-horse-battery';
 
+    clearLastSentEmail();
     const registerRes = await fetch(`${baseUrl}/api/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, email, password }),
     });
     assert.equal(registerRes.status, 201);
-    const { user } = await registerRes.json();
+    const regBody = await registerRes.json();
+    const { user } = regBody;
     assert.equal(user.username, username);
+    assert.equal(user.emailVerified, false);
+    assert.equal(regBody.verificationRequired, true);
     assert.ok(user.id);
 
-    const [cookie] = registerRes.headers.getSetCookie();
+    const registerCookies = registerRes.headers.getSetCookie();
+    const sentEmail = getLastSentEmail();
+    assert.ok(sentEmail?.token, 'Registration must dispatch a 6-digit email verification OTP');
+    assert.match(sentEmail.token, /^\d{6}$/);
 
     try {
-      // The account must exist as a row, with the password stored only as a hash.
-      const { rows } = await query('SELECT password_hash FROM users WHERE id = $1', [user.id]);
+      // The account must exist as an unverified row, with password hashed and OTP stored only as hash.
+      const { rows } = await query(
+        'SELECT password_hash, email_verified, email_verification_token_hash FROM users WHERE id = $1',
+        [user.id]
+      );
       assert.equal(rows.length, 1, 'registered user was not persisted');
       assert.notEqual(rows[0].password_hash, password);
       assert.match(rows[0].password_hash, /^\$2[aby]\$/);
+      assert.equal(rows[0].email_verified, false);
+      assert.ok(rows[0].email_verification_token_hash);
+      assert.notEqual(rows[0].email_verification_token_hash, sentEmail.token);
 
-      // The session written by register must resolve back to the same user.
-      const sessionRes = await fetch(`${baseUrl}/api/auth/session`, {
-        headers: { Cookie: cookie },
+      // Register must NOT produce an authenticated session before email verification.
+      const unverifiedSessionRes = await fetch(`${baseUrl}/api/auth/session`, {
+        headers: registerCookies.length ? { Cookie: registerCookies[0] } : {},
       });
-      assert.equal(sessionRes.status, 200);
-      assert.equal((await sessionRes.json()).user.id, user.id);
+      assert.equal(unverifiedSessionRes.status, 401);
+
+      // Logging in before email verification must be rejected with 403 EMAIL_NOT_VERIFIED.
+      const unverifiedLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      assert.equal(unverifiedLoginRes.status, 403);
+      assert.equal((await unverifiedLoginRes.json()).error.code, 'EMAIL_NOT_VERIFIED');
+
+      // Wrong OTP is rejected.
+      const wrongOtp = sentEmail.token === '000000' ? '999999' : '000000';
+      const badVerifyRes = await fetch(`${baseUrl}/api/auth/register/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otp: wrongOtp }),
+      });
+      assert.equal(badVerifyRes.status, 400);
+      assert.equal((await badVerifyRes.json()).error.code, 'INVALID_OTP_TOKEN');
+
+      // Correct 6-digit OTP verifies the account without auto-logging in.
+      const verifyRes = await fetch(`${baseUrl}/api/auth/register/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otp: sentEmail.token }),
+      });
+      assert.equal(verifyRes.status, 200);
+      const verifyBody = await verifyRes.json();
+      assert.equal(verifyBody.verified, true);
+      assert.equal(verifyBody.user.emailVerified, true);
+
+      // Replaying the same OTP is rejected.
+      const replayRes = await fetch(`${baseUrl}/api/auth/register/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otp: sentEmail.token }),
+      });
+      assert.equal(replayRes.status, 400);
+      assert.equal((await replayRes.json()).error.code, 'INVALID_OTP_TOKEN');
 
       // Wrong password is rejected.
       const badLogin = await fetch(`${baseUrl}/api/auth/login`, {
@@ -283,7 +357,7 @@ describe('Authentication API & Validation', () => {
         [user.id]
       );
 
-      // Correct password logs in.
+      // Correct password logs in after email verification and establishes a valid session.
       const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -291,6 +365,15 @@ describe('Authentication API & Validation', () => {
       });
       assert.equal(loginRes.status, 200);
       assert.equal((await loginRes.json()).user.id, user.id);
+      const [cookie] = loginRes.headers.getSetCookie();
+      assert.ok(cookie, 'Session cookie must be issued upon verified login');
+
+      const sessionRes = await fetch(`${baseUrl}/api/auth/session`, {
+        headers: { Cookie: cookie },
+      });
+      assert.equal(sessionRes.status, 200);
+      assert.equal((await sessionRes.json()).user.id, user.id);
+
       const { rows: loginState } = await query(
         'SELECT failed_login_attempts, login_locked_until FROM users WHERE id = $1',
         [user.id]

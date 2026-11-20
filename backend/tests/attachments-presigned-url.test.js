@@ -5,6 +5,7 @@ import http from 'node:http';
 import app from '../app.js';
 import { query } from '../src/config/database.js';
 import { connectRedis, closeRedis } from '../src/config/redis.js';
+import { getLastSentEmail, clearLastSentEmail } from '../src/services/mailer.service.js';
 import { createToken, verifyToken } from '../src/services/storage/signed-token.js';
 import { createS3Driver } from '../src/services/storage/s3.driver.js';
 import {
@@ -52,25 +53,45 @@ function api(path, { method = 'GET', cookie, body } = {}) {
 async function registerUser(label) {
   try {
     const redis = await connectRedis();
-    const keys = await redis.keys('ratelimit:auth:register:*');
+    const keys = await redis.keys('ratelimit:auth:*');
     if (keys.length > 0) await redis.del(keys);
   } catch {
     // Redis optional
   }
 
   const suffix = `ps${Date.now()}${Math.floor(Math.random() * 1_000_000)}${label}`;
+  const email = `${suffix}@example.com`;
+  const password = 'correct-horse-battery';
+  clearLastSentEmail();
+
   const res = await fetch(`${baseUrl}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       username: suffix,
-      email: `${suffix}@example.com`,
-      password: 'correct-horse-battery',
+      email,
+      password,
     }),
   });
   assert.equal(res.status, 201);
   const { user } = await res.json();
-  const [cookie] = res.headers.getSetCookie();
+
+  const otp = getLastSentEmail()?.token;
+  const verifyRes = await fetch(`${baseUrl}/api/auth/register/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, otp }),
+  });
+  assert.equal(verifyRes.status, 200);
+
+  const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  assert.equal(loginRes.status, 200);
+
+  const [cookie] = loginRes.headers.getSetCookie();
   return { user, cookie };
 }
 

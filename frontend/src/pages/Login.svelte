@@ -2,8 +2,8 @@
     import { onMount } from "svelte";
     import PublicLayout from "../components/layout/PublicLayout.svelte";
     import { authStore } from "../stores/auth.store.js";
-    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../lib/errors/pageerror.js";
-    import { replace } from "svelte-spa-router";
+    import { PAGE_ERROR_CODES, getPageErrorMessage, resolvePageError } from "../lib/errors/pageerror.js";
+    import { push, replace } from "svelte-spa-router";
 
     let email = "";
     let password = "";
@@ -14,18 +14,35 @@
     let submitting = false;
     /** @type {string | null} */
     let localError = null;
+    /** @type {string | null} */
+    let localErrorCode = null;
+    /** @type {string | null} */
+    let infoBanner = null;
 
-    onMount(() => {
-        authStore.clearError?.();
-    });
-
-    function getSafeRedirectTarget() {
-        if (typeof window === "undefined") return "/";
+    function getQueryParams() {
+        if (typeof window === "undefined") return new URLSearchParams();
         const hash = window.location.hash || "";
         const qIndex = hash.indexOf("?");
         const rawQuery =
             qIndex !== -1 ? hash.substring(qIndex + 1) : window.location.search;
-        const params = new URLSearchParams(rawQuery);
+        return new URLSearchParams(rawQuery);
+    }
+
+    onMount(() => {
+        authStore.clearError?.();
+        const params = getQueryParams();
+        const prefilledEmail = params.get("email");
+        if (prefilledEmail) {
+            email = prefilledEmail.trim();
+        }
+        const verifiedFlag = params.get("verified");
+        if (verifiedFlag === "1" || verifiedFlag === "true") {
+            infoBanner = "Email berhasil diverifikasi! Silakan masuk dengan email dan kata sandi Anda.";
+        }
+    });
+
+    function getSafeRedirectTarget() {
+        const params = getQueryParams();
         const redirect = params.get("redirect");
         if (redirect && redirect.startsWith("/") && !redirect.startsWith("//")) {
             return redirect;
@@ -33,13 +50,24 @@
         return "/";
     }
 
+    function goToVerifyEmail() {
+        const trimmedEmail = email.trim();
+        const target = trimmedEmail
+            ? `/register/verify?email=${encodeURIComponent(trimmedEmail)}&from=login`
+            : "/register/verify?from=login";
+        push(target);
+    }
+
     const handleLogin = async () => {
         if (!email.trim() || !password) {
+            localErrorCode = PAGE_ERROR_CODES.LOGIN_REQUIRED_FIELDS;
             localError = getPageErrorMessage(PAGE_ERROR_CODES.LOGIN_REQUIRED_FIELDS, "login");
             return;
         }
 
         localError = null;
+        localErrorCode = null;
+        infoBanner = null;
         submitting = true;
         try {
             const response = await authStore.login({ email: email.trim(), password });
@@ -49,10 +77,12 @@
             }
             replace(getSafeRedirectTarget());
         } catch (err) {
-            localError = getPageErrorMessage(err, {
+            const resolved = resolvePageError(err, {
                 context: "login",
                 fallbackCode: PAGE_ERROR_CODES.INVALID_CREDENTIALS
             });
+            localErrorCode = resolved.code;
+            localError = resolved.userMessage;
         } finally {
             submitting = false;
         }
@@ -60,23 +90,31 @@
 
     const handleMfaVerify = async () => {
         if (!mfaCode.trim() || !mfaChallengeId) {
+            localErrorCode = PAGE_ERROR_CODES.MFA_CODE_REQUIRED;
             localError = getPageErrorMessage(PAGE_ERROR_CODES.MFA_CODE_REQUIRED, "mfa");
             return;
         }
         localError = null;
+        localErrorCode = null;
         submitting = true;
         try {
             await authStore.verifyMfa({ challengeId: mfaChallengeId, code: mfaCode.trim() });
             replace(getSafeRedirectTarget());
         } catch (err) {
-            localError = getPageErrorMessage(err, {
+            const resolved = resolvePageError(err, {
                 context: "mfa",
                 fallbackCode: PAGE_ERROR_CODES.INVALID_MFA_CODE
             });
+            localErrorCode = resolved.code;
+            localError = resolved.userMessage;
         } finally {
             submitting = false;
         }
     };
+
+    $: requiresEmailVerification =
+        localErrorCode === PAGE_ERROR_CODES.EMAIL_NOT_VERIFIED ||
+        $authStore.errorCode === PAGE_ERROR_CODES.EMAIL_NOT_VERIFIED;
 </script>
 
 <PublicLayout>
@@ -92,12 +130,37 @@
             </p>
         </div>
 
+        {#if infoBanner && !mfaChallengeId}
+            <div aria-live="polite" class="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm flex items-start gap-2.5 animate-fadeIn">
+                <svg class="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{infoBanner}</span>
+            </div>
+        {/if}
+
         {#if localError || $authStore.error}
-            <div class="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-start gap-2.5 animate-fadeIn">
+            <div role="alert" class="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-start gap-2.5 animate-fadeIn">
                 <svg class="w-5 h-5 text-rose-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
-                <span>{localError || $authStore.error}</span>
+                <div class="flex-1 space-y-2">
+                    <span>{localError || $authStore.error}</span>
+                    {#if requiresEmailVerification}
+                        <div>
+                            <button
+                                type="button"
+                                on:click={goToVerifyEmail}
+                                class="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-700 hover:text-indigo-900 underline cursor-pointer"
+                            >
+                                <span>Verifikasi Email Sekarang</span>
+                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                                </svg>
+                            </button>
+                        </div>
+                    {/if}
+                </div>
             </div>
         {/if}
 
@@ -217,6 +280,7 @@
                         mfaChallengeId = null;
                         mfaCode = "";
                         localError = null;
+                        localErrorCode = null;
                     }}
                 >
                     Kembali ke login

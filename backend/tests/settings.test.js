@@ -85,6 +85,7 @@ before(async () => {
 
   if (!dbAvailable) return;
 
+  clearLastSentEmail();
   const regA = await fetch(`${baseUrl}/api/auth/register`, {
     method: 'POST',
     headers: {
@@ -94,10 +95,20 @@ before(async () => {
     body: JSON.stringify(USER_A),
   });
   assert.equal(regA.status, 201);
-  cookieA = regA.headers.get('set-cookie')?.split(';')[0];
   const bodyA = await regA.json();
   userAId = bodyA.user.id;
+  const otpA = getLastSentEmail()?.token;
+  const verifyA = await fetch(`${baseUrl}/api/auth/register/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: USER_A.email, otp: otpA }),
+  });
+  assert.equal(verifyA.status, 200);
+  cookieA = await loginAndGetCookie(USER_A.email, USER_A.password, {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0',
+  });
 
+  clearLastSentEmail();
   const regB = await fetch(`${baseUrl}/api/auth/register`, {
     method: 'POST',
     headers: {
@@ -107,9 +118,19 @@ before(async () => {
     body: JSON.stringify(USER_B),
   });
   assert.equal(regB.status, 201);
-  cookieB = regB.headers.get('set-cookie')?.split(';')[0];
   const bodyB = await regB.json();
   userBId = bodyB.user.id;
+  const otpB = getLastSentEmail()?.token;
+  const verifyB = await fetch(`${baseUrl}/api/auth/register/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: USER_B.email, otp: otpB }),
+  });
+  assert.equal(verifyB.status, 200);
+  cookieB = await loginAndGetCookie(USER_B.email, USER_B.password, {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) Firefox/121.0',
+  });
+  clearLastSentEmail();
 });
 
 after(async () => {

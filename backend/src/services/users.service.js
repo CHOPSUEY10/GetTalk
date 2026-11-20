@@ -23,6 +23,7 @@ function formatSelfUser(user, privacySettings = null) {
     nickname: user.nickname || null,
     bio: user.bio || null,
     lastSeenAt: user.last_seen_at || null,
+    emailVerified: Boolean(user.email_verified),
     mfaEnabled: Boolean(user.mfa_enabled),
     remainingRecoveryCodesCount: Array.isArray(user.mfa_recovery_codes)
       ? user.mfa_recovery_codes.length

@@ -2,6 +2,8 @@ import { writable } from 'svelte/store';
 import {
   getSession,
   register as apiRegister,
+  verifyRegistrationOtp as apiVerifyRegistrationOtp,
+  resendRegistrationOtp as apiResendRegistrationOtp,
   login as apiLogin,
   logout as apiLogout,
   verifyMfa as apiVerifyMfa,
@@ -96,7 +98,9 @@ function createAuthStore() {
     },
     /** @param {{ username: string, email: string, password: string }} payload */
     register: async (payload) => {
-      update((state) => ({ ...state, error: null, errorCode: null }));
+      // Never toggle global `loading: true` or set `authenticated: true` on register;
+      // user must verify email via 6-digit OTP and then sign in via /login.
+      update((state) => ({ ...state, loading: false, error: null, errorCode: null }));
       try {
         return await apiRegister(payload);
       } catch (err) {
@@ -110,6 +114,59 @@ function createAuthStore() {
         });
         update((state) => ({
           ...state,
+          loading: false,
+          error: pageErr.userMessage,
+          errorCode: pageErr.code,
+        }));
+        throw normalized;
+      }
+    },
+    /** @param {{ email: string, otp?: string, token?: string, code?: string }} payload */
+    verifyRegistrationOtp: async (payload) => {
+      update((state) => ({ ...state, loading: false, error: null, errorCode: null }));
+      try {
+        const resolvedOtp = String(payload.otp ?? payload.token ?? payload.code ?? '').trim();
+        return await apiVerifyRegistrationOtp({
+          email: String(payload.email || '').trim(),
+          otp: resolvedOtp,
+        });
+      } catch (err) {
+        const normalized = handleApiError(err, {
+          endpoint: '/api/auth/register/verify',
+          method: 'POST',
+        });
+        const pageErr = resolvePageError(normalized, {
+          context: 'register-verify',
+          fallbackCode: PAGE_ERROR_CODES.INVALID_OTP_TOKEN,
+        });
+        update((state) => ({
+          ...state,
+          loading: false,
+          error: pageErr.userMessage,
+          errorCode: pageErr.code,
+        }));
+        throw normalized;
+      }
+    },
+    /** @param {{ email: string }} payload */
+    resendRegistrationOtp: async (payload) => {
+      update((state) => ({ ...state, loading: false, error: null, errorCode: null }));
+      try {
+        return await apiResendRegistrationOtp({
+          email: String(payload.email || '').trim(),
+        });
+      } catch (err) {
+        const normalized = handleApiError(err, {
+          endpoint: '/api/auth/register/resend',
+          method: 'POST',
+        });
+        const pageErr = resolvePageError(normalized, {
+          context: 'register-verify',
+          fallbackCode: PAGE_ERROR_CODES.OTP_SEND_FAILED,
+        });
+        update((state) => ({
+          ...state,
+          loading: false,
           error: pageErr.userMessage,
           errorCode: pageErr.code,
         }));
