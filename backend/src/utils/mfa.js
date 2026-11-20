@@ -8,7 +8,7 @@ import {
 } from 'node:crypto';
 import env from '../config/env.js';
 
-const TOTP_PERIOD_SECONDS = 20;
+const TOTP_PERIOD_SECONDS = 30;
 const TOTP_DIGITS = 6;
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const MFA_ENCRYPTION_KEY = createHash('sha256')
