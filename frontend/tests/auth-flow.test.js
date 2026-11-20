@@ -8,11 +8,12 @@ import assert from 'node:assert/strict';
 import { get } from 'svelte/store';
 
 let forgotPassword;
+let verifyResetOtp;
 let resetPassword;
 let authStore;
 
 before(async () => {
-  ({ forgotPassword, resetPassword } = await import('../src/services/api/auth.api.js'));
+  ({ forgotPassword, verifyResetOtp, resetPassword } = await import('../src/services/api/auth.api.js'));
   ({ authStore } = await import('../src/stores/auth.store.js'));
 });
 
@@ -52,6 +53,73 @@ describe('Frontend Password Reset Flow (6-Digit OTP)', () => {
     assert.ok(fetchCalls[0].url.endsWith('/api/auth/password/forgot'));
     assert.equal(fetchCalls[0].options.method, 'POST');
     assert.deepEqual(JSON.parse(fetchCalls[0].options.body), { email: 'user@example.com' });
+  });
+
+  test('auth.api.verifyResetOtp sends POST to /api/auth/password/verify with 6-digit OTP', async () => {
+    globalThis.fetch = async (url, options) => {
+      fetchCalls.push({ url, options });
+      return new Response(
+        JSON.stringify({
+          valid: true,
+          message: 'Kode OTP valid.',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    };
+
+    const payload = {
+      email: 'user@example.com',
+      token: '482910',
+    };
+
+    const res = await verifyResetOtp(payload);
+    assert.equal(res.valid, true);
+    assert.equal(fetchCalls.length, 1);
+    assert.ok(fetchCalls[0].url.endsWith('/api/auth/password/verify'));
+    assert.equal(fetchCalls[0].options.method, 'POST');
+    assert.deepEqual(JSON.parse(fetchCalls[0].options.body), payload);
+  });
+
+  test('authStore.verifyResetOtp rejects INVALID_RESET_TOKEN at the verify step before reset', async () => {
+    globalThis.fetch = async (url, options) => {
+      fetchCalls.push({ url, options });
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 'INVALID_RESET_TOKEN',
+            message: 'Invalid or expired reset token',
+          },
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    };
+
+    await assert.rejects(
+      async () => {
+        await authStore.verifyResetOtp({
+          email: 'requiemstand90@gmail.com',
+          token: '123456',
+        });
+      },
+      (err) => {
+        assert.equal(err.code, 'INVALID_RESET_TOKEN');
+        return true;
+      }
+    );
+
+    const state = get(authStore);
+    assert.equal(state.loading, false);
+    assert.equal(state.errorCode, 'INVALID_RESET_TOKEN');
+    assert.equal(
+      state.error,
+      'Kode OTP pengaturan ulang kata sandi tidak valid atau telah kedaluwarsa.'
+    );
   });
 
   test('auth.api.resetPassword sends POST to /api/auth/password/reset with 6-digit OTP', async () => {

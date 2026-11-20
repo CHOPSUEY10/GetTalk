@@ -122,6 +122,8 @@
     }
 
     const handleVerify = async () => {
+        if (isVerifying) return;
+
         localError = null;
         infoMessage = null;
 
@@ -140,14 +142,24 @@
         isVerifying = true;
 
         try {
-            // Forward to reset password page with email and 6-digit OTP token
+            // Verify 6-digit OTP against backend BEFORE allowing navigation to /reset-password
+            await authStore.verifyResetOtp({
+                email: email.trim(),
+                token: otpCode,
+            });
+
+            // Forward to reset password page only after OTP is confirmed valid
             const target = `/reset-password?email=${encodeURIComponent(email.trim())}&token=${encodeURIComponent(otpCode)}`;
             push(target);
         } catch (err) {
             localError = getPageErrorMessage(err, {
                 context: "verify-otp",
-                fallbackCode: PAGE_ERROR_CODES.OTP_VERIFY_FAILED
+                fallbackCode: PAGE_ERROR_CODES.INVALID_RESET_TOKEN
             });
+            otpDigits = ["", "", "", "", "", ""];
+            setTimeout(() => {
+                inputRefs[0]?.focus();
+            }, 0);
         } finally {
             isVerifying = false;
         }
@@ -155,6 +167,11 @@
 
     const handleResend = async () => {
         if (countdown > 0 || isResending) return;
+
+        if (!email.trim()) {
+            localError = getPageErrorMessage(PAGE_ERROR_CODES.EMAIL_REQUIRED, "verify-otp");
+            return;
+        }
 
         localError = null;
         infoMessage = null;
@@ -178,12 +195,17 @@
     };
 
     onMount(() => {
-        email = extractEmailFromUrl();
-        startTimer();
-        // Autofocus first input
-        setTimeout(() => {
-            inputRefs[0]?.focus();
-        }, 100);
+        email = extractEmailFromUrl().trim();
+        if (!email) {
+            localError = getPageErrorMessage(PAGE_ERROR_CODES.OTP_TOKEN_MISSING, "verify-otp");
+            countdown = 0;
+        } else {
+            startTimer();
+            // Autofocus first input
+            setTimeout(() => {
+                inputRefs[0]?.focus();
+            }, 100);
+        }
 
         return () => {
             if (timerInterval) clearInterval(timerInterval);

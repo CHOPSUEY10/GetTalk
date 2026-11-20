@@ -17,6 +17,7 @@ import {
   revokeSession as apiRevokeSession,
   revokeOtherSessions as apiRevokeOtherSessions,
   forgotPassword as apiForgotPassword,
+  verifyResetOtp as apiVerifyResetOtp,
   resetPassword as apiResetPassword,
 } from '../services/api/auth.api.js';
 import { publishOwnIdentityKey } from '../services/crypto/identity-trust.js';
@@ -392,6 +393,33 @@ function createAuthStore() {
         const pageErr = resolvePageError(normalized, {
           context: 'forgot-password',
           fallbackCode: PAGE_ERROR_CODES.OTP_SEND_FAILED,
+        });
+        update((state) => ({
+          ...state,
+          loading: false,
+          error: pageErr.userMessage,
+          errorCode: pageErr.code,
+        }));
+        throw normalized;
+      }
+    },
+    /** @param {{ email: string, token: string }} payload */
+    verifyResetOtp: async (payload) => {
+      update((state) => ({ ...state, loading: false, error: null, errorCode: null }));
+      try {
+        const response = await apiVerifyResetOtp({
+          email: payload.email,
+          token: payload.token,
+        });
+        return response;
+      } catch (err) {
+        const normalized = handleApiError(err, {
+          endpoint: '/api/auth/password/verify',
+          method: 'POST',
+        });
+        const pageErr = resolvePageError(normalized, {
+          context: 'verify-otp',
+          fallbackCode: PAGE_ERROR_CODES.INVALID_RESET_TOKEN,
         });
         update((state) => ({
           ...state,

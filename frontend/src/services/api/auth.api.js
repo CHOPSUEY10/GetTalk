@@ -42,6 +42,9 @@ export const changePassword = (payload) =>
 
 export const forgotPassword = (payload) => api.post('/api/auth/password/forgot', payload);
 
+export const verifyResetOtp = (payload) =>
+  api.post('/api/auth/password/verify', payload, { suppressUnauthorizedEvent: true });
+
 export const resetPassword = (payload) => api.post('/api/auth/password/reset', payload);
 
 export const requestEmailChange = (payload) =>
