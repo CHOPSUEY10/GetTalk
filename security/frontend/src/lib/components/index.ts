@@ -3,5 +3,6 @@ export { default as SeverityBadge } from '../../components/common/SeverityBadge.
 export { default as PaginationControls } from '../../components/common/PaginationControls.svelte';
 export { default as TrafficChart } from '../../components/charts/TrafficChart.svelte';
 export { default as HorizontalBarChart } from '../../components/charts/HorizontalBarChart.svelte';
+export { default as MetricTimeSeriesChart } from '../../components/charts/MetricTimeSeriesChart.svelte';
 export { default as SecurityShell } from '../../components/layout/SecurityShell.svelte';
 

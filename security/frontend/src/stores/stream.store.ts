@@ -1,7 +1,13 @@
 import { writable } from 'svelte/store';
-import type { SecurityAlert, StreamMessage, TelemetryEvent } from '../lib/types/telemetry.ts';
+import type {
+  SecurityAlert,
+  StreamMessage,
+  SystemMetric,
+  TelemetryEvent,
+} from '../lib/types/telemetry.ts';
 import streamClient from '../services/sse/stream.client.ts';
 import { alertsStore } from './alerts.store.ts';
+import { applicationStore } from './application.store.ts';
 import { eventsStore } from './events.store.ts';
 import { uiStore } from './ui.store.ts';
 
@@ -33,6 +39,8 @@ function createStreamStore() {
         update((s) => ({ ...s, lastEventAt: msg.timestamp }));
         if (msg.type === 'telemetry_event' && msg.payload) {
           eventsStore.prependRealtimeEvent(msg.payload as TelemetryEvent);
+        } else if (msg.type === 'system_metric' && msg.payload) {
+          applicationStore.appendRealtimeMetric(msg.payload as SystemMetric);
         } else if (msg.type === 'security_alert' && msg.payload) {
           const al = msg.payload as SecurityAlert;
           alertsStore.prependRealtimeAlert(al);

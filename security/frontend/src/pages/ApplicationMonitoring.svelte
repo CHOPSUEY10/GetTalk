@@ -1,37 +1,55 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import MetricTimeSeriesChart from '../components/charts/MetricTimeSeriesChart.svelte';
   import Icon from '../components/common/Icon.svelte';
-  import PaginationControls from '../components/common/PaginationControls.svelte';
   import SeverityBadge from '../components/common/SeverityBadge.svelte';
+  import {
+    APPLICATION_METRIC_DEFINITIONS,
+    buildMetricChartGroups,
+    extractProcessNames,
+    formatMemoryBytes,
+    formatUptimeDuration,
+  } from '../lib/metrics-chart.ts';
   import { applicationStore } from '../stores/application.store.ts';
 
   let metricNameFilter = '';
+  let processNameFilter = '';
+  let selectedRange = 'all';
 
-  function formatMemory(bytes: number): string {
-    if (!bytes || bytes <= 0) return '0 MB';
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
+  const timeRanges = [
+    { id: 'all', label: 'All' },
+    { id: '15m', label: '15m' },
+    { id: '1h', label: '1h' },
+    { id: '6h', label: '6h' },
+    { id: '24h', label: '24h' },
+    { id: '7d', label: '7d' },
+  ];
 
-  function formatUptime(sec: number): string {
-    if (!sec || sec <= 0) return '0s';
-    const hrs = Math.floor(sec / 3600);
-    const mins = Math.floor((sec % 3600) / 60);
-    if (hrs > 24) {
-      return `${Math.floor(hrs / 24)}d ${hrs % 24}h`;
-    }
-    return `${hrs}h ${mins}m`;
-  }
-
-  function loadPage(offset = 0) {
+  function loadMetrics() {
     applicationStore.load({
-      limit: 25,
-      offset,
-      metricName: metricNameFilter || undefined,
+      limit: 100,
+      offset: 0,
+      range: selectedRange === 'all' ? undefined : selectedRange,
     });
   }
 
+  function handleRangeChange(rangeId: string) {
+    selectedRange = rangeId;
+    loadMetrics();
+  }
+
+  $: processNames = extractProcessNames(
+    $applicationStore.metrics,
+    $applicationStore.processes
+  );
+
+  $: chartGroups = buildMetricChartGroups($applicationStore.metrics, {
+    metricNameFilter,
+    processNameFilter,
+  });
+
   onMount(() => {
-    loadPage(0);
+    loadMetrics();
   });
 </script>
 
@@ -43,7 +61,7 @@
         Managed Node.js process health, CPU & memory utilization, restart tracking, and uptime
       </p>
     </div>
-    <button type="button" on:click={() => loadPage(0)} class="sec-btn-secondary">
+    <button type="button" on:click={loadMetrics} class="sec-btn-secondary">
       <Icon name="refresh" size="xs" />
       <span>Refresh</span>
     </button>
@@ -91,11 +109,11 @@
                 <td class="font-mono {proc.cpuPercent > 80 ? 'text-rose-400 font-bold' : ''}">
                   {proc.cpuPercent.toFixed(1)}%
                 </td>
-                <td class="font-mono">{formatMemory(proc.memoryBytes)}</td>
+                <td class="font-mono">{formatMemoryBytes(proc.memoryBytes)}</td>
                 <td class="font-mono {proc.restartCount >= 3 ? 'text-amber-400 font-bold' : ''}">
                   {proc.restartCount}
                 </td>
-                <td class="font-mono text-slate-300">{formatUptime(proc.uptimeSeconds)}</td>
+                <td class="font-mono text-slate-300">{formatUptimeDuration(proc.uptimeSeconds)}</td>
               </tr>
             {/each}
           </tbody>
@@ -104,59 +122,87 @@
     {/if}
   </div>
 
-  <!-- Historical Application Metrics Table -->
-  <div class="sec-card space-y-4">
-    <div class="flex flex-wrap items-center justify-between gap-3">
-      <h2 class="text-sm font-semibold text-white">Recorded Application Metrics History</h2>
-      <div class="flex items-center gap-2">
-        <select
-          bind:value={metricNameFilter}
-          on:change={() => loadPage(0)}
-          aria-label="Filter by metric name"
-          class="sec-input"
-        >
-          <option value="">All Metrics</option>
-          <option value="cpu_percent">CPU Usage (%)</option>
-          <option value="memory_bytes">Memory (Bytes)</option>
-          <option value="memory_percent">Memory (%)</option>
-          <option value="restart_count">Restart Count</option>
-          <option value="uptime_seconds">Uptime (Seconds)</option>
-        </select>
+  <!-- Historical Application Metrics Time-Series Section -->
+  <div class="space-y-4">
+    <div class="sec-card">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-sm font-semibold text-white">Recorded Application Metrics History</h2>
+          <p class="text-xs text-slate-400 mt-0.5">
+            Dedicated time-series charts per metric ({$applicationStore.metrics.length} samples loaded)
+          </p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <!-- Time Range Selector -->
+          <div class="flex items-center gap-1" role="group" aria-label="Time window filter">
+            {#each timeRanges as r (r.id)}
+              <button
+                type="button"
+                on:click={() => handleRangeChange(r.id)}
+                class="px-2.5 py-1.5 rounded-lg text-xs font-medium border cursor-pointer transition-colors {selectedRange ===
+                r.id
+                  ? 'bg-indigo-600 text-white border-indigo-500'
+                  : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'}"
+              >
+                {r.label}
+              </button>
+            {/each}
+          </div>
+
+          <!-- Process Filter -->
+          <select
+            bind:value={processNameFilter}
+            aria-label="Filter by PM2 process"
+            class="sec-input"
+          >
+            <option value="">All Processes</option>
+            {#each processNames as pName (pName)}
+              <option value={pName}>{pName}</option>
+            {/each}
+          </select>
+
+          <!-- Metric Filter -->
+          <select
+            bind:value={metricNameFilter}
+            aria-label="Filter by metric name"
+            class="sec-input"
+          >
+            <option value="">All Metrics ({APPLICATION_METRIC_DEFINITIONS.length} Charts)</option>
+            {#each APPLICATION_METRIC_DEFINITIONS as def (def.metricName)}
+              <option value={def.metricName}>{def.title}</option>
+            {/each}
+          </select>
+        </div>
       </div>
     </div>
 
-    {#if $applicationStore.metrics.length === 0}
-      <div class="py-8 text-center text-xs text-slate-500">No historical PM2 metrics recorded.</div>
-    {:else}
-      <div class="overflow-x-auto">
-        <table class="sec-table">
-          <thead>
-            <tr>
-              <th>Recorded At</th>
-              <th>Process</th>
-              <th>Metric Name</th>
-              <th>Value</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each $applicationStore.metrics as met (met.id)}
-              <tr>
-                <td class="font-mono text-slate-400">{new Date(met.recordedAt).toLocaleString()}</td>
-                <td class="font-mono text-white">{met.labels?.process_name || '-'}</td>
-                <td class="font-mono text-indigo-300">{met.metricName}</td>
-                <td class="font-mono font-semibold">{Number(met.metricValue).toFixed(2)}</td>
-                <td><SeverityBadge level={met.labels?.status || 'online'} /></td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+    {#if $applicationStore.loading && $applicationStore.metrics.length === 0}
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {#each [1, 2, 3, 4] as _}
+          <div class="sec-card h-64 animate-pulse bg-slate-900/60"></div>
+        {/each}
       </div>
-      <PaginationControls
-        pagination={$applicationStore.pagination}
-        onPageChange={(off) => loadPage(off)}
-      />
+    {:else if $applicationStore.metrics.length === 0}
+      <div class="sec-card py-10 text-center text-xs text-slate-500">
+        No historical PM2 metrics recorded in the selected time window.
+      </div>
+    {:else}
+      <div
+        class="grid grid-cols-1 {chartGroups.length > 1 ? 'lg:grid-cols-2' : ''} gap-6"
+      >
+        {#each chartGroups as group, idx (group.metricName)}
+          <div
+            class={chartGroups.length > 1 &&
+            chartGroups.length % 2 === 1 &&
+            idx === chartGroups.length - 1
+              ? 'lg:col-span-2'
+              : ''}
+          >
+            <MetricTimeSeriesChart {group} />
+          </div>
+        {/each}
+      </div>
     {/if}
   </div>
 </div>
-

@@ -12,7 +12,17 @@ import {
   validateRuleInput,
 } from '../src/lib/validators.ts';
 import { generateQrCodeMatrix, generateQrCodeSvg } from '../src/lib/qrcode.ts';
+import {
+  APPLICATION_METRIC_NAMES,
+  buildMetricChartGroups,
+  buildPlottedSeries,
+  extractProcessNames,
+  formatMemoryBytes,
+  formatUptimeDuration,
+} from '../src/lib/metrics-chart.ts';
+import type { SystemMetric } from '../src/lib/types/telemetry.ts';
 import { buildQueryString, getCsrfToken, setCsrfToken } from '../src/services/api/client.ts';
+import { resolveTimeRangeBounds } from '../src/stores/application.store.ts';
 
 test('Error normalization maps HTTP status codes and redacts SQL/internal leaks', () => {
   assert.equal(mapStatusToCode(400), API_ERROR_CODES.VALIDATION_ERROR);
@@ -138,5 +148,105 @@ test('Local TOTP QR Code generator produces standards-compliant SVG for otpauth:
 
   assert.throws(() => generateQrCodeMatrix(''), /non-empty string/);
 });
+
+test('Application metrics time-series grouping creates dedicated charts per metric and plots coordinates', () => {
+  const sampleMetrics: SystemMetric[] = [
+    {
+      id: 'm-1',
+      source: 'pm2',
+      metricName: 'cpu_percent',
+      metricValue: 18.5,
+      labels: { process_name: 'gettalk-api', pm_id: 0, status: 'online' },
+      recordedAt: '2026-11-19T06:00:00Z',
+    },
+    {
+      id: 'm-2',
+      source: 'pm2',
+      metricName: 'cpu_percent',
+      metricValue: 34.2,
+      labels: { process_name: 'gettalk-api', pm_id: 0, status: 'online' },
+      recordedAt: '2026-11-19T06:05:00Z',
+    },
+    {
+      id: 'm-3',
+      source: 'pm2',
+      metricName: 'memory_bytes',
+      metricValue: 64 * 1024 * 1024,
+      labels: { process_name: 'gettalk-api', pm_id: 0, status: 'online' },
+      recordedAt: '2026-11-19T06:05:00Z',
+    },
+    {
+      id: 'm-4',
+      source: 'pm2',
+      metricName: 'memory_percent',
+      metricValue: 6.25,
+      labels: { process_name: 'gettalk-api', pm_id: 0, status: 'online' },
+      recordedAt: '2026-11-19T06:05:00Z',
+    },
+    {
+      id: 'm-5',
+      source: 'pm2',
+      metricName: 'restart_count',
+      metricValue: 2,
+      labels: { process_name: 'gettalk-api', pm_id: 0, status: 'online' },
+      recordedAt: '2026-11-19T06:05:00Z',
+    },
+    {
+      id: 'm-6',
+      source: 'pm2',
+      metricName: 'uptime_seconds',
+      metricValue: 7265,
+      labels: { process_name: 'gettalk-api', pm_id: 0, status: 'online' },
+      recordedAt: '2026-11-19T06:05:00Z',
+    },
+  ];
+
+  // Should build one dedicated chart group for each of the 5 application metrics
+  const groups = buildMetricChartGroups(sampleMetrics);
+  assert.equal(groups.length, APPLICATION_METRIC_NAMES.length);
+  assert.deepEqual(
+    groups.map((g) => g.metricName),
+    APPLICATION_METRIC_NAMES
+  );
+
+  const cpuGroup = groups.find((g) => g.metricName === 'cpu_percent')!;
+  assert.equal(cpuGroup.totalPoints, 2);
+  assert.equal(cpuGroup.minValue, 18.5);
+  assert.equal(cpuGroup.maxValue, 34.2);
+  assert.equal(cpuGroup.latestValue, 34.2);
+  assert.equal(cpuGroup.formatValue(34.2), '34.2%');
+
+  const plotted = buildPlottedSeries(cpuGroup, {
+    width: 760,
+    height: 225,
+    padLeft: 64,
+    padRight: 18,
+    padTop: 18,
+    padBottom: 30,
+  });
+  assert.ok(plotted.axisMax >= 34.2);
+  assert.equal(plotted.plottedSeries.length, 1);
+  assert.equal(plotted.plottedSeries[0].coordinates.length, 2);
+  assert.ok(plotted.plottedSeries[0].polylinePoints.includes(' '));
+  assert.ok(plotted.plottedSeries[0].areaPoints.length > 0);
+
+  // Filtering by metricName returns only that metric's chart group
+  const filteredByMetric = buildMetricChartGroups(sampleMetrics, {
+    metricNameFilter: 'memory_bytes',
+  });
+  assert.equal(filteredByMetric.length, 1);
+  assert.equal(filteredByMetric[0].metricName, 'memory_bytes');
+  assert.equal(filteredByMetric[0].formatValue(64 * 1024 * 1024), '64.0 MB');
+
+  // Process name extraction & formatting helpers
+  assert.deepEqual(extractProcessNames(sampleMetrics), ['gettalk-api']);
+  assert.equal(formatMemoryBytes(0), '0 MB');
+  assert.equal(formatMemoryBytes(50 * 1024 * 1024), '50.0 MB');
+  assert.equal(formatUptimeDuration(7265), '2h 1m');
+
+  const bounds = resolveTimeRangeBounds('1h');
+  assert.ok(bounds.from && bounds.to);
+});
+
 
 
