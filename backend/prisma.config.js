@@ -6,22 +6,54 @@
  * so `prisma migrate` targets the same database as the running app.
  */
 import dotenv from 'dotenv';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, env } from 'prisma/config';
 
 const backendRoot = dirname(fileURLToPath(import.meta.url));
-const environmentName = process.env.NODE_ENV || 'development';
+
+function loadEnvFile(filePath) {
+  if (!existsSync(filePath)) return;
+  try {
+    const parsed = dotenv.parse(readFileSync(filePath, 'utf8'));
+    for (const [key, rawValue] of Object.entries(parsed)) {
+      const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+      if (!value) continue;
+      const existing = process.env[key];
+      if (existing === undefined || existing.trim() === '') {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+    dotenv.config({ path: filePath, quiet: true });
+  }
+}
+
+const explicitNodeEnv = process.env.NODE_ENV?.trim();
+const defaultEnvPath = resolve(backendRoot, '.env');
+const defaultLocalEnvPath = resolve(backendRoot, '.env.local');
+
+if (!explicitNodeEnv) {
+  loadEnvFile(defaultLocalEnvPath);
+  loadEnvFile(defaultEnvPath);
+}
+
+const environmentName =
+  process.env.NODE_ENV?.trim() ||
+  (!existsSync(resolve(backendRoot, '.env.development')) &&
+  existsSync(resolve(backendRoot, '.env.production'))
+    ? 'production'
+    : 'development');
+
 const modeEnvPath = resolve(backendRoot, `.env.${environmentName}`);
 const localEnvPath = resolve(backendRoot, `.env.${environmentName}.local`);
 
 // .local overrides (developer-specific, never committed) take precedence.
-if (existsSync(localEnvPath)) dotenv.config({ path: localEnvPath, quiet: true });
-dotenv.config({
-  path: existsSync(modeEnvPath) ? modeEnvPath : resolve(backendRoot, '.env'),
-  quiet: true,
-});
+loadEnvFile(localEnvPath);
+loadEnvFile(modeEnvPath);
+loadEnvFile(defaultLocalEnvPath);
+loadEnvFile(defaultEnvPath);
 
 export default defineConfig({
   schema: 'prisma/schema.prisma',

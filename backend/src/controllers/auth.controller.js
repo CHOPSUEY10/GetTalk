@@ -408,6 +408,28 @@ export async function forgotPassword(req, res, next) {
 }
 
 /**
+ * POST /api/auth/password/verify
+ */
+export async function verifyResetOtp(req, res, next) {
+  try {
+    const { email } = req.body;
+    const token = req.body.token ?? req.body.otp ?? req.body.code;
+
+    await passwordResetService.verifyResetOtp({
+      email: email.trim(),
+      token: String(token).trim(),
+    });
+
+    return res.json({
+      valid: true,
+      message: 'Kode OTP valid.',
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+/**
  * POST /api/auth/password/reset
  */
 export async function resetPassword(req, res, next) {

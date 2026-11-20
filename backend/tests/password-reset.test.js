@@ -398,3 +398,45 @@ describe('Password Reset — POST /api/auth/password/reset', () => {
     assert.equal(body.error.code, 'VALIDATION_ERROR');
   });
 });
+
+describe('Password Reset — POST /api/auth/password/verify', () => {
+  test('rejects verify request with missing or malformed 6-digit OTP', async () => {
+    await flushRateLimitKeys();
+    const res = await fetch(`${baseUrl}/api/auth/password/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: TEST_USER.email,
+        token: '12ab',
+      }),
+    });
+
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.error.code, 'VALIDATION_ERROR');
+  });
+
+  test('verifies a valid 6-digit OTP without consuming it prematurely', async (t) => {
+    if (!dbAvailable) return t.skip('PostgreSQL is not reachable');
+    await flushRateLimitKeys();
+    clearLastSentEmail();
+
+    const forgotRes = await fetch(`${baseUrl}/api/auth/password/forgot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: TEST_USER.email }),
+    });
+    assert.equal(forgotRes.status, 200);
+    const token = getLastSentEmail()?.token;
+    assert.ok(token);
+
+    const verifyRes = await fetch(`${baseUrl}/api/auth/password/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: TEST_USER.email, token }),
+    });
+    assert.equal(verifyRes.status, 200);
+    const verifyBody = await verifyRes.json();
+    assert.equal(verifyBody.valid, true);
+  });
+});

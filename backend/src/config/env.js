@@ -1,20 +1,124 @@
 import dotenv from 'dotenv';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Resolve from this module so loading does not depend on the process cwd.
 const backendRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const defaultEnvPath = resolve(backendRoot, '.env');
-const environmentName = process.env.NODE_ENV || 'development';
-const modeEnvPath = resolve(backendRoot, `.env.${environmentName}`);
-const localEnvPath = resolve(backendRoot, `.env.${environmentName}.local`);
-const envPath = existsSync(modeEnvPath) ? modeEnvPath : defaultEnvPath;
 
-// .local overrides (developer-specific, never committed) take precedence,
-// same order as prisma.config.js. dotenv never overwrites an existing key.
-if (existsSync(localEnvPath)) dotenv.config({ path: localEnvPath });
-dotenv.config({ path: envPath });
+const SMTP_ENV_KEYS = [
+  'SMTP_HOST',
+  'SMTP_PORT',
+  'SMTP_SECURE',
+  'SMTP_USER',
+  'SMTP_PASS',
+  'SMTP_FROM',
+];
+
+/**
+ * Load variables from an env file into `process.env`.
+ * Unlike default `dotenv.config()`, this also populates keys that currently
+ * exist in `process.env` as an empty/whitespace-only string `""` (e.g. cached
+ * by PM2 from an initial `.env.example` template before credentials were set).
+ *
+ * @param {string} filePath
+ * @param {{ onlyKeys?: string[] }} [options]
+ */
+function loadEnvFile(filePath, { onlyKeys = null } = {}) {
+  if (!existsSync(filePath)) return;
+  try {
+    const parsed = dotenv.parse(readFileSync(filePath, 'utf8'));
+    for (const [key, rawValue] of Object.entries(parsed)) {
+      if (onlyKeys && !onlyKeys.includes(key)) continue;
+      const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+      if (!value) continue;
+      const existing = process.env[key];
+      if (existing === undefined || existing.trim() === '') {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+    // Fallback to standard dotenv if read/parse encounters an issue
+    if (!onlyKeys) {
+      dotenv.config({ path: filePath });
+    }
+  }
+}
+
+function stripOuterQuotes(value) {
+  if (!value || typeof value !== 'string') return '';
+  return value.trim().replace(/^["']+|["']+$/g, '').trim();
+}
+
+function normalizeSmtpFrom(rawSmtpFrom, smtpUser, smtpHost) {
+  const cleanedFrom = stripOuterQuotes(rawSmtpFrom);
+  const cleanedUser = stripOuterQuotes(smtpUser);
+  const cleanedHost = stripOuterQuotes(smtpHost).toLowerCase();
+  const isUserEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanedUser);
+
+  if (!cleanedFrom) {
+    return isUserEmail
+      ? `GetTalk Security <${cleanedUser}>`
+      : 'GetTalk Security <no-reply@gettalk.local>';
+  }
+
+  if (isUserEmail) {
+    const hasPlaceholderDomain = /@(gettalk\.app|gettalk\.local)\b/i.test(cleanedFrom);
+    const isGmailHost = cleanedHost.includes('gmail.com');
+    const containsSmtpUser = cleanedFrom.toLowerCase().includes(cleanedUser.toLowerCase());
+
+    if (hasPlaceholderDomain || (isGmailHost && !containsSmtpUser)) {
+      const nameMatch = cleanedFrom.match(/^([^<]+)</);
+      const displayName = stripOuterQuotes(nameMatch ? nameMatch[1] : '') || 'GetTalk Security';
+      return `${displayName} <${cleanedUser}>`;
+    }
+  }
+
+  return cleanedFrom;
+}
+
+const explicitNodeEnv = process.env.NODE_ENV?.trim();
+const defaultEnvPath = resolve(backendRoot, '.env');
+const defaultLocalEnvPath = resolve(backendRoot, '.env.local');
+
+// If NODE_ENV was not explicitly set in the shell (e.g. `pm2 start server.js`),
+// check `.env.local` / `.env` first, and prefer `.env.production` if
+// `.env.development` does not exist.
+if (!explicitNodeEnv) {
+  loadEnvFile(defaultLocalEnvPath);
+  loadEnvFile(defaultEnvPath);
+}
+
+const resolvedMode =
+  process.env.NODE_ENV?.trim() ||
+  (!existsSync(resolve(backendRoot, '.env.development')) &&
+  existsSync(resolve(backendRoot, '.env.production'))
+    ? 'production'
+    : 'development');
+
+const modeEnvPath = resolve(backendRoot, `.env.${resolvedMode}`);
+const localEnvPath = resolve(backendRoot, `.env.${resolvedMode}.local`);
+
+// .local overrides (developer-specific, never committed) take precedence.
+loadEnvFile(localEnvPath);
+loadEnvFile(modeEnvPath);
+loadEnvFile(defaultLocalEnvPath);
+loadEnvFile(defaultEnvPath);
+
+// Ensure SMTP credentials are not missed if configured in `.env.production` or
+// `.env.development` while the other file still has blank template placeholders.
+if (!process.env.SMTP_USER?.trim() || !process.env.SMTP_PASS?.trim()) {
+  for (const candidate of [
+    resolve(backendRoot, '.env.production.local'),
+    resolve(backendRoot, '.env.production'),
+    resolve(backendRoot, '.env.development.local'),
+    resolve(backendRoot, '.env.development'),
+    defaultLocalEnvPath,
+    defaultEnvPath,
+  ]) {
+    loadEnvFile(candidate, { onlyKeys: SMTP_ENV_KEYS });
+  }
+}
 
 const allowedEnvironments = [
   'development',
@@ -127,16 +231,16 @@ function validateEnvironment() {
   const storage = storageConfig(sessionSecret);
 
   // SMTP configuration for transactional emails (OTP / Password Reset)
-  const smtpHost = process.env.SMTP_HOST?.trim() || '';
+  const smtpHost = stripOuterQuotes(process.env.SMTP_HOST);
   const smtpPort = positiveIntegerEnv('SMTP_PORT', 587);
-  const smtpSecure = process.env.SMTP_SECURE === 'true' || smtpPort === 465;
-  const smtpUser = process.env.SMTP_USER?.trim() || '';
-  // Strip spaces in case a 16-char Google App Password is pasted with spaces
-  const smtpPass = process.env.SMTP_PASS ? process.env.SMTP_PASS.replace(/\s+/g, '') : '';
-  const smtpFrom =
-    process.env.SMTP_FROM?.trim() ||
-    smtpUser ||
-    'GetTalk Security <no-reply@gettalk.local>';
+  const smtpSecure =
+    stripOuterQuotes(process.env.SMTP_SECURE).toLowerCase() === 'true' || smtpPort === 465;
+  const smtpUser = stripOuterQuotes(process.env.SMTP_USER);
+  // Strip spaces & surrounding quotes in case a 16-char Google App Password is pasted with spaces
+  const smtpPass = process.env.SMTP_PASS
+    ? stripOuterQuotes(process.env.SMTP_PASS).replace(/\s+/g, '')
+    : '';
+  const smtpFrom = normalizeSmtpFrom(process.env.SMTP_FROM, smtpUser, smtpHost);
 
   // Reverse-proxy (Nginx) trust (1 hop by default in production)
   const rawTrustProxy = process.env.TRUST_PROXY?.trim();

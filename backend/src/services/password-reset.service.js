@@ -17,7 +17,7 @@ import * as usersRepo from '../repositories/users.repository.js';
 import * as resetRepo from '../repositories/password-reset.repository.js';
 import * as sessionsRepo from '../repositories/sessions.repository.js';
 import * as securityEventsRepo from '../repositories/security-events.repository.js';
-import { sendPasswordResetEmail } from './mailer.service.js';
+import { sendPasswordResetEmail, maskEmail } from './mailer.service.js';
 import AppError from '../errors/AppError.js';
 import {
   INVALID_RESET_TOKEN,
@@ -79,12 +79,15 @@ function safeCompare(a, b) {
  * @returns {Promise<{ sent: boolean }>}
  */
 export async function requestReset(email, { ipAddress = null } = {}) {
-  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedEmail = String(email).trim().toLowerCase();
   const user = await usersRepo.findByEmail(normalizedEmail);
 
   if (!user) {
     // Perform a dummy hash so execution time remains similar when email is not found
     hashToken(generateOtpToken());
+    logger.warn('Password reset OTP requested for unregistered email; skipping email send', {
+      recipient: maskEmail(normalizedEmail),
+    });
     return { sent: false };
   }
 
@@ -93,21 +96,31 @@ export async function requestReset(email, { ipAddress = null } = {}) {
   const tokenHash = hashToken(rawToken);
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MS);
 
-  // Invalidate any previous unused tokens for this user
-  await resetRepo.invalidateAllForUser(user.id);
-
-  // Store only the SHA-256 hash
-  await resetRepo.create({
+  // Store only the SHA-256 hash first; only invalidate older tokens once SMTP delivery succeeds
+  const createdToken = await resetRepo.create({
     userId: user.id,
     tokenHash,
     expiresAt,
   });
 
-  // Dispatch the 6-digit OTP via mailer service
-  await sendPasswordResetEmail({
-    email: user.email,
-    token: rawToken,
-  });
+  try {
+    // Dispatch the 6-digit OTP via mailer service
+    await sendPasswordResetEmail({
+      email: String(user.email).trim(),
+      token: rawToken,
+    });
+  } catch (err) {
+    // Roll back the unsent token so any previously delivered active OTP remains usable
+    if (createdToken?.id) {
+      await resetRepo.deleteById(createdToken.id).catch(() => {});
+    }
+    throw err;
+  }
+
+  // Invalidate any older unused tokens for this user now that the new OTP was dispatched
+  if (createdToken?.id) {
+    await resetRepo.invalidateAllExcept(user.id, createdToken.id);
+  }
 
   // Audit log (never stores raw token or hash)
   await securityEventsRepo.create({
@@ -116,9 +129,50 @@ export async function requestReset(email, { ipAddress = null } = {}) {
     ipAddress,
   });
 
-  logger.info('Password reset token created', { userId: user.id });
+  logger.info('Password reset token created and dispatched', {
+    userId: user.id,
+    recipient: maskEmail(String(user.email).trim()),
+  });
 
   return { sent: true };
+}
+
+/**
+ * Verify a 6-digit password reset OTP token without consuming it yet
+ * (used by POST /api/auth/password/verify at the /forgot-password/verify step).
+ *
+ * @param {{ email: string, token: string }} params
+ * @returns {Promise<{ valid: true }>}
+ */
+export async function verifyResetOtp({ email, token }) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const rawOtp = String(token || '').trim();
+  const submittedHash = hashToken(rawOtp);
+
+  const user = await usersRepo.findByEmail(normalizedEmail);
+  if (!user) {
+    safeCompare(submittedHash, submittedHash);
+    throw new AppError('Invalid or expired reset token', 400, INVALID_RESET_TOKEN);
+  }
+
+  const activeTokens = await resetRepo.findActiveByUserId(user.id);
+  if (!activeTokens || activeTokens.length === 0) {
+    safeCompare(submittedHash, submittedHash);
+    throw new AppError('Invalid or expired reset token', 400, INVALID_RESET_TOKEN);
+  }
+
+  let matchedRecord = null;
+  for (const record of activeTokens) {
+    if (safeCompare(submittedHash, record.token_hash)) {
+      matchedRecord = record;
+    }
+  }
+
+  if (!matchedRecord) {
+    throw new AppError('Invalid or expired reset token', 400, INVALID_RESET_TOKEN);
+  }
+
+  return { valid: true };
 }
 
 /**

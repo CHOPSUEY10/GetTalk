@@ -142,6 +142,30 @@ export function validateForgotPassword(body) {
   };
 }
 
+export function validateVerifyResetOtp(body) {
+  const errors = [];
+
+  if (!body || typeof body !== 'object') {
+    return { valid: false, errors: ['Request body is required'] };
+  }
+
+  const { email } = body;
+  const token = body.token ?? body.otp ?? body.code;
+
+  if (!email || typeof email !== 'string' || !EMAIL_REGEX.test(email.trim())) {
+    errors.push('A valid email address is required');
+  }
+
+  if (!token || typeof token !== 'string' || !/^\d{6}$/.test(token.trim())) {
+    errors.push('A valid 6-digit OTP token is required');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
 export function validateResetPassword(body) {
   const errors = [];
 

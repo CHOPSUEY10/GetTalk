@@ -57,6 +57,7 @@ export async function findById(id) {
 }
 
 export async function findByEmail(email) {
+  const normalized = typeof email === 'string' ? email.trim() : '';
   const result = await query(
     `SELECT id, username, email, nickname, bio, last_seen_at,
             password_hash, failed_login_attempts,
@@ -69,8 +70,8 @@ export async function findByEmail(email) {
               ELSE 0
             END AS login_lock_remaining_seconds,
             created_at, updated_at
-     FROM users WHERE LOWER(email) = LOWER($1)`,
-    [email]
+     FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM($1))`,
+    [normalized]
   );
   return result.rows[0] || null;
 }

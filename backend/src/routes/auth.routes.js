@@ -12,6 +12,7 @@ import {
   validateMfaSetup,
   validateMfaDisable,
   validateForgotPassword,
+  validateVerifyResetOtp,
   validateResetPassword,
   validateChangePassword,
   validateEmailChangeRequest,
@@ -76,6 +77,12 @@ router.post(
   rateLimiter({ name: 'auth:password:forgot', limit: 3, windowSeconds: 900 }),
   validate(validateForgotPassword),
   authController.forgotPassword
+);
+router.post(
+  '/password/verify',
+  rateLimiter({ name: 'auth:password:verify', limit: 10, windowSeconds: 900 }),
+  validate(validateVerifyResetOtp),
+  authController.verifyResetOtp
 );
 router.post(
   '/password/reset',

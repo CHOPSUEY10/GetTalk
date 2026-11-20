@@ -83,6 +83,29 @@ export async function invalidateAllForUser(userId) {
 }
 
 /**
+ * Invalidate all unused tokens for a user except the specified newly created token ID.
+ *
+ * @param {string} userId
+ * @param {string} keepId
+ */
+export async function invalidateAllExcept(userId, keepId) {
+  await query(
+    `UPDATE password_reset_tokens SET used = TRUE
+     WHERE user_id = $1 AND id <> $2 AND used = FALSE`,
+    [userId, keepId]
+  );
+}
+
+/**
+ * Delete a specific token record by ID (used to roll back an unsent token if SMTP dispatch fails).
+ *
+ * @param {string} id
+ */
+export async function deleteById(id) {
+  await query(`DELETE FROM password_reset_tokens WHERE id = $1`, [id]);
+}
+
+/**
  * Delete expired tokens (housekeeping).
  */
 export async function deleteExpired() {

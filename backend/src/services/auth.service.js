@@ -53,18 +53,27 @@ function loginLockedError(retryAfterSeconds) {
 }
 
 export async function register({ username, email, password, nickname = null, bio = null }) {
-  const existingEmail = await usersRepo.findByEmail(email);
+  const normalizedEmail = String(email).trim();
+  const normalizedUsername = String(username).trim();
+
+  const existingEmail = await usersRepo.findByEmail(normalizedEmail);
   if (existingEmail) {
     throw new AppError('Email is already registered', 409, USER_ALREADY_EXISTS);
   }
 
-  const existingUsername = await usersRepo.findByUsername(username);
+  const existingUsername = await usersRepo.findByUsername(normalizedUsername);
   if (existingUsername) {
     throw new AppError('Username is already taken', 409, USER_ALREADY_EXISTS);
   }
 
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-  const user = await usersRepo.create({ username, email, passwordHash, nickname, bio });
+  const user = await usersRepo.create({
+    username: normalizedUsername,
+    email: normalizedEmail,
+    passwordHash,
+    nickname,
+    bio,
+  });
 
   return formatAuthUser(user);
 }
@@ -74,7 +83,7 @@ export async function login({ email, password }) {
     throw new AppError('Email and password are required', 400, VALIDATION_ERROR);
   }
 
-  const user = await usersRepo.findByEmail(email);
+  const user = await usersRepo.findByEmail(String(email).trim());
   if (!user) {
     throw new AppError('Invalid email or password', 401, INVALID_CREDENTIALS);
   }
