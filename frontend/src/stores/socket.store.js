@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import { socket, joinConversation as apiJoin, leaveConversation as apiLeave } from '../services/socket/client.js';
 import { friendsStore } from './friends.store.js';
+import { conversationsStore } from './conversations.store.js';
 import { uiStore } from './ui.store.js';
 import { API_ERROR_CODES, handleApiError } from '../lib/errors/apierror.js';
 import { PAGE_ERROR_CODES, getPageErrorMessage } from '../lib/errors/pageerror.js';
@@ -48,9 +49,10 @@ function createSocketStore() {
       errorMessage: null
     }));
 
-    // Register real-time listeners globally so friends and notifications
-    // update instantly without requiring a page reload (Issue a)
+    // Register real-time listeners globally so friends, conversations, and notifications
+    // update instantly without requiring a page reload
     friendsStore.initSocketListeners();
+    conversationsStore.initSocketListeners();
     friendsStore.loadAll();
   });
 

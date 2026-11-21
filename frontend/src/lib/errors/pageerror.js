@@ -18,6 +18,7 @@ export const PAGE_ERROR_CODES = Object.freeze({
   MESSAGE_LOAD_FAILED: 'MESSAGE_LOAD_FAILED',
   CONVERSATION_LOAD_FAILED: 'CONVERSATION_LOAD_FAILED',
   CONVERSATION_CREATE_FAILED: 'CONVERSATION_CREATE_FAILED',
+  CONVERSATION_CLEAR_FAILED: 'CONVERSATION_CLEAR_FAILED',
   FRIENDS_LOAD_FAILED: 'FRIENDS_LOAD_FAILED',
   FRIEND_REQUEST_FAILED: 'FRIEND_REQUEST_FAILED',
   FRIEND_ACCEPT_FAILED: 'FRIEND_ACCEPT_FAILED',
@@ -207,6 +208,8 @@ export const DEFAULT_USER_MESSAGES = Object.freeze({
     'Daftar percakapan belum dapat dimuat. Silakan coba lagi.',
   [PAGE_ERROR_CODES.CONVERSATION_CREATE_FAILED]:
     'Percakapan belum dapat dibuka. Silakan coba lagi.',
+  [PAGE_ERROR_CODES.CONVERSATION_CLEAR_FAILED]:
+    'Percakapan dan seluruh pesan belum dapat dihapus. Silakan coba lagi.',
   [PAGE_ERROR_CODES.FRIENDS_LOAD_FAILED]:
     'Daftar teman belum dapat dimuat. Silakan coba lagi.',
   [PAGE_ERROR_CODES.FRIEND_REQUEST_FAILED]:
@@ -459,6 +462,16 @@ export const CONTEXT_USER_MESSAGES = Object.freeze({
       'Anda hanya dapat menghapus pesan milik Anda sendiri.',
     [PAGE_ERROR_CODES.NOT_FOUND]:
       'Pesan yang ingin dihapus tidak ditemukan.'
+  }),
+  'clear-conversation': Object.freeze({
+    [PAGE_ERROR_CODES.FORBIDDEN]:
+      'Anda tidak memiliki izin untuk menghapus pesan pada percakapan ini.',
+    [PAGE_ERROR_CODES.NOT_CONVERSATION_MEMBER]:
+      'Anda bukan anggota dari percakapan ini.',
+    [PAGE_ERROR_CODES.NOT_FOUND]:
+      'Percakapan tidak ditemukan atau sudah dihapus.',
+    [PAGE_ERROR_CODES.CONVERSATION_NOT_FOUND]:
+      'Percakapan tidak ditemukan atau sudah dihapus.'
   }),
   attachment: Object.freeze({
     [PAGE_ERROR_CODES.ENCRYPTION_FAILED]:

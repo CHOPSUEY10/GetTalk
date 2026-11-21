@@ -1,4 +1,5 @@
 import * as messagesService from '../services/messages.service.js';
+import * as convRepo from '../repositories/conversations.repository.js';
 import * as events from '../socket/events.js';
 import * as rooms from '../socket/rooms.js';
 import { parsePaginationQuery } from '../utils/pagination.js';
@@ -30,6 +31,19 @@ export async function create(req, res, next) {
     const io = req.app.get('io');
     if (io) {
       io.to(rooms.conversationRoom(conversationId)).emit(events.MESSAGE_NEW, { message });
+
+      // Notify every member's personal room so hidden conversations reappear in their sidebar.
+      const members = await convRepo.getMembers(conversationId);
+      if (members.length > 0) {
+        let userEmitter = io;
+        for (const member of members) {
+          userEmitter = userEmitter.to(rooms.userRoom(member.id));
+        }
+        userEmitter.emit(events.CONVERSATION_UPDATED, {
+          conversationId,
+          lastMessageAt: message.createdAt || new Date().toISOString(),
+        });
+      }
     }
 
     return res.status(201).json({ message });

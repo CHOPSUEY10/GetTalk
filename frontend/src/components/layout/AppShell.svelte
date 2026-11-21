@@ -9,6 +9,7 @@
     import { PAGE_ERROR_CODES, getPageErrorMessage } from "../../lib/errors/pageerror.js";
     import { replace } from "svelte-spa-router";
     import Icon from "../common/Icon.svelte";
+    import ClearConversationDialog from "../chat/ClearConversationDialog.svelte";
 
     // Reactive safety check for authentication
     $: if (!$authStore.loading && !$authStore.authenticated) {
@@ -27,6 +28,17 @@
         currentPath = resolveHashPath();
     };
 
+    /** @type {{ id: string, peerName: string } | null} */
+    let conversationToClear = null;
+    /** @type {string | null} */
+    let clearDialogError = null;
+    let lastHandledClearedKey = "";
+
+    $: isClearingTarget = Boolean(
+        conversationToClear?.id &&
+            $conversationsStore.clearingByConversation?.[conversationToClear.id]
+    );
+
     $: isSocketQuotaExceeded =
         $socketStore.error === PAGE_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED ||
         $socketStore.errorCode === PAGE_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED;
@@ -37,11 +49,101 @@
 
     $: conversations = $conversationsStore.conversations || [];
 
+    // Synchronize active chat view if a conversation is cleared remotely (peer or another session)
+    $: {
+        const ev = $conversationsStore.lastClearedEvent;
+        const evKey = ev ? `${ev.conversationId}:${ev.clearedAt}:${ev.scope}` : "";
+        if (ev && !ev.isLocal && evKey !== lastHandledClearedKey) {
+            lastHandledClearedKey = evKey;
+            conversationsStore.acknowledgeClearedEvent();
+            const isViewingClearedChat = currentPath === `/chat/${ev.conversationId}`;
+            if (isViewingClearedChat) {
+                socketStore.leaveRoom(ev.conversationId);
+                replace("/");
+            }
+            if (conversationToClear?.id === ev.conversationId) {
+                conversationToClear = null;
+                clearDialogError = null;
+            }
+            const clearedByPeer = Boolean(ev.clearedBy && ev.clearedBy !== $authStore.user?.id);
+            if (clearedByPeer && ev.scope === "everyone") {
+                uiStore.notify({
+                    type: "info",
+                    message: isViewingClearedChat
+                        ? "Lawan bicara telah menghapus seluruh pesan dalam percakapan ini."
+                        : "Salah satu percakapan telah dihapus oleh lawan bicara."
+                });
+            } else if (isViewingClearedChat) {
+                uiStore.notify({
+                    type: "info",
+                    message: "Percakapan ini telah dihapus dari sesi lain."
+                });
+            }
+        }
+    }
+
+    /**
+     * @param {any} conv
+     * @param {string} peerName
+     */
+    const promptClearConversation = (conv, peerName) => {
+        if (!conv?.id) return;
+        clearDialogError = null;
+        conversationToClear = {
+            id: conv.id,
+            peerName: peerName || "Lawan Bicara"
+        };
+    };
+
+    const cancelClearConversation = () => {
+        if (isClearingTarget) return;
+        conversationToClear = null;
+        clearDialogError = null;
+    };
+
+    /** @param {CustomEvent<{ scope: 'me' | 'everyone' }>} event */
+    const confirmClearConversation = async (event) => {
+        if (!conversationToClear?.id || isClearingTarget) return;
+        const target = conversationToClear;
+        const scope = event?.detail?.scope === "everyone" ? "everyone" : "me";
+        clearDialogError = null;
+
+        try {
+            await conversationsStore.clearConversation(target.id, { scope });
+
+            if (currentPath === `/chat/${target.id}`) {
+                socketStore.leaveRoom(target.id);
+                replace("/");
+            }
+
+            conversationToClear = null;
+            uiStore.setSidebarOpen(false);
+            uiStore.notify({
+                type: "success",
+                message:
+                    scope === "everyone"
+                        ? `Seluruh pesan dan percakapan dengan ${target.peerName} telah dihapus untuk kedua belah pihak.`
+                        : `Percakapan dan seluruh pesan dengan ${target.peerName} telah dihapus dari daftar Anda.`
+            });
+        } catch (err) {
+            const msg = getPageErrorMessage(err, {
+                context: "clear-conversation",
+                fallbackCode: PAGE_ERROR_CODES.CONVERSATION_CLEAR_FAILED
+            });
+            clearDialogError = msg;
+            uiStore.notify({
+                type: "error",
+                message: msg
+            });
+        }
+    };
+
     onMount(() => {
         syncCurrentPath();
         if ($authStore.authenticated) {
             userStore.loadProfile().catch(() => {});
             conversationsStore.loadConversations().catch(() => {});
+            conversationsStore.initSocketListeners();
             if (!$friendsStore.friends?.length && !$friendsStore.loading) {
                 friendsStore.loadAll().catch(() => {});
                 friendsStore.initSocketListeners?.();
@@ -298,29 +400,50 @@
                             {#each conversations as conv (conv.id)}
                                 {@const isCurrentChat = currentPath === `/chat/${conv.id}`}
                                 {@const peerName = conv.peer?.nickname || conv.peer?.username || conv.name || "Ruang Obrolan"}
-                                <a
-                                    href="#/chat/{conv.id}"
-                                    on:click={() => uiStore.setSidebarOpen(false)}
-                                    class="flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs transition-all no-underline {isCurrentChat
+                                {@const isClearing = Boolean($conversationsStore.clearingByConversation?.[conv.id])}
+                                {@const lastActivity = conv.lastMessageAt || conv.updated_at}
+                                <div
+                                    class="group flex items-center gap-1 rounded-xl transition-all {isCurrentChat
                                         ? 'bg-indigo-50 text-indigo-900 font-semibold border border-indigo-200/70'
                                         : 'text-slate-700 hover:bg-slate-100'}"
-                                    aria-current={isCurrentChat ? "page" : undefined}
                                 >
-                                    <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white font-bold flex items-center justify-center text-[11px] uppercase shrink-0 shadow-xs">
-                                        {peerName.slice(0, 2)}
-                                    </div>
-                                    <div class="min-w-0 flex-1">
-                                        <div class="flex items-center justify-between gap-1">
-                                            <span class="truncate font-semibold text-slate-900">{peerName}</span>
-                                            <Icon name="lock" size="xs" className="text-emerald-600 shrink-0" />
+                                    <a
+                                        href="#/chat/{conv.id}"
+                                        on:click={() => uiStore.setSidebarOpen(false)}
+                                        class="flex items-center gap-2.5 flex-1 min-w-0 px-2.5 py-2 text-xs no-underline"
+                                        aria-current={isCurrentChat ? "page" : undefined}
+                                    >
+                                        <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white font-bold flex items-center justify-center text-[11px] uppercase shrink-0 shadow-xs">
+                                            {peerName.slice(0, 2)}
                                         </div>
-                                        <p class="text-[11px] text-slate-500 truncate mt-0.5">
-                                            {conv.updated_at
-                                                ? `Aktif ${new Date(conv.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                                                : "Terenkripsi E2EE"}
-                                        </p>
-                                    </div>
-                                </a>
+                                        <div class="min-w-0 flex-1">
+                                            <div class="flex items-center justify-between gap-1">
+                                                <span class="truncate font-semibold text-slate-900">{peerName}</span>
+                                                <Icon name="lock" size="xs" className="text-emerald-600 shrink-0" />
+                                            </div>
+                                            <p class="text-[11px] text-slate-500 truncate mt-0.5">
+                                                {lastActivity
+                                                    ? `Aktif ${new Date(lastActivity).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                                                    : "Terenkripsi E2EE"}
+                                            </p>
+                                        </div>
+                                    </a>
+
+                                    <button
+                                        type="button"
+                                        disabled={isClearing}
+                                        on:click|stopPropagation={() => promptClearConversation(conv, peerName)}
+                                        aria-label="Hapus seluruh pesan dengan {peerName}"
+                                        title="Hapus percakapan & seluruh pesan"
+                                        class="mr-1.5 p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-500/40 transition-all cursor-pointer shrink-0 disabled:opacity-50 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus:opacity-100"
+                                    >
+                                        {#if isClearing}
+                                            <span class="block w-3.5 h-3.5 border-2 border-rose-500 border-t-transparent rounded-full animate-spin"></span>
+                                        {:else}
+                                            <Icon name="trash" size="xs" />
+                                        {/if}
+                                    </button>
+                                </div>
                             {/each}
 
                             {#if $conversationsStore.hasMore}
@@ -454,5 +577,14 @@
 
             <slot />
         </main>
+
+        <ClearConversationDialog
+            open={Boolean(conversationToClear)}
+            peerName={conversationToClear?.peerName || "Lawan Bicara"}
+            loading={isClearingTarget}
+            error={clearDialogError}
+            on:cancel={cancelClearConversation}
+            on:confirm={confirmClearConversation}
+        />
     </div>
 {/if}

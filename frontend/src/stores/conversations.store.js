@@ -1,5 +1,11 @@
 import { writable, get } from 'svelte/store';
-import { listConversations, getConversation, createConversation } from '../services/api/conversations.api.js';
+import {
+  listConversations,
+  getConversation,
+  createConversation,
+  clearConversation as apiClearConversation,
+} from '../services/api/conversations.api.js';
+import { registerSocketListeners } from '../services/socket/handlers.js';
 import {
   establishConversationSession,
   getConversationSessionPeer,
@@ -12,7 +18,7 @@ import {
   getVerificationStatus,
   revokeVerificationStatus,
 } from '../services/crypto/identity-trust.js';
-import { handleApiError } from '../lib/errors/apierror.js';
+import { ApiError, API_ERROR_CODES, handleApiError } from '../lib/errors/apierror.js';
 import { PAGE_ERROR_CODES, resolvePageError, getPageErrorMessage } from '../lib/errors/pageerror.js';
 
 export const DEFAULT_CONVERSATIONS_PAGE_LIMIT = 20;
@@ -20,12 +26,24 @@ export const DEFAULT_CONVERSATIONS_PAGE_LIMIT = 20;
 /** @type {((conversationId: string) => Promise<any>) | null} */
 let keyChangeAcceptedFlushHandler = null;
 
+/** @type {((conversationId: string) => void) | null} */
+let conversationClearedHandler = null;
+
 /**
  * Register a callback invoked when a peer's new identity key is accepted and the E2EE session is ready.
  * @param {(conversationId: string) => Promise<any>} fn
  */
 export function registerKeyChangeAcceptedFlushHandler(fn) {
   keyChangeAcceptedFlushHandler = fn;
+}
+
+/**
+ * Register a callback invoked whenever a conversation is cleared/deleted (locally or via socket)
+ * so domain stores such as `messagesStore` can wipe cached messages without circular imports.
+ * @param {(conversationId: string) => void} fn
+ */
+export function registerConversationClearedHandler(fn) {
+  conversationClearedHandler = fn;
 }
 
 /**
@@ -61,6 +79,8 @@ export function registerKeyChangeAcceptedFlushHandler(fn) {
  * @property {number | null} peerVerifiedAt
  * @property {any | null} safetyNumber
  * @property {boolean} safetyNumberLoading
+ * @property {Record<string, boolean>} clearingByConversation
+ * @property {{ conversationId: string, scope: 'me' | 'everyone', clearedBy: string | null, clearedAt: string, isLocal: boolean } | null} lastClearedEvent
  */
 
 /** @type {ConversationState} */
@@ -86,10 +106,31 @@ const initialState = {
   peerVerifiedAt: null,
   safetyNumber: null,
   safetyNumberLoading: false,
+  clearingByConversation: {},
+  lastClearedEvent: null,
 };
 
 function createConversationsStore() {
   const { subscribe, set, update } = writable(initialState);
+
+  /** @type {(() => void) | null} */
+  let cleanupListeners = null;
+
+  /** @type {Set<string>} */
+  const localClearingIds = new Set();
+
+  /** @type {Map<string, number>} */
+  const recentlyClearedLocally = new Map();
+
+  /** @param {string} conversationId */
+  function isLocallyInitiatedClear(conversationId) {
+    if (localClearingIds.has(conversationId)) return true;
+    const ts = recentlyClearedLocally.get(conversationId);
+    if (!ts) return false;
+    if (Date.now() - ts < 5000) return true;
+    recentlyClearedLocally.delete(conversationId);
+    return false;
+  }
 
   const conversationsStore = {
     subscribe,
@@ -583,18 +624,248 @@ function createConversationsStore() {
     },
 
     /**
+     * Clear all messages in a conversation and remove it from the sidebar.
+     * Supports per-user clear (`scope: 'me'`) and global clear (`scope: 'everyone'`).
+     *
+     * @param {string} conversationId
+     * @param {{ scope?: 'me' | 'everyone' }} [options]
+     * @returns {Promise<{
+     *   conversationId: string,
+     *   scope: 'me' | 'everyone',
+     *   clearedAt: string,
+     *   deletedMessageCount: number | null
+     * }>}
+     */
+    clearConversation: async (conversationId, { scope = 'me' } = {}) => {
+      if (!conversationId || typeof conversationId !== 'string') {
+        throw new ApiError({
+          code: API_ERROR_CODES.VALIDATION_ERROR,
+          status: 400,
+          message: 'conversationId is required to clear a conversation.',
+          logged: true,
+        });
+      }
+
+      const normalizedScope =
+        scope === undefined || scope === null
+          ? 'me'
+          : String(scope).trim().toLowerCase();
+
+      if (normalizedScope !== 'me' && normalizedScope !== 'everyone') {
+        throw new ApiError({
+          code: API_ERROR_CODES.VALIDATION_ERROR,
+          status: 400,
+          message: "scope must be 'me' or 'everyone'.",
+          logged: true,
+        });
+      }
+
+      const resolvedScope = /** @type {'me' | 'everyone'} */ (normalizedScope);
+
+      localClearingIds.add(conversationId);
+      update((s) => ({
+        ...s,
+        clearingByConversation: {
+          ...(s.clearingByConversation || {}),
+          [conversationId]: true,
+        },
+        error: null,
+        errorCode: null,
+      }));
+
+      try {
+        const res = await apiClearConversation(conversationId, { scope: resolvedScope });
+        const clearedAt = res?.clearedAt || new Date().toISOString();
+        const resultScope = res?.scope === 'everyone' ? 'everyone' : resolvedScope;
+
+        recentlyClearedLocally.set(conversationId, Date.now());
+
+        conversationsStore.handleConversationCleared({
+          conversationId,
+          scope: resultScope,
+          clearedAt,
+          isLocal: true,
+        });
+
+        return {
+          conversationId: res?.conversationId || conversationId,
+          scope: resultScope,
+          clearedAt,
+          deletedMessageCount: res?.deletedMessageCount ?? null,
+        };
+      } catch (err) {
+        const normalized = handleApiError(err, {
+          endpoint: '/api/conversations',
+          method: 'DELETE',
+        });
+        const pageErr = resolvePageError(normalized, {
+          context: 'clear-conversation',
+          fallbackCode: PAGE_ERROR_CODES.CONVERSATION_CLEAR_FAILED,
+        });
+        update((s) => ({
+          ...s,
+          error: pageErr.userMessage,
+          errorCode: pageErr.code,
+        }));
+        throw normalized;
+      } finally {
+        localClearingIds.delete(conversationId);
+        update((s) => {
+          const nextClearing = { ...(s.clearingByConversation || {}) };
+          delete nextClearing[conversationId];
+          return {
+            ...s,
+            clearingByConversation: nextClearing,
+          };
+        });
+      }
+    },
+
+    /**
+     * Handle a conversation clear/delete event (from local action or real-time socket broadcast).
+     * Idempotent: safe to invoke multiple times for the same event.
+     *
+     * @param {{
+     *   conversationId?: string,
+     *   scope?: 'me' | 'everyone',
+     *   clearedBy?: string | null,
+     *   clearedAt?: string,
+     *   isLocal?: boolean
+     * }} payload
+     */
+    handleConversationCleared: (payload) => {
+      const conversationId = payload?.conversationId;
+      if (!conversationId) return;
+
+      const isLocal = Boolean(payload?.isLocal || isLocallyInitiatedClear(conversationId));
+      const scope = payload?.scope === 'everyone' ? 'everyone' : 'me';
+      const clearedAt = payload?.clearedAt || new Date().toISOString();
+      const clearedBy = payload?.clearedBy || null;
+
+      update((s) => {
+        const filtered = s.conversations.filter((c) => c.id !== conversationId);
+        const isActive =
+          s.activeConversationId === conversationId ||
+          s.activeConversation?.id === conversationId;
+
+        return {
+          ...s,
+          conversations: filtered,
+          activeConversationId: isActive ? null : s.activeConversationId,
+          activeConversation: isActive ? null : s.activeConversation,
+          e2eeStatus: isActive ? 'initializing' : s.e2eeStatus,
+          e2eeError: isActive ? null : s.e2eeError,
+          keyChange: isActive ? null : s.keyChange,
+          peerVerified: isActive ? false : s.peerVerified,
+          peerVerifiedAt: isActive ? null : s.peerVerifiedAt,
+          safetyNumber: isActive ? null : s.safetyNumber,
+          lastClearedEvent: {
+            conversationId,
+            scope,
+            clearedBy,
+            clearedAt,
+            isLocal,
+          },
+        };
+      });
+
+      if (conversationClearedHandler) {
+        try {
+          conversationClearedHandler(conversationId);
+        } catch {
+          // Non-fatal cleanup
+        }
+      }
+    },
+
+    /**
+     * Acknowledge and clear the latest `lastClearedEvent` after the UI has handled it,
+     * preventing duplicate notifications across layout remounts.
+     */
+    acknowledgeClearedEvent: () => {
+      update((s) => (s.lastClearedEvent ? { ...s, lastClearedEvent: null } : s));
+    },
+
+    /**
+     * Handle a real-time `conversation:updated` event (e.g. a new message arrived in a
+     * previously cleared/hidden conversation so it should reappear in the sidebar).
+     *
+     * @param {{ conversationId?: string, lastMessageAt?: string }} payload
+     */
+    handleConversationUpdated: (payload) => {
+      const conversationId = payload?.conversationId;
+      if (!conversationId) return;
+
+      const timestamp = payload?.lastMessageAt || new Date().toISOString();
+      const current = get({ subscribe });
+      const exists = current.conversations.some((c) => c.id === conversationId);
+
+      if (exists) {
+        update((s) => {
+          const target = s.conversations.find((c) => c.id === conversationId);
+          if (!target) return s;
+          const rest = s.conversations.filter((c) => c.id !== conversationId);
+          const refreshed = {
+            ...target,
+            lastMessageAt: timestamp,
+            updated_at: timestamp,
+          };
+          return {
+            ...s,
+            conversations: [refreshed, ...rest],
+          };
+        });
+      } else if (!current.loading) {
+        conversationsStore.loadConversations().catch(() => {});
+      }
+    },
+
+    /**
+     * Register real-time Socket.IO listeners for conversation updates and clears.
+     * Idempotent: cleans up any previous subscription before registering.
+     * @returns {() => void}
+     */
+    initSocketListeners: () => {
+      if (cleanupListeners) {
+        cleanupListeners();
+      }
+
+      const unsubscribe = registerSocketListeners({
+        onConversationCleared: (payload) => {
+          if (payload?.conversationId) {
+            conversationsStore.handleConversationCleared(payload);
+          }
+        },
+        onConversationUpdated: (payload) => {
+          if (payload?.conversationId) {
+            conversationsStore.handleConversationUpdated(payload);
+          }
+        },
+      });
+
+      cleanupListeners = () => {
+        unsubscribe();
+        cleanupListeners = null;
+      };
+
+      return cleanupListeners;
+    },
+
+    /**
      * Update last message in conversation list when a new message arrives.
      * @param {string} conversationId
      * @param {any} message
      */
     updateLastMessage: (conversationId, message) => {
       update((s) => {
+        const ts = message.created_at || new Date().toISOString();
         const updated = s.conversations.map((c) => {
           if (c.id === conversationId) {
             return {
               ...c,
               last_message: message,
-              updated_at: message.created_at || new Date().toISOString(),
+              lastMessageAt: ts,
+              updated_at: ts,
             };
           }
           return c;
@@ -608,7 +879,16 @@ function createConversationsStore() {
     },
 
     reset: () => {
-      set(initialState);
+      if (cleanupListeners) {
+        cleanupListeners();
+      }
+      localClearingIds.clear();
+      recentlyClearedLocally.clear();
+      set({
+        ...initialState,
+        pagination: { ...initialState.pagination },
+        clearingByConversation: {},
+      });
     },
   };
 

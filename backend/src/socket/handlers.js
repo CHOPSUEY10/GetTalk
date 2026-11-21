@@ -72,6 +72,19 @@ export function registerHandlers(socket, io) {
       const payload = { message };
       io.to(rooms.conversationRoom(conversationId)).emit(events.MESSAGE_NEW, payload);
 
+      // Notify every member's personal room so hidden conversations reappear in their sidebar.
+      const members = await convRepo.getMembers(conversationId);
+      if (members.length > 0) {
+        let userEmitter = io;
+        for (const member of members) {
+          userEmitter = userEmitter.to(rooms.userRoom(member.id));
+        }
+        userEmitter.emit(events.CONVERSATION_UPDATED, {
+          conversationId,
+          lastMessageAt: message.createdAt || new Date().toISOString(),
+        });
+      }
+
       if (callback) callback({ success: true, message });
     } catch (err) {
       logger.error('Error in message:send', { message: err.message });

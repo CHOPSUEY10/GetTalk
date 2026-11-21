@@ -1,7 +1,7 @@
 import { query } from '../config/database.js';
 import { UUID_REGEX } from '../validators/pagination.validator.js';
 
-export async function findByConversation(conversationId, { limit = 50, before } = {}) {
+export async function findByConversation(conversationId, { limit = 50, before, clearedAt = null } = {}) {
   let sql = `
     SELECT m.id, m.conversation_id AS "conversationId",
            m.sender_id AS "senderId",
@@ -26,6 +26,11 @@ export async function findByConversation(conversationId, { limit = 50, before } 
     WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
   `;
   const params = [conversationId];
+
+  if (clearedAt) {
+    sql += ` AND m.created_at > $${params.length + 1}::timestamptz`;
+    params.push(clearedAt);
+  }
 
   if (before) {
     if (UUID_REGEX.test(before)) {

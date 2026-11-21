@@ -18,9 +18,9 @@ import {
 } from '../validators/messages.validator.js';
 
 export async function list(userId, conversationId, { limit = 50, before } = {}) {
-  // Verify membership
-  const isMember = await convRepo.isMember(userId, conversationId);
-  if (!isMember) {
+  // Verify membership & read per-member clearedAt cutoff
+  const membership = await convRepo.getMemberState(userId, conversationId);
+  if (!membership) {
     throw new AppError('Not a member of this conversation', 403, NOT_CONVERSATION_MEMBER);
   }
 
@@ -33,6 +33,7 @@ export async function list(userId, conversationId, { limit = 50, before } = {}) 
   const rows = await messagesRepo.findByConversation(conversationId, {
     limit: safeLimit + 1,
     before,
+    clearedAt: membership.clearedAt || null,
   });
   const { items: messages, nextCursor, hasMore, pagination } = buildPage(rows, safeLimit);
 
@@ -72,8 +73,9 @@ export async function create(userId, conversationId, { bodyCiphertext, nonce, cl
     clientMessageId,
   });
 
-  // Update conversation timestamp
+  // Update conversation timestamp and unhide conversation for any member who had cleared/hidden it
   await convRepo.updateTimestamp(conversationId);
+  await convRepo.unhideForAllMembers(conversationId);
 
   return message;
 }

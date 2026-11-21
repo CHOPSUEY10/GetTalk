@@ -51,6 +51,7 @@ export async function findAllByUserId(userId, { limit = 21, before = null } = {}
        LIMIT 1
      ) peer ON TRUE
      WHERE cm.user_id = $1
+       AND cm.hidden_at IS NULL
      ${cursorSql}
      ORDER BY c.updated_at DESC, c.id DESC
      LIMIT $${params.length}`,
@@ -74,6 +75,20 @@ export async function isMember(userId, conversationId) {
     [conversationId, userId]
   );
   return result.rows.length > 0;
+}
+
+export async function getMemberState(userId, conversationId) {
+  const result = await query(
+    `SELECT conversation_id AS "conversationId",
+            user_id AS "userId",
+            joined_at AS "joinedAt",
+            cleared_at AS "clearedAt",
+            hidden_at AS "hiddenAt"
+     FROM conversation_members
+     WHERE conversation_id = $1 AND user_id = $2`,
+    [conversationId, userId]
+  );
+  return result.rows[0] || null;
 }
 
 export async function getMembers(conversationId) {
@@ -139,4 +154,109 @@ export async function updateTimestamp(conversationId) {
     'UPDATE conversations SET updated_at = NOW() WHERE id = $1',
     [conversationId]
   );
+}
+
+/**
+ * Unhide a previously cleared/hidden conversation for a single member
+ * (preserving their `cleared_at` cutoff so old cleared messages remain hidden).
+ */
+export async function unhideForUser(conversationId, userId) {
+  await query(
+    `UPDATE conversation_members
+     SET hidden_at = NULL
+     WHERE conversation_id = $1 AND user_id = $2 AND hidden_at IS NOT NULL`,
+    [conversationId, userId]
+  );
+}
+
+/**
+ * Unhide a conversation for all members when new activity (a new message) occurs.
+ * Returns the list of user IDs whose conversation was unhidden.
+ */
+export async function unhideForAllMembers(conversationId) {
+  const result = await query(
+    `UPDATE conversation_members
+     SET hidden_at = NULL
+     WHERE conversation_id = $1 AND hidden_at IS NOT NULL
+     RETURNING user_id AS "userId"`,
+    [conversationId]
+  );
+  return result.rows.map((r) => r.userId);
+}
+
+/**
+ * Per-user clear & hide ("Hapus untuk saya"):
+ * Records a `cleared_at` cutoff >= latest message timestamp and sets `hidden_at`
+ * so the conversation disappears from this member's sidebar while the peer's
+ * history and sidebar remain untouched.
+ */
+export async function clearForUser(conversationId, userId) {
+  const result = await query(
+    `UPDATE conversation_members
+     SET cleared_at = GREATEST(
+           NOW(),
+           COALESCE((SELECT MAX(created_at) FROM messages WHERE conversation_id = $1), NOW())
+         ),
+         hidden_at = NOW()
+     WHERE conversation_id = $1 AND user_id = $2
+     RETURNING cleared_at AS "clearedAt", hidden_at AS "hiddenAt"`,
+    [conversationId, userId]
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Global clear & hide ("Hapus untuk semua"):
+ * Atomically soft-deletes all non-deleted messages and attachments in the
+ * conversation, and sets `cleared_at` + `hidden_at` on all members so the
+ * conversation is cleared and removed from every participant's sidebar.
+ */
+export async function clearForEveryone(conversationId) {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    const msgRes = await client.query(
+      `UPDATE messages
+       SET deleted_at = NOW()
+       WHERE conversation_id = $1 AND deleted_at IS NULL
+       RETURNING id`,
+      [conversationId]
+    );
+
+    const attRes = await client.query(
+      `UPDATE attachments
+       SET deleted_at = NOW()
+       WHERE deleted_at IS NULL
+         AND message_id IN (SELECT id FROM messages WHERE conversation_id = $1)
+       RETURNING id, storage_key AS "storageKey"`,
+      [conversationId]
+    );
+
+    const memberRes = await client.query(
+      `UPDATE conversation_members
+       SET cleared_at = GREATEST(
+             NOW(),
+             COALESCE((SELECT MAX(created_at) FROM messages WHERE conversation_id = $1), NOW())
+           ),
+           hidden_at = NOW()
+       WHERE conversation_id = $1
+       RETURNING user_id AS "userId", cleared_at AS "clearedAt"`,
+      [conversationId]
+    );
+
+    await client.query('COMMIT');
+
+    return {
+      deletedMessageCount: msgRes.rowCount ?? msgRes.rows.length,
+      deletedAttachments: attRes.rows,
+      memberIds: memberRes.rows.map((r) => r.userId),
+      clearedAt: memberRes.rows[0]?.clearedAt || new Date().toISOString(),
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }

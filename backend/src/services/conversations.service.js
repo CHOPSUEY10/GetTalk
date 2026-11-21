@@ -1,16 +1,22 @@
 import * as convRepo from '../repositories/conversations.repository.js';
 import * as usersRepo from '../repositories/users.repository.js';
+import * as securityEventsRepo from '../repositories/security-events.repository.js';
 import * as usersService from './users.service.js';
+import { getStorageDriver } from './storage/index.js';
 import AppError from '../errors/AppError.js';
+import logger from '../utils/logger.js';
 import { buildPage } from '../utils/pagination.js';
 import {
   DEFAULT_CONVERSATIONS_LIMIT,
   MAX_CONVERSATIONS_LIMIT,
+  CONVERSATION_CLEAR_SCOPES,
 } from '../validators/conversations.validator.js';
 import {
   CONVERSATION_NOT_FOUND,
   FORBIDDEN,
+  NOT_CONVERSATION_MEMBER,
   USER_NOT_FOUND,
+  VALIDATION_ERROR,
 } from '../errors/error-codes.js';
 
 /**
@@ -120,6 +126,8 @@ export async function create(userId, targetUserId) {
   // Reuse existing direct conversation
   const existing = await convRepo.findDirectBetween(userId, targetUserId);
   if (existing) {
+    // Unhide for the requesting user so it reappears in their sidebar (preserving cleared_at)
+    await convRepo.unhideForUser(existing.id, userId);
     const members = await convRepo.getMembers(existing.id);
     const peer = members.find((m) => m.id !== userId);
     const canSeeLastSeen = peer ? await usersService.canViewLastSeen(userId, peer.id) : false;
@@ -150,5 +158,101 @@ export async function create(userId, targetUserId) {
       bio: target.bio || null,
       lastSeenAt: canSeeLastSeen ? target.last_seen_at || null : null,
     },
+  };
+}
+
+/**
+ * Clear all messages in a conversation and hide it from the sidebar.
+ *
+ * - `scope === 'me'`: Per-user clear & hide; peer's messages and sidebar remain untouched.
+ * - `scope === 'everyone'`: Soft-deletes all messages and attachments in the conversation
+ *   and hides the conversation from every member's sidebar until new activity occurs.
+ *
+ * @param {string} userId
+ * @param {string} conversationId
+ * @param {{ scope?: 'me' | 'everyone' }} [options]
+ */
+export async function clearMessages(userId, conversationId, { scope = 'me' } = {}) {
+  const normalizedScope =
+    scope === undefined || scope === null || scope === ''
+      ? 'me'
+      : String(scope).trim().toLowerCase();
+
+  if (!CONVERSATION_CLEAR_SCOPES.includes(normalizedScope)) {
+    throw new AppError("scope must be 'me' or 'everyone'", 400, VALIDATION_ERROR);
+  }
+
+  const conv = await convRepo.findById(conversationId);
+  if (!conv) {
+    throw new AppError('Conversation not found', 404, CONVERSATION_NOT_FOUND);
+  }
+
+  const member = await convRepo.isMember(userId, conversationId);
+  if (!member) {
+    await securityEventsRepo.create({
+      userId,
+      eventType: 'CONVERSATION_CLEAR_FORBIDDEN',
+      metadata: { conversationId, scope: normalizedScope },
+    });
+    throw new AppError('Not a member of this conversation', 403, NOT_CONVERSATION_MEMBER);
+  }
+
+  if (normalizedScope === 'me') {
+    const cleared = await convRepo.clearForUser(conversationId, userId);
+    const clearedAt = cleared?.clearedAt
+      ? new Date(cleared.clearedAt).toISOString()
+      : new Date().toISOString();
+
+    await securityEventsRepo.create({
+      userId,
+      eventType: 'CONVERSATION_CLEARED',
+      metadata: { conversationId, scope: 'me' },
+    });
+
+    return {
+      conversationId,
+      scope: 'me',
+      clearedAt,
+      deletedMessageCount: null,
+      affectedUserIds: [userId],
+    };
+  }
+
+  // scope === 'everyone'
+  const result = await convRepo.clearForEveryone(conversationId);
+  const clearedAt = result.clearedAt
+    ? new Date(result.clearedAt).toISOString()
+    : new Date().toISOString();
+
+  if (result.deletedAttachments?.length > 0) {
+    try {
+      const driver = await getStorageDriver();
+      await Promise.allSettled(
+        result.deletedAttachments.map((att) => driver.deleteObject(att.storageKey))
+      );
+    } catch (err) {
+      logger.warn('Failed to delete attachment objects after clearing conversation', {
+        conversationId,
+        message: err.message,
+      });
+    }
+  }
+
+  await securityEventsRepo.create({
+    userId,
+    eventType: 'CONVERSATION_CLEARED',
+    metadata: {
+      conversationId,
+      scope: 'everyone',
+      deletedMessageCount: result.deletedMessageCount,
+    },
+  });
+
+  return {
+    conversationId,
+    scope: 'everyone',
+    clearedAt,
+    deletedMessageCount: result.deletedMessageCount,
+    affectedUserIds: result.memberIds,
   };
 }

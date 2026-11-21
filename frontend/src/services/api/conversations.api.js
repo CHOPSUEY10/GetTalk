@@ -46,5 +46,22 @@ export const createConversation = (payload) => {
   return api.post('/api/conversations', payload);
 };
 
+/**
+ * Clear all messages in a conversation and hide it from the sidebar.
+ * @param {string} conversationId
+ * @param {{ scope?: 'me' | 'everyone' }} [options]
+ * @returns {Promise<{
+ *   conversationId: string,
+ *   scope: 'me' | 'everyone',
+ *   clearedAt: string,
+ *   deletedMessageCount: number | null
+ * }>}
+ */
+export const clearConversation = (conversationId, { scope = 'me' } = {}) => {
+  const normalizedScope = scope === 'everyone' ? 'everyone' : 'me';
+  const qs = `?scope=${encodeURIComponent(normalizedScope)}`;
+  return api.delete(`/api/conversations/${encodeURIComponent(conversationId)}${qs}`);
+};
+
 // Aliases for backward compatibility
 export const conversationList = listConversations;

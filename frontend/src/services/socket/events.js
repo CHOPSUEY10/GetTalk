@@ -24,6 +24,7 @@ export const MESSAGE_DELETED = 'message:deleted';
 export const ATTACHMENT_NEW = 'attachment:new';
 
 export const CONVERSATION_UPDATED = 'conversation:updated';
+export const CONVERSATION_CLEARED = 'conversation:cleared';
 
 export const FRIEND_REQUEST = 'friend:request';
 export const FRIEND_ACCEPTED = 'friend:accepted';

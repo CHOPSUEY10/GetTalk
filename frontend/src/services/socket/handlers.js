@@ -10,8 +10,12 @@ import * as events from './events.js';
  *   onMessageDelivered?: (payload: { messageId: string }) => void,
  *   onMessageRead?: (payload: { messageId: string }) => void,
  *   onAttachmentNew?: (payload: { attachment: any }) => void,
+ *   onConversationUpdated?: (payload: { conversationId: string, lastMessageAt?: string }) => void,
+ *   onConversationCleared?: (payload: { conversationId: string, scope?: 'me' | 'everyone', clearedBy?: string, clearedAt?: string }) => void,
  *   onFriendRequest?: (payload: any) => void,
- *   onFriendAccepted?: (payload: any) => void
+ *   onFriendAccepted?: (payload: any) => void,
+ *   onTypingStart?: (payload: any) => void,
+ *   onTypingStop?: (payload: any) => void
  * }} callbacks
  * @returns {() => void} Cleanup function to unsubscribe listeners
  */
@@ -46,6 +50,16 @@ export function registerSocketListeners(callbacks) {
   if (callbacks.onAttachmentNew) {
     socket.on(events.ATTACHMENT_NEW, callbacks.onAttachmentNew);
     handlers.push(() => socket.off(events.ATTACHMENT_NEW, callbacks.onAttachmentNew));
+  }
+
+  if (callbacks.onConversationUpdated) {
+    socket.on(events.CONVERSATION_UPDATED, callbacks.onConversationUpdated);
+    handlers.push(() => socket.off(events.CONVERSATION_UPDATED, callbacks.onConversationUpdated));
+  }
+
+  if (callbacks.onConversationCleared) {
+    socket.on(events.CONVERSATION_CLEARED, callbacks.onConversationCleared);
+    handlers.push(() => socket.off(events.CONVERSATION_CLEARED, callbacks.onConversationCleared));
   }
 
   if (callbacks.onFriendRequest) {

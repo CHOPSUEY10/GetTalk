@@ -29,6 +29,7 @@ export const ATTACHMENT_NEW      = 'attachment:new';
 // MESSAGE_DELIVERED and MESSAGE_READ are listed above
 
 export const CONVERSATION_UPDATED = 'conversation:updated';
+export const CONVERSATION_CLEARED = 'conversation:cleared';
 
 export const FRIEND_REQUEST      = 'friend:request';
 export const FRIEND_ACCEPTED     = 'friend:accepted';

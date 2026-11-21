@@ -32,7 +32,8 @@ import {
 import { encryptFile, decryptFile, createDownloadUrl } from '../services/crypto/file-crypto.js';
 import {
   conversationsStore,
-  registerKeyChangeAcceptedFlushHandler
+  registerKeyChangeAcceptedFlushHandler,
+  registerConversationClearedHandler
 } from './conversations.store.js';
 import { userStore } from './user.store.js';
 import { validateMessageText, validateAttachmentFile } from '../lib/validators.js';
@@ -1652,6 +1653,61 @@ function createMessagesStore() {
       return { suppressed: false };
     },
 
+    /**
+     * Clear all cached messages, pending queue, pagination metadata, errors, and typing state
+     * for a single conversation (invoked when a conversation is cleared/deleted).
+     * @param {string} conversationId
+     */
+    clearConversationMessages: (conversationId) => {
+      if (!conversationId) return;
+      flushingConversations.delete(conversationId);
+      update((s) => {
+        const nextMessages = { ...s.messagesByConversation };
+        delete nextMessages[conversationId];
+
+        const nextPending = { ...(s.pendingQueueByConversation || {}) };
+        delete nextPending[conversationId];
+
+        const nextLoading = { ...s.loadingByConversation };
+        delete nextLoading[conversationId];
+
+        const nextLoadingMore = { ...(s.loadingMoreByConversation || {}) };
+        delete nextLoadingMore[conversationId];
+
+        const nextCursor = { ...(s.nextCursorByConversation || {}) };
+        delete nextCursor[conversationId];
+
+        const nextHasMore = { ...(s.hasMoreByConversation || {}) };
+        delete nextHasMore[conversationId];
+
+        const nextPagination = { ...(s.paginationByConversation || {}) };
+        delete nextPagination[conversationId];
+
+        const nextError = { ...s.errorByConversation };
+        delete nextError[conversationId];
+
+        const nextErrorCode = { ...(s.errorCodeByConversation || {}) };
+        delete nextErrorCode[conversationId];
+
+        const nextTyping = { ...(s.typingByConversation || {}) };
+        delete nextTyping[conversationId];
+
+        return {
+          ...s,
+          messagesByConversation: nextMessages,
+          pendingQueueByConversation: nextPending,
+          loadingByConversation: nextLoading,
+          loadingMoreByConversation: nextLoadingMore,
+          nextCursorByConversation: nextCursor,
+          hasMoreByConversation: nextHasMore,
+          paginationByConversation: nextPagination,
+          errorByConversation: nextError,
+          errorCodeByConversation: nextErrorCode,
+          typingByConversation: nextTyping
+        };
+      });
+    },
+
     reset: () => {
       flushingConversations.clear();
       set({
@@ -1671,6 +1727,10 @@ function createMessagesStore() {
 
   registerKeyChangeAcceptedFlushHandler((convId) =>
     messagesStore.flushPendingMessages(convId)
+  );
+
+  registerConversationClearedHandler((convId) =>
+    messagesStore.clearConversationMessages(convId)
   );
 
   return messagesStore;
