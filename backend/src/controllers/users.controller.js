@@ -1,4 +1,5 @@
 import * as usersService from '../services/users.service.js';
+import { syncPresenceVisibilityForPeers } from '../socket/presence.js';
 import { parseOffsetPaginationQuery } from '../utils/pagination.js';
 import { DEFAULT_USER_SEARCH_LIMIT } from '../validators/users.validator.js';
 
@@ -49,6 +50,13 @@ export async function updatePrivacy(req, res, next) {
     const privacy = await usersService.updatePrivacySettings(req.user.id, req.body, {
       ipAddress: req.ip || req.socket?.remoteAddress || null,
     });
+    const io = req.app.get('io');
+    if (
+      io &&
+      (req.body?.onlineVisibility !== undefined || req.body?.lastSeenVisibility !== undefined)
+    ) {
+      syncPresenceVisibilityForPeers(io, req.user.id).catch(() => {});
+    }
     return res.json({
       privacy,
       ...privacy,
@@ -80,6 +88,10 @@ export async function blockUser(req, res, next) {
     const result = await usersService.blockUser(req.user.id, req.params.userId, {
       ipAddress: req.ip || req.socket?.remoteAddress || null,
     });
+    const io = req.app.get('io');
+    if (io) {
+      syncPresenceVisibilityForPeers(io, req.user.id, [req.params.userId]).catch(() => {});
+    }
     return res.status(201).json(result);
   } catch (err) {
     return next(err);
@@ -91,6 +103,10 @@ export async function unblockUser(req, res, next) {
     const result = await usersService.unblockUser(req.user.id, req.params.userId, {
       ipAddress: req.ip || req.socket?.remoteAddress || null,
     });
+    const io = req.app.get('io');
+    if (io) {
+      syncPresenceVisibilityForPeers(io, req.user.id, [req.params.userId]).catch(() => {});
+    }
     return res.json(result);
   } catch (err) {
     return next(err);

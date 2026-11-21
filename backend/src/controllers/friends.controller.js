@@ -9,6 +9,7 @@ import {
 } from '../validators/friends.validator.js';
 import * as events from '../socket/events.js';
 import * as rooms from '../socket/rooms.js';
+import { syncPresenceVisibilityForPeers } from '../socket/presence.js';
 
 export async function list(req, res, next) {
   try {
@@ -75,6 +76,7 @@ export async function acceptRequest(req, res, next) {
         },
         requestId: req.params.requestId,
       });
+      syncPresenceVisibilityForPeers(io, req.user.id, [friend.userId]).catch(() => {});
     }
 
     return res.json({ friend });
@@ -95,6 +97,10 @@ export async function rejectRequest(req, res, next) {
 export async function remove(req, res, next) {
   try {
     await friendsService.remove(req.user.id, req.params.userId);
+    const io = req.app.get('io');
+    if (io) {
+      syncPresenceVisibilityForPeers(io, req.user.id, [req.params.userId]).catch(() => {});
+    }
     return res.status(204).send();
   } catch (err) {
     return next(err);

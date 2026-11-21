@@ -1,5 +1,7 @@
 <script>
   import { userStore, DEFAULT_PRIVACY_SETTINGS } from "../../stores/user.store.js";
+  import { conversationsStore } from "../../stores/conversations.store.js";
+  import { friendsStore } from "../../stores/friends.store.js";
   import Icon from "../common/Icon.svelte";
   import {
     PAGE_ERROR_CODES,
@@ -26,6 +28,13 @@
       const updated = await userStore.updatePrivacySettings(patch);
       form = { ...DEFAULT_PRIVACY_SETTINGS, ...updated };
       statusMessage = customSuccessMsg;
+      if (
+        patch.onlineVisibility !== undefined ||
+        patch.lastSeenVisibility !== undefined
+      ) {
+        conversationsStore.loadConversations().catch(() => {});
+        friendsStore.loadAll().catch(() => {});
+      }
     } catch (err) {
       errorMessage = getPageErrorMessage(err, {
         context: "privacy",

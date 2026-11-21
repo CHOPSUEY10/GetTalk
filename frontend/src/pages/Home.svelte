@@ -11,6 +11,7 @@
         PAGE_ERROR_CODES,
         getPageErrorMessage,
     } from "../lib/errors/pageerror.js";
+    import { resolvePeerPresence, formatLastSeen } from "../lib/presence.js";
     import { push } from "svelte-spa-router";
     import Icon from "../components/common/Icon.svelte";
     import Skeleton from "../components/common/Skeleton.svelte";
@@ -30,6 +31,11 @@
     $: friends = $friendsStore.friends || [];
     $: requests = $friendsStore.requests || [];
     $: friendsLoading = $friendsStore.loading;
+    $: selfOnline = Boolean($socketStore.connected && $socketStore.selfActive);
+    $: selfLastSeenCompact = formatLastSeen(
+        $socketStore.selfLastSeenAt || $userStore.lastSeenAt || null,
+        { compact: true },
+    );
 
     /** @param {any} friend */
     const startDirectChat = async (friend) => {
@@ -104,14 +110,26 @@
                         class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/15 text-xs font-medium text-indigo-100 mb-3"
                     >
                         <span
-                            class="w-2 h-2 rounded-full {$socketStore.connected
+                            class="w-2 h-2 rounded-full {selfOnline
                                 ? 'bg-emerald-400'
-                                : 'bg-amber-400 animate-pulse'}"
+                                : $socketStore.status === 'connecting'
+                                  ? 'bg-amber-400 animate-pulse'
+                                  : 'bg-slate-400'}"
                         ></span>
                         <span>
-                            {$socketStore.connected
-                                ? "Koneksi Realtime Aktif"
-                                : "Menghubungkan Jaringan..."}
+                            {#if selfOnline}
+                                Koneksi Realtime Aktif
+                            {:else if $socketStore.connected && !$socketStore.selfActive}
+                                Sesi Tidak Aktif{selfLastSeenCompact
+                                    ? ` • ${selfLastSeenCompact}`
+                                    : ""}
+                            {:else if $socketStore.status === "connecting"}
+                                Menghubungkan Jaringan...
+                            {:else}
+                                Offline{selfLastSeenCompact
+                                    ? ` • ${selfLastSeenCompact}`
+                                    : ""}
+                            {/if}
                         </span>
                         <span class="opacity-40">•</span>
                         <span
@@ -290,15 +308,34 @@
                                 conv.peer?.username ||
                                 conv.name ||
                                 "Lawan Bicara"}
+                            {@const peerPresence = resolvePeerPresence({
+                                peer: conv.peer,
+                                presenceMap: $socketStore.presenceByUserId,
+                                selfConnected: $socketStore.connected,
+                                selfActive: $socketStore.selfActive,
+                            })}
+                            {@const peerLastSeen = formatLastSeen(
+                                peerPresence.lastSeenAt,
+                            )}
                             <a
                                 href="#/chat/{conv.id}"
                                 class="bg-white p-4 rounded-2xl border border-slate-200 hover:border-indigo-300 shadow-xs hover:shadow-sm flex items-center justify-between gap-4 transition-all no-underline group"
                             >
                                 <div class="flex items-center gap-3.5 min-w-0">
-                                    <div
-                                        class="w-11 h-11 rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white font-bold flex items-center justify-center text-sm uppercase shrink-0 shadow-xs"
-                                    >
-                                        {peerName.slice(0, 2)}
+                                    <div class="relative shrink-0">
+                                        <div
+                                            class="w-11 h-11 rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white font-bold flex items-center justify-center text-sm uppercase shadow-xs"
+                                        >
+                                            {peerName.slice(0, 2)}
+                                        </div>
+                                        <span
+                                            class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white {peerPresence.isOnline
+                                                ? 'bg-emerald-500'
+                                                : 'bg-slate-300'}"
+                                            title={peerPresence.isOnline
+                                                ? "Online"
+                                                : peerLastSeen || "Offline"}
+                                        ></span>
                                     </div>
                                     <div class="min-w-0">
                                         <div class="flex items-center gap-2">
@@ -315,20 +352,16 @@
                                             </span>
                                         </div>
                                         <p
-                                            class="text-xs text-slate-500 truncate mt-0.5"
+                                            class="text-xs truncate mt-0.5 {peerPresence.isOnline
+                                                ? 'text-emerald-600 font-medium'
+                                                : 'text-slate-500'}"
                                         >
-                                            {#if conv.updated_at}
-                                                Diperbarui {new Date(
-                                                    conv.updated_at,
-                                                ).toLocaleString([], {
-                                                    day: "2-digit",
-                                                    month: "short",
-                                                    hour: "2-digit",
-                                                    minute: "2-digit",
-                                                })}
+                                            {#if peerPresence.isOnline}
+                                                Online
+                                            {:else if peerLastSeen}
+                                                {peerLastSeen}
                                             {:else}
-                                                Klik untuk membuka ruang obrolan
-                                                terenkripsi
+                                                Offline
                                             {/if}
                                         </p>
                                     </div>
@@ -420,30 +453,64 @@
                         <div class="space-y-2">
                             {#each friends.slice(0, 5) as friend (friend.userId || friend.id)}
                                 {@const fId = friend.userId || friend.id}
+                                {@const friendPresence = resolvePeerPresence({
+                                    peer: friend,
+                                    userId: fId,
+                                    presenceMap: $socketStore.presenceByUserId,
+                                    selfConnected: $socketStore.connected,
+                                    selfActive: $socketStore.selfActive,
+                                })}
+                                {@const friendLastSeen = formatLastSeen(
+                                    friendPresence.lastSeenAt,
+                                    { compact: true },
+                                )}
                                 <div
                                     class="flex items-center justify-between gap-2 p-2 rounded-xl hover:bg-slate-50 transition-colors"
                                 >
                                     <div
                                         class="flex items-center gap-2.5 min-w-0"
                                     >
-                                        <div
-                                            class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs uppercase shrink-0"
-                                        >
-                                            {(
-                                                friend.nickname ||
-                                                friend.username ||
-                                                friend.name ||
-                                                "U"
-                                            ).slice(0, 2)}
+                                        <div class="relative shrink-0">
+                                            <div
+                                                class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs uppercase"
+                                            >
+                                                {(
+                                                    friend.nickname ||
+                                                    friend.username ||
+                                                    friend.name ||
+                                                    "U"
+                                                ).slice(0, 2)}
+                                            </div>
+                                            <span
+                                                class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white {friendPresence.isOnline
+                                                    ? 'bg-emerald-500'
+                                                    : 'bg-slate-300'}"
+                                                title={friendPresence.isOnline
+                                                    ? "Online"
+                                                    : friendLastSeen ||
+                                                      "Offline"}
+                                            ></span>
                                         </div>
-                                        <span
-                                            class="text-xs font-semibold text-slate-800 truncate"
-                                        >
-                                            {friend.nickname ||
-                                                friend.username ||
-                                                friend.name ||
-                                                "User"}
-                                        </span>
+                                        <div class="min-w-0">
+                                            <span
+                                                class="text-xs font-semibold text-slate-800 truncate block"
+                                            >
+                                                {friend.nickname ||
+                                                    friend.username ||
+                                                    friend.name ||
+                                                    "User"}
+                                            </span>
+                                            <span
+                                                class="text-[10px] truncate block {friendPresence.isOnline
+                                                    ? 'text-emerald-600 font-medium'
+                                                    : 'text-slate-400'}"
+                                            >
+                                                {friendPresence.isOnline
+                                                    ? "Online"
+                                                    : friendLastSeen ||
+                                                      "Offline"}
+                                            </span>
+                                        </div>
                                     </div>
                                     <button
                                         type="button"

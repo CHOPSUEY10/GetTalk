@@ -2,6 +2,7 @@ import * as convRepo from '../repositories/conversations.repository.js';
 import * as usersRepo from '../repositories/users.repository.js';
 import * as securityEventsRepo from '../repositories/security-events.repository.js';
 import * as usersService from './users.service.js';
+import * as presenceService from './presence.service.js';
 import { getStorageDriver } from './storage/index.js';
 import AppError from '../errors/AppError.js';
 import logger from '../utils/logger.js';
@@ -39,6 +40,16 @@ export async function list(
   });
   const { items, nextCursor, hasMore, pagination } = buildPage(rows, safeLimit);
 
+  // Batch-read Redis presence for all peers in a single round-trip.
+  const peerIds = items.map((c) => c.peerId).filter(Boolean);
+  const fallbackLastSeenMap = new Map();
+  for (const conv of items) {
+    if (conv.peerId) {
+      fallbackLastSeenMap.set(conv.peerId, conv.peerLastSeenAt || null);
+    }
+  }
+  const presenceMap = await presenceService.getPresenceBatch(peerIds, { fallbackLastSeenMap });
+
   // Explicit DTO; the peer is resolved by the repository query (no N+1).
   const conversations = await Promise.all(
     items.map(async (conv) => {
@@ -50,7 +61,8 @@ export async function list(
           lastMessageAt: conv.lastMessageAt,
         };
       }
-      const canSeeLastSeen = await usersService.canViewLastSeen(userId, conv.peerId);
+      const visibility = await usersService.getPresenceVisibility(userId, conv.peerId);
+      const presence = presenceMap.get(conv.peerId);
       return {
         id: conv.id,
         type: conv.type,
@@ -59,7 +71,10 @@ export async function list(
           username: conv.peerUsername,
           nickname: conv.peerNickname || null,
           bio: conv.peerBio || null,
-          lastSeenAt: canSeeLastSeen ? conv.peerLastSeenAt || null : null,
+          isOnline: visibility.canViewOnline ? Boolean(presence?.isOnline) : false,
+          lastSeenAt: visibility.canViewLastSeen
+            ? (presence?.lastSeenAt ?? conv.peerLastSeenAt ?? null)
+            : null,
         },
         lastMessageAt: conv.lastMessageAt,
       };
@@ -91,16 +106,18 @@ export async function getById(userId, conversationId) {
 
   let peerDto = null;
   if (peer) {
-    const [canSeeLastSeen, blockStatus] = await Promise.all([
-      usersService.canViewLastSeen(userId, peer.id),
+    const [visibility, blockStatus, presence] = await Promise.all([
+      usersService.getPresenceVisibility(userId, peer.id),
       usersRepo.getBlockStatus(userId, peer.id),
+      presenceService.getPresence(peer.id, { fallbackLastSeenAt: peer.last_seen_at || null }),
     ]);
     peerDto = {
       id: peer.id,
       username: peer.username,
       nickname: peer.nickname || null,
       bio: peer.bio || null,
-      lastSeenAt: canSeeLastSeen ? peer.last_seen_at || null : null,
+      isOnline: visibility.canViewOnline ? presence.isOnline : false,
+      lastSeenAt: visibility.canViewLastSeen ? presence.lastSeenAt : null,
       blockedByMe: blockStatus.blockedByViewer,
       isBlocked: blockStatus.isBlocked,
     };
@@ -130,24 +147,33 @@ export async function create(userId, targetUserId) {
     await convRepo.unhideForUser(existing.id, userId);
     const members = await convRepo.getMembers(existing.id);
     const peer = members.find((m) => m.id !== userId);
-    const canSeeLastSeen = peer ? await usersService.canViewLastSeen(userId, peer.id) : false;
+    let peerDto = null;
+    if (peer) {
+      const [visibility, presence] = await Promise.all([
+        usersService.getPresenceVisibility(userId, peer.id),
+        presenceService.getPresence(peer.id, { fallbackLastSeenAt: peer.last_seen_at || null }),
+      ]);
+      peerDto = {
+        id: peer.id,
+        username: peer.username,
+        nickname: peer.nickname || null,
+        bio: peer.bio || null,
+        isOnline: visibility.canViewOnline ? presence.isOnline : false,
+        lastSeenAt: visibility.canViewLastSeen ? presence.lastSeenAt : null,
+      };
+    }
     return {
       id: existing.id,
       type: existing.type || 'direct',
-      peer: peer
-        ? {
-            id: peer.id,
-            username: peer.username,
-            nickname: peer.nickname || null,
-            bio: peer.bio || null,
-            lastSeenAt: canSeeLastSeen ? peer.last_seen_at || null : null,
-          }
-        : null,
+      peer: peerDto,
     };
   }
 
   const conv = await convRepo.create('direct', [userId, targetUserId]);
-  const canSeeLastSeen = await usersService.canViewLastSeen(userId, target.id);
+  const [visibility, presence] = await Promise.all([
+    usersService.getPresenceVisibility(userId, target.id),
+    presenceService.getPresence(target.id, { fallbackLastSeenAt: target.last_seen_at || null }),
+  ]);
   return {
     id: conv.id,
     type: conv.type,
@@ -156,7 +182,8 @@ export async function create(userId, targetUserId) {
       username: target.username,
       nickname: target.nickname || null,
       bio: target.bio || null,
-      lastSeenAt: canSeeLastSeen ? target.last_seen_at || null : null,
+      isOnline: visibility.canViewOnline ? presence.isOnline : false,
+      lastSeenAt: visibility.canViewLastSeen ? presence.lastSeenAt : null,
     },
   };
 }

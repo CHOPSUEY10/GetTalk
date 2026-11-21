@@ -428,6 +428,30 @@ export async function updateLastSeen(userId, timestamp = new Date()) {
   );
 }
 
+/**
+ * Batch-fetch persisted `last_seen_at` fallback timestamps for a list of user IDs.
+ *
+ * @param {string[]} userIds
+ * @returns {Promise<Map<string, Date | null>>}
+ */
+export async function findLastSeenByIds(userIds) {
+  const uniqueIds = Array.from(new Set((userIds || []).filter(Boolean)));
+  const map = new Map();
+  if (uniqueIds.length === 0) return map;
+
+  const result = await query(
+    `SELECT id, last_seen_at
+     FROM users
+     WHERE id = ANY($1::uuid[])`,
+    [uniqueIds]
+  );
+
+  for (const row of result.rows) {
+    map.set(row.id, row.last_seen_at || null);
+  }
+  return map;
+}
+
 export async function getPrivacySettings(userId) {
   const result = await query(
     `SELECT user_id, last_seen_visibility, online_visibility, read_receipts_enabled,

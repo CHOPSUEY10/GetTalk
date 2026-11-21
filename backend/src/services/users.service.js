@@ -1,6 +1,7 @@
 import * as usersRepo from '../repositories/users.repository.js';
 import * as friendsRepo from '../repositories/friends.repository.js';
 import * as securityEventsRepo from '../repositories/security-events.repository.js';
+import * as presenceService from './presence.service.js';
 import AppError from '../errors/AppError.js';
 import { buildOffsetPage } from '../utils/pagination.js';
 import {
@@ -15,14 +16,15 @@ import {
   USER_NOT_FOUND,
 } from '../errors/error-codes.js';
 
-function formatSelfUser(user, privacySettings = null) {
+function formatSelfUser(user, privacySettings = null, presence = null) {
   return {
     id: user.id,
     username: user.username,
     email: user.email || null,
     nickname: user.nickname || null,
     bio: user.bio || null,
-    lastSeenAt: user.last_seen_at || null,
+    isOnline: Boolean(presence?.isOnline),
+    lastSeenAt: presence ? presence.lastSeenAt : (user.last_seen_at || null),
     emailVerified: Boolean(user.email_verified),
     mfaEnabled: Boolean(user.mfa_enabled),
     remainingRecoveryCodesCount: Array.isArray(user.mfa_recovery_codes)
@@ -36,62 +38,67 @@ function formatSelfUser(user, privacySettings = null) {
 }
 
 /**
- * Evaluate whether `viewerId` is allowed to see `targetId`'s Last Seen timestamp
- * (enforcing block rules and WhatsApp-style reciprocal visibility).
+ * Evaluate both Online and Last Seen visibility between `viewerId` and `targetId`
+ * in a single pass (enforcing block rules and reciprocal privacy settings).
+ *
+ * @param {string} viewerId
+ * @param {string} targetId
+ * @returns {Promise<{ canViewOnline: boolean, canViewLastSeen: boolean }>}
  */
-export async function canViewLastSeen(viewerId, targetId) {
-  if (!targetId) return false;
-  if (!viewerId) return false;
-  if (viewerId === targetId) return true;
+export async function getPresenceVisibility(viewerId, targetId) {
+  if (!targetId || !viewerId) {
+    return { canViewOnline: false, canViewLastSeen: false };
+  }
+  if (viewerId === targetId) {
+    return { canViewOnline: true, canViewLastSeen: true };
+  }
 
   const blocked = await usersRepo.isBlockedBetween(viewerId, targetId);
-  if (blocked) return false;
+  if (blocked) {
+    return { canViewOnline: false, canViewLastSeen: false };
+  }
 
   const [viewerPrivacy, targetPrivacy] = await Promise.all([
     usersRepo.getPrivacySettings(viewerId),
     usersRepo.getPrivacySettings(targetId),
   ]);
 
-  if (viewerPrivacy.lastSeenVisibility === 'nobody') return false;
-  if (targetPrivacy.lastSeenVisibility === 'nobody') return false;
+  const needFriendCheck =
+    targetPrivacy.onlineVisibility === 'friends' ||
+    targetPrivacy.lastSeenVisibility === 'friends';
 
-  if (
-    targetPrivacy.lastSeenVisibility === 'friends' ||
-    viewerPrivacy.lastSeenVisibility === 'friends'
-  ) {
-    const friends = await friendsRepo.areFriends(viewerId, targetId);
-    if (targetPrivacy.lastSeenVisibility === 'friends' && !friends) {
-      return false;
-    }
-  }
+  const isFriend = needFriendCheck
+    ? await friendsRepo.areFriends(viewerId, targetId)
+    : false;
 
-  return true;
+  const canViewOnline =
+    viewerPrivacy.onlineVisibility !== 'nobody' &&
+    targetPrivacy.onlineVisibility !== 'nobody' &&
+    (targetPrivacy.onlineVisibility !== 'friends' || isFriend);
+
+  const canViewLastSeen =
+    viewerPrivacy.lastSeenVisibility !== 'nobody' &&
+    targetPrivacy.lastSeenVisibility !== 'nobody' &&
+    (targetPrivacy.lastSeenVisibility !== 'friends' || isFriend);
+
+  return { canViewOnline, canViewLastSeen };
+}
+
+/**
+ * Evaluate whether `viewerId` is allowed to see `targetId`'s Last Seen timestamp
+ * (enforcing block rules and WhatsApp-style reciprocal visibility).
+ */
+export async function canViewLastSeen(viewerId, targetId) {
+  const { canViewLastSeen: allowed } = await getPresenceVisibility(viewerId, targetId);
+  return allowed;
 }
 
 /**
  * Evaluate whether `viewerId` is allowed to see `targetId`'s Online presence.
  */
 export async function canViewOnlineStatus(viewerId, targetId) {
-  if (!targetId || !viewerId) return false;
-  if (viewerId === targetId) return true;
-
-  const blocked = await usersRepo.isBlockedBetween(viewerId, targetId);
-  if (blocked) return false;
-
-  const [viewerPrivacy, targetPrivacy] = await Promise.all([
-    usersRepo.getPrivacySettings(viewerId),
-    usersRepo.getPrivacySettings(targetId),
-  ]);
-
-  if (viewerPrivacy.onlineVisibility === 'nobody') return false;
-  if (targetPrivacy.onlineVisibility === 'nobody') return false;
-
-  if (targetPrivacy.onlineVisibility === 'friends') {
-    const friends = await friendsRepo.areFriends(viewerId, targetId);
-    if (!friends) return false;
-  }
-
-  return true;
+  const { canViewOnline: allowed } = await getPresenceVisibility(viewerId, targetId);
+  return allowed;
 }
 
 /**
@@ -141,8 +148,11 @@ export async function shouldSendReadReceipt(readerId, senderId) {
 export async function getMe(userId) {
   const user = await usersRepo.findById(userId);
   if (!user) throw new AppError('User not found', 404, USER_NOT_FOUND);
-  const privacySettings = await usersRepo.getPrivacySettings(userId);
-  return formatSelfUser(user, privacySettings);
+  const [privacySettings, presence] = await Promise.all([
+    usersRepo.getPrivacySettings(userId),
+    presenceService.getPresence(userId, { fallbackLastSeenAt: user.last_seen_at || null }),
+  ]);
+  return formatSelfUser(user, privacySettings, presence);
 }
 
 /**
@@ -351,15 +361,23 @@ export async function getById(userId, viewerId = null) {
   const user = await usersRepo.findById(userId);
   if (!user) throw new AppError('User not found', 404, USER_NOT_FOUND);
 
-  let lastSeenAt = user.last_seen_at || null;
+  const presence = await presenceService.getPresence(userId, {
+    fallbackLastSeenAt: user.last_seen_at || null,
+  });
+
+  let isOnline = presence.isOnline;
+  let lastSeenAt = presence.lastSeenAt;
   let blockStatus = { blockedByViewer: false, blockedByTarget: false, isBlocked: false };
 
   if (viewerId) {
-    const [allowedLastSeen, status] = await Promise.all([
-      canViewLastSeen(viewerId, userId),
+    const [visibility, status] = await Promise.all([
+      getPresenceVisibility(viewerId, userId),
       usersRepo.getBlockStatus(viewerId, userId),
     ]);
-    if (!allowedLastSeen) {
+    if (!visibility.canViewOnline) {
+      isOnline = false;
+    }
+    if (!visibility.canViewLastSeen) {
       lastSeenAt = null;
     }
     blockStatus = status;
@@ -370,6 +388,7 @@ export async function getById(userId, viewerId = null) {
     username: user.username,
     nickname: user.nickname || null,
     bio: user.bio || null,
+    isOnline,
     lastSeenAt,
     blockedByMe: blockStatus.blockedByViewer,
     isBlocked: blockStatus.isBlocked,

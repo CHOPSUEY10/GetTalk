@@ -1,6 +1,7 @@
 import { io } from 'socket.io-client';
 import env from '../../config/env.js';
 import * as events from './events.js';
+import { isBrowserDocumentActive } from '../../lib/presence.js';
 
 export const SOCKET_RECONNECTION_ATTEMPTS = 5;
 export const SOCKET_RECONNECTION_DELAY_MS = 1000;
@@ -17,7 +18,10 @@ export const socket = io(env.socketUrl, {
   reconnection: true,
   reconnectionAttempts: SOCKET_RECONNECTION_ATTEMPTS,
   reconnectionDelay: SOCKET_RECONNECTION_DELAY_MS,
-  reconnectionDelayMax: SOCKET_RECONNECTION_DELAY_MAX_MS
+  reconnectionDelayMax: SOCKET_RECONNECTION_DELAY_MAX_MS,
+  auth: (cb) => {
+    cb({ active: isBrowserDocumentActive() });
+  },
 });
 
 /**
@@ -140,4 +144,51 @@ export function emitTypingStop(conversationId) {
   if (socket.connected && conversationId) {
     socket.emit(events.TYPING_STOP, { conversationId });
   }
+}
+
+/**
+ * Inform the backend that this browser tab / session transitioned to active or inactive.
+ * @param {boolean} active
+ * @returns {Promise<{ success?: boolean, isOnline?: boolean, lastSeenAt?: string | null, error?: string }>}
+ */
+export function emitPresenceUpdate(active) {
+  return new Promise((resolve) => {
+    if (!socket.connected) {
+      resolve({ success: false, error: 'Socket is not connected' });
+      return;
+    }
+
+    socket.emit(events.PRESENCE_UPDATE, { active: Boolean(active) }, (response) => {
+      resolve(response || { success: true });
+    });
+  });
+}
+
+/**
+ * Send a lightweight active presence heartbeat to refresh the Redis lease.
+ * @param {boolean} [active=true]
+ */
+export function emitPresenceHeartbeat(active = true) {
+  if (socket.connected) {
+    socket.emit(events.PRESENCE_HEARTBEAT, { active: Boolean(active) });
+  }
+}
+
+/**
+ * Request the authoritative Redis-backed presence snapshot for a set of user IDs.
+ * @param {string[]} userIds
+ * @returns {Promise<{ success?: boolean, presence?: Record<string, { isOnline: boolean, lastSeenAt: string | null }>, error?: string }>}
+ */
+export function syncPresence(userIds) {
+  return new Promise((resolve) => {
+    const uniqueIds = Array.from(new Set((userIds || []).filter(Boolean)));
+    if (!socket.connected || uniqueIds.length === 0) {
+      resolve({ success: false, presence: {} });
+      return;
+    }
+
+    socket.emit(events.PRESENCE_SYNC, { userIds: uniqueIds }, (response) => {
+      resolve(response || { success: true, presence: {} });
+    });
+  });
 }

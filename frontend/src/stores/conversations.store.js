@@ -29,6 +29,9 @@ let keyChangeAcceptedFlushHandler = null;
 /** @type {((conversationId: string) => void) | null} */
 let conversationClearedHandler = null;
 
+/** @type {((entries: Array<{ id?: string, userId?: string, isOnline?: boolean, lastSeenAt?: string | null }>) => void) | null} */
+let presenceSeedHandler = null;
+
 /**
  * Register a callback invoked when a peer's new identity key is accepted and the E2EE session is ready.
  * @param {(conversationId: string) => Promise<any>} fn
@@ -44,6 +47,14 @@ export function registerKeyChangeAcceptedFlushHandler(fn) {
  */
 export function registerConversationClearedHandler(fn) {
   conversationClearedHandler = fn;
+}
+
+/**
+ * Register a callback to seed REST-fetched peer presence into `socketStore` without circular imports.
+ * @param {(entries: Array<{ id?: string, userId?: string, isOnline?: boolean, lastSeenAt?: string | null }>) => void} fn
+ */
+export function registerConversationsPresenceSeedHandler(fn) {
+  presenceSeedHandler = fn;
 }
 
 /**
@@ -162,6 +173,9 @@ function createConversationsStore() {
           error: null,
           errorCode: null,
         }));
+        if (presenceSeedHandler) {
+          presenceSeedHandler(list.map((c) => c?.peer).filter(Boolean));
+        }
         return list;
       } catch (err) {
         const normalized = handleApiError(err, {
@@ -237,6 +251,10 @@ function createConversationsStore() {
           };
         });
 
+        if (presenceSeedHandler && added.length > 0) {
+          presenceSeedHandler(added.map((c) => c?.peer).filter(Boolean));
+        }
+
         return added;
       } catch (err) {
         const normalized = handleApiError(err, {
@@ -285,6 +303,9 @@ function createConversationsStore() {
           ...s,
           activeConversation: conv,
         }));
+        if (presenceSeedHandler && conv?.peer) {
+          presenceSeedHandler([conv.peer]);
+        }
         return conv;
       } catch (err) {
         handleApiError(err, {
@@ -603,6 +624,10 @@ function createConversationsStore() {
           };
         });
 
+        if (presenceSeedHandler && conv?.peer) {
+          presenceSeedHandler([conv.peer]);
+        }
+
         return convId;
       } catch (err) {
         const normalized = handleApiError(err, {
@@ -821,7 +846,151 @@ function createConversationsStore() {
     },
 
     /**
-     * Register real-time Socket.IO listeners for conversation updates and clears.
+     * Apply a single real-time presence update (`user:online` / `user:offline`) to all
+     * matching conversation peers and `activeConversation`. Idempotent & handles out-of-order timestamps.
+     *
+     * @param {{ userId?: string, isOnline?: boolean, lastSeenAt?: string | null }} payload
+     */
+    applyPresenceUpdate: (payload) => {
+      const targetUserId = payload?.userId;
+      if (!targetUserId) return;
+
+      const nextOnline = Boolean(payload?.isOnline);
+      const hasLastSeen = payload && Object.prototype.hasOwnProperty.call(payload, 'lastSeenAt');
+      const incomingLastSeen = hasLastSeen ? (payload.lastSeenAt ?? null) : undefined;
+
+      /** @param {any} peer */
+      const patchPeer = (peer) => {
+        if (!peer || peer.id !== targetUserId) return peer;
+        let resolvedLastSeen = peer.lastSeenAt ?? peer.last_seen_at ?? null;
+        if (incomingLastSeen !== undefined) {
+          if (incomingLastSeen === null) {
+            resolvedLastSeen = null;
+          } else if (!resolvedLastSeen) {
+            resolvedLastSeen = incomingLastSeen;
+          } else {
+            const prevMs = new Date(resolvedLastSeen).getTime();
+            const nextMs = new Date(incomingLastSeen).getTime();
+            if (Number.isNaN(prevMs) || (!Number.isNaN(nextMs) && nextMs >= prevMs)) {
+              resolvedLastSeen = incomingLastSeen;
+            }
+          }
+        }
+        if (peer.isOnline === nextOnline && peer.lastSeenAt === resolvedLastSeen) {
+          return peer;
+        }
+        return {
+          ...peer,
+          isOnline: nextOnline,
+          lastSeenAt: resolvedLastSeen,
+        };
+      };
+
+      update((s) => {
+        let changed = false;
+        const nextConversations = s.conversations.map((conv) => {
+          const nextPeer = patchPeer(conv.peer);
+          if (nextPeer !== conv.peer) {
+            changed = true;
+            return { ...conv, peer: nextPeer };
+          }
+          return conv;
+        });
+
+        let nextActive = s.activeConversation;
+        if (s.activeConversation?.peer) {
+          const patchedActivePeer = patchPeer(s.activeConversation.peer);
+          if (patchedActivePeer !== s.activeConversation.peer) {
+            changed = true;
+            nextActive = { ...s.activeConversation, peer: patchedActivePeer };
+          }
+        }
+
+        if (!changed) return s;
+        return {
+          ...s,
+          conversations: nextConversations,
+          activeConversation: nextActive,
+        };
+      });
+    },
+
+    /**
+     * Apply a batch presence snapshot (`presence:sync`) across conversations and `activeConversation`.
+     *
+     * @param {Record<string, { isOnline?: boolean, lastSeenAt?: string | null }>} presenceMap
+     */
+    applyPresenceBatch: (presenceMap) => {
+      if (!presenceMap || typeof presenceMap !== 'object') return;
+
+      update((s) => {
+        let changed = false;
+        const patchConv = (conv) => {
+          const peerId = conv?.peer?.id;
+          if (!peerId || !Object.prototype.hasOwnProperty.call(presenceMap, peerId)) return conv;
+          const entry = presenceMap[peerId];
+          const nextOnline = Boolean(entry?.isOnline);
+          const nextLastSeen = entry?.lastSeenAt ?? null;
+          if (conv.peer.isOnline === nextOnline && conv.peer.lastSeenAt === nextLastSeen) {
+            return conv;
+          }
+          changed = true;
+          return {
+            ...conv,
+            peer: {
+              ...conv.peer,
+              isOnline: nextOnline,
+              lastSeenAt: nextLastSeen,
+            },
+          };
+        };
+
+        const nextConversations = s.conversations.map(patchConv);
+        const nextActive = s.activeConversation ? patchConv(s.activeConversation) : s.activeConversation;
+        if (!changed) return s;
+        return {
+          ...s,
+          conversations: nextConversations,
+          activeConversation: nextActive,
+        };
+      });
+    },
+
+    /**
+     * Clear live online indicators across all peers when local socket disconnects,
+     * preserving each peer's known `lastSeenAt`.
+     */
+    markAllPeersOffline: () => {
+      update((s) => {
+        let changed = false;
+        const nextConversations = s.conversations.map((conv) => {
+          if (conv?.peer?.isOnline) {
+            changed = true;
+            return { ...conv, peer: { ...conv.peer, isOnline: false } };
+          }
+          return conv;
+        });
+
+        let nextActive = s.activeConversation;
+        if (s.activeConversation?.peer?.isOnline) {
+          changed = true;
+          nextActive = {
+            ...s.activeConversation,
+            peer: { ...s.activeConversation.peer, isOnline: false },
+          };
+        }
+
+        if (!changed) return s;
+        return {
+          ...s,
+          conversations: nextConversations,
+          activeConversation: nextActive,
+        };
+      });
+    },
+
+    /**
+     * Register real-time Socket.IO listeners for conversation updates, clears, and peer presence.
      * Idempotent: cleans up any previous subscription before registering.
      * @returns {() => void}
      */
@@ -839,6 +1008,28 @@ function createConversationsStore() {
         onConversationUpdated: (payload) => {
           if (payload?.conversationId) {
             conversationsStore.handleConversationUpdated(payload);
+          }
+        },
+        onUserOnline: (payload) => {
+          if (payload?.userId) {
+            conversationsStore.applyPresenceUpdate({
+              userId: payload.userId,
+              isOnline: true,
+              ...(Object.prototype.hasOwnProperty.call(payload, 'lastSeenAt')
+                ? { lastSeenAt: payload.lastSeenAt }
+                : {}),
+            });
+          }
+        },
+        onUserOffline: (payload) => {
+          if (payload?.userId) {
+            conversationsStore.applyPresenceUpdate({
+              userId: payload.userId,
+              isOnline: false,
+              ...(Object.prototype.hasOwnProperty.call(payload, 'lastSeenAt')
+                ? { lastSeenAt: payload.lastSeenAt }
+                : {}),
+            });
           }
         },
       });

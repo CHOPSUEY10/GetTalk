@@ -2,6 +2,7 @@ import * as authService from '../services/auth.service.js';
 import * as mfaService from '../services/mfa.service.js';
 import * as passwordResetService from '../services/password-reset.service.js';
 import * as sessionsRepo from '../repositories/sessions.repository.js';
+import { disconnectUserSessionSockets } from '../socket/presence.js';
 import AppError from '../errors/AppError.js';
 import { UNAUTHORIZED } from '../errors/error-codes.js';
 import { parseOffsetPaginationQuery, buildOffsetPage } from '../utils/pagination.js';
@@ -146,6 +147,10 @@ export async function logout(req, res, next) {
     const sid = req.sessionID;
     if (userId && sid) {
       await sessionsRepo.deleteBySidForUser(userId, sid).catch(() => {});
+      const io = req.app.get('io');
+      if (io) {
+        await disconnectUserSessionSockets(io, userId, { sessionId: sid }).catch(() => {});
+      }
     }
     if (req.session) {
       req.session.destroy(() => {
@@ -329,6 +334,12 @@ export async function changePassword(req, res, next) {
       currentSid: req.sessionID || null,
       ipAddress: req.ip || req.socket?.remoteAddress || null,
     });
+    const io = req.app.get('io');
+    if (io) {
+      await disconnectUserSessionSockets(io, req.user.id, {
+        exceptSessionId: req.sessionID || null,
+      }).catch(() => {});
+    }
     return res.json(result);
   } catch (err) {
     return next(err);
@@ -414,6 +425,10 @@ export async function revokeSession(req, res, next) {
     const result = await authService.revokeSession(req.user.id, sessionId, req.sessionID, {
       ipAddress: req.ip || req.socket?.remoteAddress || null,
     });
+    const io = req.app.get('io');
+    if (io) {
+      await disconnectUserSessionSockets(io, req.user.id, { sessionId }).catch(() => {});
+    }
     return res.json(result);
   } catch (err) {
     return next(err);
@@ -425,6 +440,12 @@ export async function revokeAllOtherSessions(req, res, next) {
     const result = await authService.revokeAllOtherSessions(req.user.id, req.sessionID, {
       ipAddress: req.ip || req.socket?.remoteAddress || null,
     });
+    const io = req.app.get('io');
+    if (io) {
+      await disconnectUserSessionSockets(io, req.user.id, {
+        exceptSessionId: req.sessionID || null,
+      }).catch(() => {});
+    }
     return res.json(result);
   } catch (err) {
     return next(err);

@@ -3,7 +3,9 @@
     import ProtectedLayout from "../components/layout/ProtectedLayout.svelte";
     import { friendsStore } from "../stores/friends.store.js";
     import { conversationsStore } from "../stores/conversations.store.js";
+    import { socketStore } from "../stores/socket.store.js";
     import { PAGE_ERROR_CODES, getPageErrorMessage } from "../lib/errors/pageerror.js";
+    import { resolvePeerPresence, formatLastSeen } from "../lib/presence.js";
     import { push } from "svelte-spa-router";
     import Icon from "../components/common/Icon.svelte";
     import Skeleton from "../components/common/Skeleton.svelte";
@@ -328,15 +330,36 @@
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {#each filteredFriends as friend (friend.userId || friend.id)}
                             {@const fId = friend.userId || friend.id}
+                            {@const friendPresence = resolvePeerPresence({
+                                peer: friend,
+                                userId: fId,
+                                presenceMap: $socketStore.presenceByUserId,
+                                selfConnected: $socketStore.connected,
+                                selfActive: $socketStore.selfActive,
+                            })}
+                            {@const friendLastSeen = formatLastSeen(friendPresence.lastSeenAt, { compact: true })}
                             <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between gap-3 hover:border-indigo-200 transition-all">
                                 <div class="flex items-center gap-3 min-w-0">
-                                    <div class="w-11 h-11 rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white font-bold flex items-center justify-center text-sm uppercase shrink-0 shadow-xs">
-                                        {(friend.nickname || friend.username || friend.name || "U").slice(0, 2)}
+                                    <div class="relative shrink-0">
+                                        <div class="w-11 h-11 rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white font-bold flex items-center justify-center text-sm uppercase shadow-xs">
+                                            {(friend.nickname || friend.username || friend.name || "U").slice(0, 2)}
+                                        </div>
+                                        <span
+                                            class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white {friendPresence.isOnline ? 'bg-emerald-500' : 'bg-slate-300'}"
+                                            title={friendPresence.isOnline ? "Online" : friendLastSeen || "Offline"}
+                                        ></span>
                                     </div>
                                     <div class="min-w-0">
-                                        <h4 class="font-bold text-slate-900 text-sm truncate">
-                                            {friend.nickname || friend.username || friend.name || "User"}
-                                        </h4>
+                                        <div class="flex items-center gap-2">
+                                            <h4 class="font-bold text-slate-900 text-sm truncate">
+                                                {friend.nickname || friend.username || friend.name || "User"}
+                                            </h4>
+                                            <span
+                                                class="text-[11px] shrink-0 {friendPresence.isOnline ? 'text-emerald-600 font-semibold' : 'text-slate-400 font-normal'}"
+                                            >
+                                                {friendPresence.isOnline ? "Online" : friendLastSeen || "Offline"}
+                                            </span>
+                                        </div>
                                         <p class="text-xs text-slate-500 truncate">
                                             {friend.bio || `@${friend.username || "user"}`}
                                         </p>

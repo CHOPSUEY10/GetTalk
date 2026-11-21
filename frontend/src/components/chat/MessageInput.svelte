@@ -6,9 +6,12 @@
     import {
         validateMessageText,
         getUtf8ByteLength,
-        MAX_MESSAGE_TEXT_BYTES
+        MAX_MESSAGE_TEXT_BYTES,
     } from "../../lib/validators.js";
-    import { PAGE_ERROR_CODES, getPageErrorMessage } from "../../lib/errors/pageerror.js";
+    import {
+        PAGE_ERROR_CODES,
+        getPageErrorMessage,
+    } from "../../lib/errors/pageerror.js";
     import Icon from "../common/Icon.svelte";
 
     export let conversationId = "";
@@ -64,7 +67,9 @@
     let stagedAttachment = null;
 
     $: displayedError = inputError || externalError;
-    $: currentByteLength = messageText ? getUtf8ByteLength(messageText.trim()) : 0;
+    $: currentByteLength = messageText
+        ? getUtf8ByteLength(messageText.trim())
+        : 0;
     $: isOverByteLimit = currentByteLength > MAX_MESSAGE_TEXT_BYTES;
     $: showByteCounter = currentByteLength >= 1024;
     $: canSubmit =
@@ -109,7 +114,10 @@
             file: detail.file,
             fileName: detail.fileName || detail.file.name,
             fileSize: detail.fileSize ?? detail.file.size,
-            fileType: detail.fileType || detail.file.type || "application/octet-stream"
+            fileType:
+                detail.fileType ||
+                detail.file.type ||
+                "application/octet-stream",
         };
         textareaEl?.focus();
     };
@@ -120,7 +128,10 @@
         // If neither staged attachment nor text is present, validate text to surface empty error only if user typed whitespace
         if (!stagedAttachment && !messageText.trim()) {
             if (messageText.length > 0) {
-                inputError = getPageErrorMessage(PAGE_ERROR_CODES.EMPTY_MESSAGE, "send-message");
+                inputError = getPageErrorMessage(
+                    PAGE_ERROR_CODES.EMPTY_MESSAGE,
+                    "send-message",
+                );
             }
             return;
         }
@@ -131,9 +142,15 @@
             const validation = validateMessageText(messageText);
             if (!validation.valid) {
                 if (validation.code === PAGE_ERROR_CODES.MESSAGE_TOO_LONG) {
-                    inputError = getPageErrorMessage(PAGE_ERROR_CODES.MESSAGE_TOO_LONG, "send-message");
+                    inputError = getPageErrorMessage(
+                        PAGE_ERROR_CODES.MESSAGE_TOO_LONG,
+                        "send-message",
+                    );
                 } else {
-                    inputError = getPageErrorMessage(PAGE_ERROR_CODES.EMPTY_MESSAGE, "send-message");
+                    inputError = getPageErrorMessage(
+                        PAGE_ERROR_CODES.EMPTY_MESSAGE,
+                        "send-message",
+                    );
                 }
                 return;
             }
@@ -153,7 +170,7 @@
                 await messagesStore.sendAttachmentMessage(conversationId, {
                     file: attachmentToSend.file,
                     senderId: $authStore.user?.id || "me",
-                    senderUsername: $authStore.user?.username || "Me"
+                    senderUsername: $authStore.user?.username || "Me",
                 });
             }
 
@@ -161,7 +178,7 @@
                 await messagesStore.sendMessage(conversationId, {
                     plaintext: textToSend,
                     senderId: $authStore.user?.id || "me",
-                    senderUsername: $authStore.user?.username || "Me"
+                    senderUsername: $authStore.user?.username || "Me",
                 });
             }
 
@@ -171,7 +188,7 @@
                 context: attachmentToSend ? "attachment" : "send-message",
                 fallbackCode: attachmentToSend
                     ? PAGE_ERROR_CODES.FILE_ENCRYPTION_FAILED
-                    : PAGE_ERROR_CODES.MESSAGE_SEND_FAILED
+                    : PAGE_ERROR_CODES.MESSAGE_SEND_FAILED,
             });
         } finally {
             isSending = false;
@@ -187,7 +204,9 @@
     };
 </script>
 
-<div class="px-3 sm:px-5 py-3 border-t border-slate-200 bg-white shrink-0 space-y-2.5">
+<div
+    class="px-3 sm:px-5 py-3 border-t border-slate-200 bg-white shrink-0 space-y-2.5"
+>
     <!-- Error Banner -->
     {#if displayedError}
         <div
@@ -195,7 +214,11 @@
             class="px-3.5 py-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center justify-between gap-2 animate-fadeIn"
         >
             <div class="flex items-center gap-2 min-w-0">
-                <Icon name="alert-triangle" size="xs" className="text-rose-600" />
+                <Icon
+                    name="alert-triangle"
+                    size="xs"
+                    className="text-rose-600"
+                />
                 <span>{displayedError}</span>
             </div>
             {#if inputError}
@@ -213,9 +236,13 @@
 
     <!-- Staged Attachment Preview Bar (Chat UX Requirement #8) -->
     {#if stagedAttachment}
-        <div class="p-3 rounded-xl bg-indigo-50/70 border border-indigo-200/80 flex items-center justify-between gap-3 animate-fadeIn">
+        <div
+            class="p-3 rounded-xl bg-indigo-50/70 border border-indigo-200/80 flex items-center justify-between gap-3 animate-fadeIn"
+        >
             <div class="flex items-center gap-3 min-w-0">
-                <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <div
+                    class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs"
+                >
                     <Icon name="file-text" size="md" />
                 </div>
                 <div class="min-w-0">
@@ -223,13 +250,17 @@
                         <span class="text-xs font-bold text-slate-900 truncate">
                             {stagedAttachment.fileName}
                         </span>
-                        <span class="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[10px] font-mono font-semibold shrink-0">
+                        <span
+                            class="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[10px] font-mono font-semibold shrink-0"
+                        >
                             {formatFileSize(stagedAttachment.fileSize)}
                         </span>
                     </div>
-                    <p class="text-[11px] text-indigo-700 flex items-center gap-1 mt-0.5">
+                    <p
+                        class="text-[11px] text-indigo-700 flex items-center gap-1 mt-0.5"
+                    >
                         <Icon name="lock" size="xs" />
-                        <span>Siap dienkripsi AES-256-GCM sebelum diunggah</span>
+                        <span> Terenkripsi </span>
                     </p>
                 </div>
             </div>
@@ -246,7 +277,10 @@
         </div>
     {/if}
 
-    <form on:submit|preventDefault={handleSendMessage} class="flex items-end gap-2">
+    <form
+        on:submit|preventDefault={handleSendMessage}
+        class="flex items-end gap-2"
+    >
         <AttachmentPicker
             {conversationId}
             disabled={disabled || isSending || isKeyChange}
@@ -255,7 +289,9 @@
         />
 
         <div class="flex-1 min-w-0 relative">
-            <label for="chat-message-composer" class="sr-only">Tulis pesan terenkripsi</label>
+            <label for="chat-message-composer" class="sr-only"
+                >Tulis pesan terenkripsi</label
+            >
             <textarea
                 id="chat-message-composer"
                 rows="1"
@@ -279,8 +315,7 @@
                 class="w-full px-4 py-2.5 bg-slate-50 border {isOverByteLimit
                     ? 'border-rose-400 focus:ring-rose-500'
                     : 'border-slate-200 focus:ring-indigo-500'} rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:border-transparent focus:bg-white transition-all resize-none overflow-y-auto leading-relaxed disabled:opacity-60"
-                style="min-height: 42px; max-height: 128px;"
-            ></textarea>
+                style="min-height: 42px; max-height: 128px;"></textarea>
 
             {#if showByteCounter}
                 <div
@@ -288,7 +323,9 @@
                         ? 'text-rose-600 font-bold'
                         : 'text-slate-400'}"
                 >
-                    <span>{(currentByteLength / 1024).toFixed(1)} / 10.0 KB</span>
+                    <span
+                        >{(currentByteLength / 1024).toFixed(1)} / 10.0 KB</span
+                    >
                 </div>
             {/if}
         </div>
@@ -301,10 +338,13 @@
             aria-label="Kirim Pesan"
         >
             {#if isSending}
-                <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                <div
+                    class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"
+                ></div>
             {:else}
                 <Icon name="send" size="sm" />
-                <span class="hidden sm:inline text-xs font-semibold">Kirim</span>
+                <span class="hidden sm:inline text-xs font-semibold">Kirim</span
+                >
             {/if}
         </button>
     </form>

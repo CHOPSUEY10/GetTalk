@@ -16,6 +16,17 @@ import { PAGE_ERROR_CODES, resolvePageError } from '../lib/errors/pageerror.js';
 export const DEFAULT_FRIENDS_PAGE_LIMIT = 20;
 export const DEFAULT_REQUESTS_PAGE_LIMIT = 20;
 
+/** @type {((entries: Array<{ id?: string, userId?: string, isOnline?: boolean, lastSeenAt?: string | null }>) => void) | null} */
+let friendsPresenceSeedHandler = null;
+
+/**
+ * Register a callback to seed REST-fetched friend presence into `socketStore` without circular imports.
+ * @param {(entries: Array<{ id?: string, userId?: string, isOnline?: boolean, lastSeenAt?: string | null }>) => void} fn
+ */
+export function registerFriendsPresenceSeedHandler(fn) {
+  friendsPresenceSeedHandler = fn;
+}
+
 /**
  * @typedef {Object} FriendsPaginationState
  * @property {number} limit
@@ -172,6 +183,9 @@ function createFriendsStore() {
           error: null,
           errorCode: null,
         });
+        if (friendsPresenceSeedHandler && friends.length > 0) {
+          friendsPresenceSeedHandler(friends);
+        }
       } catch (err) {
         const normalized = handleApiError(err, { endpoint: '/api/friends', method: 'GET' });
         const pageErr = resolvePageError(normalized, {
@@ -246,6 +260,10 @@ function createFriendsStore() {
             },
           };
         });
+
+        if (friendsPresenceSeedHandler && added.length > 0) {
+          friendsPresenceSeedHandler(added);
+        }
 
         return added;
       } catch (err) {
@@ -450,7 +468,102 @@ function createFriendsStore() {
     },
 
     /**
-     * Register socket listeners for real-time friend events.
+     * Apply a single real-time presence update (`user:online` / `user:offline`) to friends.
+     * @param {{ userId?: string, isOnline?: boolean, lastSeenAt?: string | null }} payload
+     */
+    applyPresenceUpdate: (payload) => {
+      const targetUserId = payload?.userId;
+      if (!targetUserId) return;
+
+      const nextOnline = Boolean(payload?.isOnline);
+      const hasLastSeen = payload && Object.prototype.hasOwnProperty.call(payload, 'lastSeenAt');
+      const incomingLastSeen = hasLastSeen ? (payload.lastSeenAt ?? null) : undefined;
+
+      update((s) => {
+        let changed = false;
+        const nextFriends = s.friends.map((friend) => {
+          const fId = friend.userId || friend.id;
+          if (fId !== targetUserId) return friend;
+
+          let resolvedLastSeen = friend.lastSeenAt ?? friend.last_seen_at ?? null;
+          if (incomingLastSeen !== undefined) {
+            if (incomingLastSeen === null) {
+              resolvedLastSeen = null;
+            } else if (!resolvedLastSeen) {
+              resolvedLastSeen = incomingLastSeen;
+            } else {
+              const prevMs = new Date(resolvedLastSeen).getTime();
+              const nextMs = new Date(incomingLastSeen).getTime();
+              if (Number.isNaN(prevMs) || (!Number.isNaN(nextMs) && nextMs >= prevMs)) {
+                resolvedLastSeen = incomingLastSeen;
+              }
+            }
+          }
+
+          if (friend.isOnline === nextOnline && friend.lastSeenAt === resolvedLastSeen) {
+            return friend;
+          }
+          changed = true;
+          return {
+            ...friend,
+            isOnline: nextOnline,
+            lastSeenAt: resolvedLastSeen,
+          };
+        });
+
+        return changed ? { ...s, friends: nextFriends } : s;
+      });
+    },
+
+    /**
+     * Apply a batch presence snapshot (`presence:sync`) to loaded friends.
+     * @param {Record<string, { isOnline?: boolean, lastSeenAt?: string | null }>} presenceMap
+     */
+    applyPresenceBatch: (presenceMap) => {
+      if (!presenceMap || typeof presenceMap !== 'object') return;
+
+      update((s) => {
+        let changed = false;
+        const nextFriends = s.friends.map((friend) => {
+          const fId = friend.userId || friend.id;
+          if (!fId || !Object.prototype.hasOwnProperty.call(presenceMap, fId)) return friend;
+          const entry = presenceMap[fId];
+          const nextOnline = Boolean(entry?.isOnline);
+          const nextLastSeen = entry?.lastSeenAt ?? null;
+          if (friend.isOnline === nextOnline && friend.lastSeenAt === nextLastSeen) {
+            return friend;
+          }
+          changed = true;
+          return {
+            ...friend,
+            isOnline: nextOnline,
+            lastSeenAt: nextLastSeen,
+          };
+        });
+        return changed ? { ...s, friends: nextFriends } : s;
+      });
+    },
+
+    /**
+     * Clear live online indicators across loaded friends when local socket disconnects,
+     * preserving each friend's known `lastSeenAt`.
+     */
+    markAllFriendsOffline: () => {
+      update((s) => {
+        let changed = false;
+        const nextFriends = s.friends.map((friend) => {
+          if (friend?.isOnline) {
+            changed = true;
+            return { ...friend, isOnline: false };
+          }
+          return friend;
+        });
+        return changed ? { ...s, friends: nextFriends } : s;
+      });
+    },
+
+    /**
+     * Register socket listeners for real-time friend & presence events.
      * Call this once after socket connects. Returns cleanup function.
      * @returns {() => void}
      */
@@ -505,12 +618,40 @@ function createFriendsStore() {
         });
       };
 
+      /** @param {{ userId?: string, lastSeenAt?: string | null }} payload */
+      const onUserOnline = (payload) => {
+        if (!payload?.userId) return;
+        friendsStore.applyPresenceUpdate({
+          userId: payload.userId,
+          isOnline: true,
+          ...(Object.prototype.hasOwnProperty.call(payload, 'lastSeenAt')
+            ? { lastSeenAt: payload.lastSeenAt }
+            : {}),
+        });
+      };
+
+      /** @param {{ userId?: string, lastSeenAt?: string | null }} payload */
+      const onUserOffline = (payload) => {
+        if (!payload?.userId) return;
+        friendsStore.applyPresenceUpdate({
+          userId: payload.userId,
+          isOnline: false,
+          ...(Object.prototype.hasOwnProperty.call(payload, 'lastSeenAt')
+            ? { lastSeenAt: payload.lastSeenAt }
+            : {}),
+        });
+      };
+
       socket.on(events.FRIEND_REQUEST, onFriendRequest);
       socket.on(events.FRIEND_ACCEPTED, onFriendAccepted);
+      socket.on(events.USER_ONLINE, onUserOnline);
+      socket.on(events.USER_OFFLINE, onUserOffline);
 
       cleanupListeners = () => {
         socket.off(events.FRIEND_REQUEST, onFriendRequest);
         socket.off(events.FRIEND_ACCEPTED, onFriendAccepted);
+        socket.off(events.USER_ONLINE, onUserOnline);
+        socket.off(events.USER_OFFLINE, onUserOffline);
         cleanupListeners = null;
       };
 

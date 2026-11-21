@@ -14,6 +14,7 @@
     import Skeleton from "../components/common/Skeleton.svelte";
     import ConfirmDialog from "../components/common/ConfirmDialog.svelte";
     import { PAGE_ERROR_CODES, getPageErrorMessage } from "../lib/errors/pageerror.js";
+    import { resolvePeerPresence, formatLastSeen } from "../lib/presence.js";
     import { push } from "svelte-spa-router";
 
     /** @type {{ conversationId?: string, [key: string]: any }} */
@@ -33,6 +34,7 @@
     let showConfirmBlockPeer = false;
     let isTogglingBlock = false;
     let previousMessageCount = 0;
+    let wasSocketConnected = false;
     /** @type {Set<string>} */
     const markedReadIds = new Set();
 
@@ -62,11 +64,19 @@
 
         // Establish the E2EE session via store before joining the room or loading history,
         // so no message is displayed or sent without a verified key.
-        await conversationsStore.initE2EESession(convId, $authStore.user?.id);
+        const e2eeResult = await conversationsStore.initE2EESession(convId, $authStore.user?.id);
 
-        // Join WebSocket Room
+        // Join WebSocket Room (hydrates peer presence from Redis in ack)
         const joinRes = await socketStore.joinRoom(convId);
         roomStatus = joinRes?.success ? "connected" : "error";
+
+        const resolvedPeerId =
+            e2eeResult?.conversation?.peer?.id ||
+            $conversationsStore.activeConversation?.peer?.id ||
+            null;
+        if (resolvedPeerId && $socketStore.connected) {
+            socketStore.syncPresence([resolvedPeerId]).catch(() => {});
+        }
 
         // Fetch message history from REST API (decryption is per-message, max 50 per page)
         await messagesStore.loadMessages(convId, { limit: MESSAGES_PAGE_LIMIT });
@@ -82,6 +92,9 @@
         }
         const joinRes = await socketStore.joinRoom(conversationId);
         roomStatus = joinRes?.success ? "connected" : "error";
+        if (peerId && $socketStore.connected) {
+            socketStore.syncPresence([peerId]).catch(() => {});
+        }
     };
 
     const retryLoadHistory = async () => {
@@ -291,8 +304,36 @@
     $: peerId = activeConv?.peer?.id || null;
     $: peerUsername = activeConv?.peer?.username || "Ruang Obrolan";
     $: peerDisplayName = activeConv?.peer?.nickname || activeConv?.peer?.username || "Ruang Obrolan";
-    $: peerLastSeenAt = activeConv?.peer?.lastSeenAt || activeConv?.peer?.last_seen_at || null;
+    $: selfConnected = Boolean($socketStore.connected);
+    $: selfActive = Boolean($socketStore.selfActive);
+    $: selfLastSeenAt = $socketStore.selfLastSeenAt || $userStore.lastSeenAt || null;
+    $: selfLastSeenText = formatLastSeen(selfLastSeenAt, { compact: true });
+    $: peerPresence = resolvePeerPresence({
+        peer: activeConv?.peer,
+        userId: peerId,
+        presenceMap: $socketStore.presenceByUserId,
+        selfConnected,
+        selfActive,
+    });
+    $: peerIsOnline = peerPresence.isOnline;
+    $: peerLastSeenAt = peerPresence.lastSeenAt;
+    $: peerLastSeenText = formatLastSeen(peerLastSeenAt);
     $: peerTypingState = $messagesStore.typingByConversation?.[conversationId];
+
+    // Re-join room and resync Redis presence whenever socket reconnects
+    $: {
+        if (selfConnected && !wasSocketConnected && conversationId) {
+            wasSocketConnected = true;
+            socketStore.joinRoom(conversationId).then((res) => {
+                if (res?.success) roomStatus = "connected";
+            }).catch(() => {});
+            if (peerId) {
+                socketStore.syncPresence([peerId]).catch(() => {});
+            }
+        } else if (!selfConnected) {
+            wasSocketConnected = false;
+        }
+    }
     $: isPeerTyping = Boolean(
         peerTypingState?.isTyping &&
             peerTypingState.userId &&
@@ -350,6 +391,9 @@
                 });
             }
             showConfirmBlockPeer = false;
+            if (peerId && $socketStore.connected) {
+                socketStore.syncPresence([peerId]).catch(() => {});
+            }
         } catch (err) {
             uiStore.notify({
                 type: "error",
@@ -408,12 +452,17 @@
                         {(peerDisplayName || conversationId || "C").slice(0, 2)}
                     </div>
                     <span
-                        class="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white {$socketStore.connected && roomStatus === 'connected' ? 'bg-emerald-500' : roomStatus === 'connecting' ? 'bg-amber-500' : 'bg-rose-500'}"
-                        title={$socketStore.connected && roomStatus === "connected"
-                            ? "Terhubung ke Ruang Obrolan"
-                            : roomStatus === "connecting"
-                              ? "Menghubungkan ke Ruang Obrolan..."
-                              : "Koneksi Ruang Obrolan Terputus"}
+                        class="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white {peerIsOnline
+                            ? 'bg-emerald-500'
+                            : !selfConnected
+                              ? 'bg-rose-400'
+                              : 'bg-slate-400'}"
+                        aria-label={peerIsOnline
+                            ? "Lawan bicara sedang online"
+                            : peerLastSeenText || "Lawan bicara offline"}
+                        title={peerIsOnline
+                            ? "Online"
+                            : peerLastSeenText || "Offline"}
                     ></span>
                 </div>
 
@@ -431,24 +480,40 @@
                             </span>
                         {/if}
                     </div>
-                    <div class="flex items-center gap-2 text-xs">
-                        {#if isPeerTyping}
+                    <div class="flex items-center gap-2 text-xs min-w-0">
+                        {#if !selfConnected}
+                            <span class="text-rose-600 font-medium shrink-0">Koneksi Terputus</span>
+                            {#if peerLastSeenText}
+                                <span class="text-slate-400 font-normal truncate" role="status">
+                                    • {peerLastSeenText}
+                                </span>
+                            {:else if selfLastSeenText}
+                                <span class="text-slate-400 font-normal truncate" role="status">
+                                    • Anda: {selfLastSeenText}
+                                </span>
+                            {/if}
+                            <button
+                                type="button"
+                                on:click={retryRoomConnection}
+                                class="text-indigo-600 hover:underline font-semibold cursor-pointer shrink-0"
+                            >
+                                Sambungkan
+                            </button>
+                        {:else if !selfActive}
+                            <span class="text-slate-500 font-normal truncate" role="status">
+                                {peerLastSeenText || "Offline"}
+                                {#if selfLastSeenText}
+                                    <span class="text-slate-400"> • Anda tidak aktif ({selfLastSeenText})</span>
+                                {/if}
+                            </span>
+                        {:else if isPeerTyping}
                             <span class="text-indigo-600 font-semibold italic animate-pulse" role="status">
                                 sedang mengetik...
                             </span>
-                        {:else if roomStatus === "connected" && $socketStore.connected}
-                            <span class="text-emerald-600 font-medium flex items-center gap-1">
-                                <span>Terhubung Realtime</span>
-                                {#if peerLastSeenAt}
-                                    <span class="text-slate-400 font-normal">
-                                        • Aktif {new Date(peerLastSeenAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                                    </span>
-                                {/if}
-                            </span>
                         {:else if roomStatus === "connecting"}
                             <span class="text-amber-600 font-medium">Menghubungkan...</span>
-                        {:else}
-                            <span class="text-rose-600 font-medium">Koneksi Terputus</span>
+                        {:else if roomStatus === "error"}
+                            <span class="text-rose-600 font-medium">Koneksi Ruang Terputus</span>
                             <button
                                 type="button"
                                 on:click={retryRoomConnection}
@@ -456,6 +521,17 @@
                             >
                                 Sambungkan
                             </button>
+                        {:else if peerIsOnline}
+                            <span class="text-emerald-600 font-medium inline-flex items-center gap-1.5" role="status">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                <span>Online</span>
+                            </span>
+                        {:else if peerLastSeenText}
+                            <span class="text-slate-500 font-normal truncate" role="status">
+                                {peerLastSeenText}
+                            </span>
+                        {:else}
+                            <span class="text-slate-400 font-normal" role="status">Offline</span>
                         {/if}
                     </div>
                 </div>

@@ -103,6 +103,26 @@ export async function getMembers(conversationId) {
 }
 
 /**
+ * Return distinct user IDs of all peers sharing at least one conversation with `userId`.
+ *
+ * @param {string} userId
+ * @returns {Promise<string[]>}
+ */
+export async function findPeerUserIds(userId) {
+  if (!userId) return [];
+  const result = await query(
+    `SELECT DISTINCT peer.user_id AS "userId"
+     FROM conversation_members self_cm
+     JOIN conversation_members peer
+       ON peer.conversation_id = self_cm.conversation_id
+      AND peer.user_id <> $1
+     WHERE self_cm.user_id = $1`,
+    [userId]
+  );
+  return result.rows.map((r) => r.userId);
+}
+
+/**
  * Find existing direct conversation between two users.
  */
 export async function findDirectBetween(userA, userB) {

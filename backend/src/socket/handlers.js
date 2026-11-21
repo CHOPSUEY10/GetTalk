@@ -1,5 +1,10 @@
 import * as events from './events.js';
 import * as rooms from './rooms.js';
+import {
+  handleSocketActive,
+  handleSocketInactive,
+  getAuthorizedPresenceMap,
+} from './presence.js';
 import * as messagesService from '../services/messages.service.js';
 import * as convRepo from '../repositories/conversations.repository.js';
 import * as messagesRepo from '../repositories/messages.repository.js';
@@ -40,7 +45,27 @@ export function registerHandlers(socket, io) {
 
       const room = rooms.conversationRoom(conversationId);
       socket.join(room);
-      if (callback) callback({ success: true });
+
+      let peerPresence = null;
+      try {
+        const members = await convRepo.getMembers(conversationId);
+        const peer = members.find((m) => m.id !== userId);
+        if (peer?.id) {
+          const map = await getAuthorizedPresenceMap(userId, [peer.id]);
+          const state = map[peer.id];
+          if (state) {
+            peerPresence = {
+              userId: peer.id,
+              isOnline: state.isOnline,
+              lastSeenAt: state.lastSeenAt,
+            };
+          }
+        }
+      } catch {
+        // Presence hydration on join is best-effort
+      }
+
+      if (callback) callback({ success: true, ...(peerPresence ? { peerPresence } : {}) });
     } catch (err) {
       logger.error('Error in conversation:join', { message: err.message });
       if (callback) callback({ error: 'Failed to join conversation' });
@@ -233,6 +258,62 @@ export function registerHandlers(socket, io) {
       });
     } catch (err) {
       logger.error('Error in typing:stop', { message: err.message });
+    }
+  });
+
+  // ── Presence (Redis-backed active / inactive / heartbeat / sync) ──
+  socket.on(events.PRESENCE_UPDATE, async (data, callback) => {
+    try {
+      if (typeof data?.active !== 'boolean') {
+        if (callback) callback({ error: 'active boolean is required' });
+        return;
+      }
+
+      const result = data.active
+        ? await handleSocketActive(io, socket)
+        : await handleSocketInactive(io, socket);
+
+      if (callback) {
+        callback({
+          success: true,
+          isOnline: Boolean(result?.isOnline),
+          lastSeenAt: result?.lastSeenAt ?? null,
+        });
+      }
+    } catch (err) {
+      logger.error('Error in presence:update', { message: err.message });
+      if (callback) callback({ error: 'Failed to update presence' });
+    }
+  });
+
+  socket.on(events.PRESENCE_HEARTBEAT, async (data, callback) => {
+    try {
+      const result =
+        data?.active === false
+          ? await handleSocketInactive(io, socket)
+          : await handleSocketActive(io, socket);
+
+      if (callback) {
+        callback({
+          success: true,
+          isOnline: Boolean(result?.isOnline),
+          lastSeenAt: result?.lastSeenAt ?? null,
+        });
+      }
+    } catch (err) {
+      logger.error('Error in presence:heartbeat', { message: err.message });
+      if (callback) callback({ error: 'Failed to refresh presence' });
+    }
+  });
+
+  socket.on(events.PRESENCE_SYNC, async (data, callback) => {
+    try {
+      const userIds = Array.isArray(data?.userIds) ? data.userIds : [];
+      const presence = await getAuthorizedPresenceMap(userId, userIds);
+      if (callback) callback({ success: true, presence });
+    } catch (err) {
+      logger.error('Error in presence:sync', { message: err.message });
+      if (callback) callback({ error: 'Failed to sync presence' });
     }
   });
 }

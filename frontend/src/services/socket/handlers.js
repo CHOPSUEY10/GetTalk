@@ -15,7 +15,9 @@ import * as events from './events.js';
  *   onFriendRequest?: (payload: any) => void,
  *   onFriendAccepted?: (payload: any) => void,
  *   onTypingStart?: (payload: any) => void,
- *   onTypingStop?: (payload: any) => void
+ *   onTypingStop?: (payload: any) => void,
+ *   onUserOnline?: (payload: { userId: string, isOnline?: boolean, lastSeenAt?: string | null }) => void,
+ *   onUserOffline?: (payload: { userId: string, isOnline?: boolean, lastSeenAt?: string | null }) => void
  * }} callbacks
  * @returns {() => void} Cleanup function to unsubscribe listeners
  */
@@ -80,6 +82,16 @@ export function registerSocketListeners(callbacks) {
   if (callbacks.onTypingStop) {
     socket.on(events.TYPING_STOP, callbacks.onTypingStop);
     handlers.push(() => socket.off(events.TYPING_STOP, callbacks.onTypingStop));
+  }
+
+  if (callbacks.onUserOnline) {
+    socket.on(events.USER_ONLINE, callbacks.onUserOnline);
+    handlers.push(() => socket.off(events.USER_ONLINE, callbacks.onUserOnline));
+  }
+
+  if (callbacks.onUserOffline) {
+    socket.on(events.USER_OFFLINE, callbacks.onUserOffline);
+    handlers.push(() => socket.off(events.USER_OFFLINE, callbacks.onUserOffline));
   }
 
   // Return unsubscribe function

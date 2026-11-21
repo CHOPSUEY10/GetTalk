@@ -133,6 +133,27 @@ export async function areFriends(userA, userB) {
   return result.rows.length > 0;
 }
 
+/**
+ * Return all accepted friend user IDs for `userId` (used for targeted presence broadcasts).
+ *
+ * @param {string} userId
+ * @returns {Promise<string[]>}
+ */
+export async function findAcceptedFriendIds(userId) {
+  if (!userId) return [];
+  const result = await query(
+    `SELECT CASE
+              WHEN from_user_id = $1 THEN to_user_id
+              ELSE from_user_id
+            END AS "userId"
+     FROM friendships
+     WHERE (from_user_id = $1 OR to_user_id = $1)
+       AND status = 'accepted'`,
+    [userId]
+  );
+  return result.rows.map((r) => r.userId);
+}
+
 export async function findRequestById(requestId) {
   const result = await query(
     `SELECT id, from_user_id, to_user_id, status, created_at

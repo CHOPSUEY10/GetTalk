@@ -1,5 +1,7 @@
 import * as friendsRepo from '../repositories/friends.repository.js';
 import * as usersRepo from '../repositories/users.repository.js';
+import * as usersService from './users.service.js';
+import * as presenceService from './presence.service.js';
 import AppError from '../errors/AppError.js';
 import { buildPage, buildOffsetPage } from '../utils/pagination.js';
 import {
@@ -16,6 +18,42 @@ import {
   USER_BLOCKED,
   BAD_REQUEST,
 } from '../errors/error-codes.js';
+
+/**
+ * Hydrate friend DTOs with Redis-backed presence (`isOnline`, `lastSeenAt`)
+ * while enforcing reciprocal privacy & block settings.
+ *
+ * @param {string} viewerId
+ * @param {any[]} rows
+ */
+async function attachFriendsPresence(viewerId, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+  const friendIds = rows.map((r) => r.userId).filter(Boolean);
+  const fallbackLastSeenMap = new Map();
+  for (const row of rows) {
+    if (row.userId) {
+      fallbackLastSeenMap.set(row.userId, row.lastSeenAt || null);
+    }
+  }
+  const presenceMap = await presenceService.getPresenceBatch(friendIds, { fallbackLastSeenMap });
+
+  return Promise.all(
+    rows.map(async (row) => {
+      const visibility = await usersService.getPresenceVisibility(viewerId, row.userId);
+      const presence = presenceMap.get(row.userId);
+      return {
+        userId: row.userId,
+        username: row.username,
+        nickname: row.nickname || null,
+        bio: row.bio || null,
+        isOnline: visibility.canViewOnline ? Boolean(presence?.isOnline) : false,
+        lastSeenAt: visibility.canViewLastSeen
+          ? (presence?.lastSeenAt ?? row.lastSeenAt ?? null)
+          : null,
+      };
+    })
+  );
+}
 
 /**
  * List accepted friends for a user with offset-based pagination (and optional `after` cursor).
@@ -37,9 +75,10 @@ export async function list(
     });
     const total = rows.total ?? rows.length;
     const { items, nextCursor, hasMore } = buildPage(rows, safeLimit, (row) => row.userId);
+    const hydrated = await attachFriendsPresence(userId, items);
     return {
-      data: items,
-      friends: items,
+      data: hydrated,
+      friends: hydrated,
       nextCursor,
       hasMore,
       pagination: {
@@ -59,7 +98,8 @@ export async function list(
   const total = rows.total ?? rows.length;
   const hasMore = safeOffset + rows.length < total;
   const nextCursor = hasMore && rows.length > 0 ? rows[rows.length - 1].userId : null;
-  const page = buildOffsetPage(rows, {
+  const hydrated = await attachFriendsPresence(userId, rows);
+  const page = buildOffsetPage(hydrated, {
     limit: safeLimit,
     offset: safeOffset,
     total,
@@ -144,13 +184,19 @@ export async function acceptRequest(userId, requestId) {
 
   await friendsRepo.updateStatus(requestId, 'accepted');
 
-  // Return the new friend info
+  // Return the new friend info hydrated with Redis presence
   const friend = await usersRepo.findById(request.from_user_id);
+  const [visibility, presence] = await Promise.all([
+    usersService.getPresenceVisibility(userId, friend.id),
+    presenceService.getPresence(friend.id, { fallbackLastSeenAt: friend.last_seen_at || null }),
+  ]);
   return {
     userId: friend.id,
     username: friend.username,
     nickname: friend.nickname || null,
     bio: friend.bio || null,
+    isOnline: visibility.canViewOnline ? presence.isOnline : false,
+    lastSeenAt: visibility.canViewLastSeen ? presence.lastSeenAt : null,
   };
 }
 

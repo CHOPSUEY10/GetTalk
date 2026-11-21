@@ -7,6 +7,7 @@
     import { conversationsStore } from "../../stores/conversations.store.js";
     import { uiStore, themeStore } from "../../stores/ui.store.js";
     import { PAGE_ERROR_CODES, getPageErrorMessage } from "../../lib/errors/pageerror.js";
+    import { resolvePeerPresence, formatLastSeen } from "../../lib/presence.js";
     import { replace } from "svelte-spa-router";
     import Icon from "../common/Icon.svelte";
     import ClearConversationDialog from "../chat/ClearConversationDialog.svelte";
@@ -48,6 +49,9 @@
         ($socketStore.status === "disconnected" || $socketStore.status === "error");
 
     $: conversations = $conversationsStore.conversations || [];
+    $: selfOnline = Boolean($socketStore.connected && $socketStore.selfActive);
+    $: selfLastSeenAt = $socketStore.selfLastSeenAt || $userStore.lastSeenAt || null;
+    $: selfLastSeenCompact = formatLastSeen(selfLastSeenAt, { compact: true });
 
     // Synchronize active chat view if a conversation is cleared remotely (peer or another session)
     $: {
@@ -185,25 +189,37 @@
                 <!-- Socket Status Pill -->
                 <div
                     class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border"
-                    class:bg-emerald-50={$socketStore.connected}
-                    class:border-emerald-200={$socketStore.connected}
-                    class:text-emerald-700={$socketStore.connected}
-                    class:bg-amber-50={$socketStore.status === "connecting"}
-                    class:border-amber-200={$socketStore.status === "connecting"}
-                    class:text-amber-700={$socketStore.status === "connecting"}
+                    class:bg-emerald-50={selfOnline}
+                    class:border-emerald-200={selfOnline}
+                    class:text-emerald-700={selfOnline}
+                    class:bg-amber-50={$socketStore.status === "connecting" || ($socketStore.connected && !$socketStore.selfActive)}
+                    class:border-amber-200={$socketStore.status === "connecting" || ($socketStore.connected && !$socketStore.selfActive)}
+                    class:text-amber-700={$socketStore.status === "connecting" || ($socketStore.connected && !$socketStore.selfActive)}
                     class:bg-rose-50={$socketStore.status === "error" || $socketStore.status === "disconnected"}
                     class:border-rose-200={$socketStore.status === "error" || $socketStore.status === "disconnected"}
                     class:text-rose-700={$socketStore.status === "error" || $socketStore.status === "disconnected"}
-                    title="Status Koneksi Realtime: {$socketStore.status}"
+                    title={selfOnline
+                        ? "Status Sesi: Online"
+                        : selfLastSeenCompact
+                          ? `Status Sesi: Tidak aktif (${selfLastSeenCompact})`
+                          : `Status Koneksi Realtime: ${$socketStore.status}`}
                 >
                     <span
                         class="w-1.5 h-1.5 rounded-full"
-                        class:bg-emerald-500={$socketStore.connected}
-                        class:bg-amber-500={$socketStore.status === "connecting"}
+                        class:bg-emerald-500={selfOnline}
+                        class:bg-amber-500={$socketStore.status === "connecting" || ($socketStore.connected && !$socketStore.selfActive)}
                         class:animate-pulse={$socketStore.status === "connecting"}
                         class:bg-rose-500={$socketStore.status === "error" || $socketStore.status === "disconnected"}
                     ></span>
-                    <span class="capitalize">{$socketStore.connected ? "Online" : $socketStore.status === "connecting" ? "Menghubungkan" : "Offline"}</span>
+                    <span class="capitalize">
+                        {selfOnline
+                            ? "Online"
+                            : $socketStore.connected && !$socketStore.selfActive
+                              ? "Tidak Aktif"
+                              : $socketStore.status === "connecting"
+                                ? "Menghubungkan"
+                                : "Offline"}
+                    </span>
                 </div>
 
                 <!-- Theme Toggle -->
@@ -252,25 +268,37 @@
                         <!-- Socket Status Pill -->
                         <div
                             class="hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border"
-                            class:bg-emerald-50={$socketStore.connected}
-                            class:border-emerald-200={$socketStore.connected}
-                            class:text-emerald-700={$socketStore.connected}
-                            class:bg-amber-50={$socketStore.status === "connecting"}
-                            class:border-amber-200={$socketStore.status === "connecting"}
-                            class:text-amber-700={$socketStore.status === "connecting"}
+                            class:bg-emerald-50={selfOnline}
+                            class:border-emerald-200={selfOnline}
+                            class:text-emerald-700={selfOnline}
+                            class:bg-amber-50={$socketStore.status === "connecting" || ($socketStore.connected && !$socketStore.selfActive)}
+                            class:border-amber-200={$socketStore.status === "connecting" || ($socketStore.connected && !$socketStore.selfActive)}
+                            class:text-amber-700={$socketStore.status === "connecting" || ($socketStore.connected && !$socketStore.selfActive)}
                             class:bg-rose-50={$socketStore.status === "error" || $socketStore.status === "disconnected"}
                             class:border-rose-200={$socketStore.status === "error" || $socketStore.status === "disconnected"}
                             class:text-rose-700={$socketStore.status === "error" || $socketStore.status === "disconnected"}
-                            title="Status WebSocket Client: {$socketStore.status}"
+                            title={selfOnline
+                                ? "Status Sesi: Online"
+                                : selfLastSeenCompact
+                                  ? `Status Sesi: Tidak aktif (${selfLastSeenCompact})`
+                                  : `Status WebSocket Client: ${$socketStore.status}`}
                         >
                             <span
                                 class="w-1.5 h-1.5 rounded-full"
-                                class:bg-emerald-500={$socketStore.connected}
-                                class:bg-amber-500={$socketStore.status === "connecting"}
+                                class:bg-emerald-500={selfOnline}
+                                class:bg-amber-500={$socketStore.status === "connecting" || ($socketStore.connected && !$socketStore.selfActive)}
                                 class:animate-pulse={$socketStore.status === "connecting"}
                                 class:bg-rose-500={$socketStore.status === "error" || $socketStore.status === "disconnected"}
                             ></span>
-                            <span class="capitalize">{$socketStore.connected ? "Online" : $socketStore.status}</span>
+                            <span class="capitalize">
+                                {selfOnline
+                                    ? "Online"
+                                    : $socketStore.connected && !$socketStore.selfActive
+                                      ? "Tidak Aktif"
+                                      : $socketStore.status === "connecting"
+                                        ? "Menghubungkan"
+                                        : "Offline"}
+                            </span>
                         </div>
 
                         <!-- Desktop Theme Toggle -->
@@ -401,7 +429,13 @@
                                 {@const isCurrentChat = currentPath === `/chat/${conv.id}`}
                                 {@const peerName = conv.peer?.nickname || conv.peer?.username || conv.name || "Ruang Obrolan"}
                                 {@const isClearing = Boolean($conversationsStore.clearingByConversation?.[conv.id])}
-                                {@const lastActivity = conv.lastMessageAt || conv.updated_at}
+                                {@const peerPresence = resolvePeerPresence({
+                                    peer: conv.peer,
+                                    presenceMap: $socketStore.presenceByUserId,
+                                    selfConnected: $socketStore.connected,
+                                    selfActive: $socketStore.selfActive,
+                                })}
+                                {@const peerLastSeenCompact = formatLastSeen(peerPresence.lastSeenAt, { compact: true })}
                                 <div
                                     class="group flex items-center gap-1 rounded-xl transition-all {isCurrentChat
                                         ? 'bg-indigo-50 text-indigo-900 font-semibold border border-indigo-200/70'
@@ -413,18 +447,28 @@
                                         class="flex items-center gap-2.5 flex-1 min-w-0 px-2.5 py-2 text-xs no-underline"
                                         aria-current={isCurrentChat ? "page" : undefined}
                                     >
-                                        <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white font-bold flex items-center justify-center text-[11px] uppercase shrink-0 shadow-xs">
-                                            {peerName.slice(0, 2)}
+                                        <div class="relative shrink-0">
+                                            <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white font-bold flex items-center justify-center text-[11px] uppercase shadow-xs">
+                                                {peerName.slice(0, 2)}
+                                            </div>
+                                            <span
+                                                class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white {peerPresence.isOnline ? 'bg-emerald-500' : 'bg-slate-300'}"
+                                                title={peerPresence.isOnline ? "Online" : peerLastSeenCompact || "Offline"}
+                                            ></span>
                                         </div>
                                         <div class="min-w-0 flex-1">
                                             <div class="flex items-center justify-between gap-1">
                                                 <span class="truncate font-semibold text-slate-900">{peerName}</span>
                                                 <Icon name="lock" size="xs" className="text-emerald-600 shrink-0" />
                                             </div>
-                                            <p class="text-[11px] text-slate-500 truncate mt-0.5">
-                                                {lastActivity
-                                                    ? `Aktif ${new Date(lastActivity).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                                                    : "Terenkripsi E2EE"}
+                                            <p class="text-[11px] truncate mt-0.5 {peerPresence.isOnline ? 'text-emerald-600 font-medium' : 'text-slate-500'}">
+                                                {#if peerPresence.isOnline}
+                                                    Online
+                                                {:else if peerLastSeenCompact}
+                                                    {peerLastSeenCompact}
+                                                {:else}
+                                                    Offline
+                                                {/if}
                                             </p>
                                         </div>
                                     </a>
@@ -469,15 +513,27 @@
                     class="flex items-center gap-2.5 min-w-0 no-underline hover:opacity-90 transition-opacity"
                     title="Kelola profil & akun"
                 >
-                    <div class="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs uppercase shrink-0">
-                        {($userStore.nickname || $authStore.user?.nickname || $authStore.user?.username || "U").slice(0, 2)}
+                    <div class="relative shrink-0">
+                        <div class="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs uppercase">
+                            {($userStore.nickname || $authStore.user?.nickname || $authStore.user?.username || "U").slice(0, 2)}
+                        </div>
+                        <span
+                            class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white {selfOnline ? 'bg-emerald-500' : 'bg-slate-400'}"
+                            title={selfOnline ? "Online" : selfLastSeenCompact || "Offline"}
+                        ></span>
                     </div>
                     <div class="min-w-0">
                         <span class="truncate text-sm font-semibold text-slate-900 block leading-tight">
                             {$userStore.nickname || $authStore.user?.nickname || $authStore.user?.username || "User"}
                         </span>
-                        <span class="truncate text-[11px] text-slate-500 block">
-                            @{$userStore.username || $authStore.user?.username || "user"}
+                        <span class="truncate text-[11px] block {selfOnline ? 'text-slate-500' : 'text-slate-400'}">
+                            {#if selfOnline}
+                                @{$userStore.username || $authStore.user?.username || "user"}
+                            {:else if selfLastSeenCompact}
+                                {selfLastSeenCompact}
+                            {:else}
+                                @{$userStore.username || $authStore.user?.username || "user"} • Offline
+                            {/if}
                         </span>
                     </div>
                 </a>

@@ -19,6 +19,10 @@ export const MESSAGE_READ        = 'message:read';
 export const TYPING_START        = 'typing:start';
 export const TYPING_STOP         = 'typing:stop';
 
+export const PRESENCE_UPDATE     = 'presence:update';
+export const PRESENCE_HEARTBEAT  = 'presence:heartbeat';
+export const PRESENCE_SYNC       = 'presence:sync';
+
 // ── Server → Client ───────────────────────────────────────────
 export const MESSAGE_NEW         = 'message:new';
 export const MESSAGE_UPDATED     = 'message:updated';
