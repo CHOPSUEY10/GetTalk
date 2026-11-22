@@ -60,31 +60,31 @@
         data-node-id="1:321"
     >
         <div
-            class="max-w-[1280px] w-full mx-auto px-[14px] py-[13px] flex items-center justify-between gap-4"
+            class="max-w-[1280px] w-full mx-auto px-3 sm:px-[14px] py-2.5 sm:py-[13px] flex items-center justify-between gap-2 sm:gap-4"
             data-node-id="1:322"
         >
             <!-- Brand Link (1:323) -->
             <a
                 href="#/"
-                class="flex items-center gap-[10px] no-underline group min-w-0"
+                class="flex items-center gap-2 sm:gap-[10px] no-underline group min-w-0 shrink-0"
                 data-node-id="1:323"
                 aria-label="GetTalk Beranda"
             >
                 <img
                     src={gettalkLogo}
                     alt="GetTalk Logo"
-                    class="w-[47.045px] h-[46px] object-contain shrink-0 block"
+                    class="w-[34px] h-[34px] sm:w-[47.045px] sm:h-[46px] object-contain shrink-0 block"
                     data-node-id="3:56"
                 />
                 <div class="flex flex-col items-start min-w-0" data-node-id="1:325">
                     <span
-                        class="font-['Plus_Jakarta_Sans',sans-serif] font-bold text-[#131b2e] text-[20px] tracking-[-0.45px] leading-[18px]"
+                        class="font-['Plus_Jakarta_Sans',sans-serif] font-bold text-[#131b2e] text-[17px] sm:text-[20px] tracking-[-0.45px] leading-[18px] whitespace-nowrap"
                         data-node-id="1:327"
                     >
                         GetTalk
                     </span>
                     <span
-                        class="font-mono font-extrabold text-[9px] text-[rgba(53,37,205,0.59)] tracking-[0.5px] uppercase leading-[18px] pt-[2px] truncate max-w-[200px] sm:max-w-none"
+                        class="hidden md:block font-mono font-extrabold text-[9px] text-[rgba(53,37,205,0.59)] tracking-[0.5px] uppercase leading-[18px] pt-[2px]"
                         data-node-id="1:330"
                     >
                         secure chat with end-to-end encryption
@@ -93,20 +93,21 @@
             </a>
 
             <!-- Navigation Actions (1:331) -->
-            <div class="flex items-center gap-[12px] sm:gap-[16px] shrink-0" data-node-id="1:331">
+            <div class="flex items-center gap-1.5 sm:gap-[16px] shrink-0" data-node-id="1:331">
                 <a
                     href="#/login"
-                    class="px-[12px] py-[8px] font-sans font-semibold text-[#131b2e] hover:text-[#4f46e5] text-[14px] tracking-[0.14px] leading-[20px] no-underline transition-colors"
+                    class="px-2.5 sm:px-[12px] py-2 font-sans font-semibold text-[#131b2e] hover:text-[#4f46e5] text-[13px] sm:text-[14px] tracking-[0.14px] leading-[20px] whitespace-nowrap no-underline transition-colors"
                     data-node-id="1:332"
                 >
                     Masuk
                 </a>
                 <a
                     href="#/register"
-                    class="bg-[#4f46e5] hover:bg-[#4338ca] text-white font-sans font-semibold text-[14px] tracking-[0.14px] leading-[20px] px-[16px] py-[10px] rounded-[8px] shadow-[0px_10px_15px_-3px_rgba(79,70,229,0.25)] no-underline transition-all"
+                    class="bg-[#4f46e5] hover:bg-[#4338ca] text-white font-sans font-semibold text-[13px] sm:text-[14px] tracking-[0.14px] leading-[20px] px-3 sm:px-[16px] py-2 sm:py-[10px] rounded-[8px] shadow-[0px_10px_15px_-3px_rgba(79,70,229,0.25)] whitespace-nowrap no-underline transition-all"
                     data-node-id="1:334"
                 >
-                    Mulai Chat Terenkripsi
+                    <span class="sm:hidden">Mulai Chat</span>
+                    <span class="hidden sm:inline">Mulai Chat Terenkripsi</span>
                 </a>
                 <div
                     class="hidden sm:flex bg-[#eaedff] border border-[#e2e8f0] rounded-full size-[32px] items-center justify-center shrink-0"
@@ -1049,11 +1050,11 @@
             </div>
 
             <div
-                class="border-t border-[#e2e8f0] pt-[24px] flex items-center justify-end"
+                class="border-t border-[#e2e8f0] pt-4 sm:pt-[24px] flex items-center justify-center sm:justify-end"
                 data-node-id="1:318"
             >
                 <span
-                    class="font-mono text-[#64748b] text-[16.234px] leading-[16.234px]"
+                    class="font-mono text-[#64748b] text-[11px] sm:text-[13px] md:text-[16.234px] leading-[1.2] sm:leading-[16.234px]"
                     data-node-id="1:320"
                 >
                     © 2026 GetTalk Inc
