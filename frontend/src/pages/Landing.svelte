@@ -564,7 +564,7 @@
                         </div>
                     </article>
 
-                    <!-- Card 2: Pesan Rahasia Hancur Otomatis (1:159) -->
+                    <!-- Card 2: Hapus & Bersihkan Obrolan Dua Arah (1:159) -->
                     <article
                         class="bg-white border border-[#e2e8f0] rounded-[24px] p-[24px] sm:p-[33px] shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] flex flex-col justify-between"
                         data-node-id="1:159"
@@ -584,7 +584,7 @@
                                     class="bg-[#eaedff] px-[12px] py-[4px] rounded-full font-mono font-bold text-[#3525cd] text-[12px] leading-[16px]"
                                     data-node-id="1:165"
                                 >
-                                    ⏱️ Musnah Otomatis
+                                    Kendali Obrolan
                                 </span>
                             </div>
 
@@ -593,15 +593,15 @@
                                     class="font-['Plus_Jakarta_Sans',sans-serif] font-bold text-[#131b2e] text-[22px] sm:text-[24px] tracking-[-0.36px] leading-[32px] m-0"
                                     data-node-id="1:169"
                                 >
-                                    Pesan Rahasia Hancur Otomatis
+                                    Edit Pesan &amp; Bersihkan Obrolan Dua Arah
                                 </h3>
                                 <p
                                     class="font-sans text-[#64748b] text-[15px] leading-[24.38px] m-0"
                                     data-node-id="1:171"
                                 >
-                                    Kirim informasi penting seperti nomor rekening atau catatan sensitif
-                                    dengan hitung mundur. Pesan akan musnah seketika di layar Anda dan
-                                    penerima setelah dibaca tanpa sisa di server.
+                                    Salah ketik atau ingin membersihkan riwayat obrolan penting? Edit
+                                    pesan kapan saja, hapus pesan tertentu, atau bersihkan seluruh isi
+                                    percakapan sekaligus di layar Anda maupun lawan bicara.
                                 </p>
                             </div>
                         </div>
@@ -618,13 +618,13 @@
                                             class="font-['Plus_Jakarta_Sans',sans-serif] font-bold text-[#131b2e] text-[12px] leading-[16px] m-0 truncate"
                                             data-node-id="1:179"
                                         >
-                                            Timer Penghancur Aktif
+                                            Bersihkan Percakapan Dua Arah
                                         </p>
                                         <p
                                             class="font-mono text-[#64748b] text-[11px] leading-[16.5px] m-0 truncate"
                                             data-node-id="1:181"
                                         >
-                                            Pesan terhapus otomatis setelah 5 menit
+                                            Riwayat obrolan dihapus untuk kedua belah pihak
                                         </p>
                                     </div>
                                 </div>
@@ -638,7 +638,7 @@
                                         class="font-mono font-bold text-[#3525cd] text-[12px] leading-[16px]"
                                         data-node-id="1:186"
                                     >
-                                        04:59
+                                        Instan
                                     </span>
                                 </div>
                             </div>
@@ -856,7 +856,7 @@
                         </div>
                     </div>
 
-                    <!-- Mini-Card 3: Ringan & Sekejap (1:255) -->
+                    <!-- Mini-Card 3: Kelola Perangkat Aktif (1:255) -->
                     <div
                         class="bg-white border border-[#e2e8f0] rounded-[16px] p-[21px] flex items-start gap-[14px]"
                         data-node-id="1:255"
@@ -872,14 +872,14 @@
                                 class="font-['Plus_Jakarta_Sans',sans-serif] font-bold text-[#131b2e] text-[14px] leading-[20px] m-0"
                                 data-node-id="1:261"
                             >
-                                Ringan &amp; Sekejap
+                                Pantau Perangkat Aktif
                             </h4>
                             <p
                                 class="font-sans text-[#64748b] text-[12px] leading-[19.5px] m-0"
                                 data-node-id="1:263"
                             >
-                                Dibangun dengan Svelte 5 &amp; Vite 8, responsif di segala perangkat
-                                tanpa lag atau makan RAM.
+                                Lihat perangkat mana saja yang sedang masuk dan putuskan akses dari
+                                jarak jauh kapan pun.
                             </p>
                         </div>
                     </div>

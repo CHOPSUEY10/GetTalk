@@ -5,16 +5,21 @@ import { push, replace, pop } from 'svelte-spa-router';
 import { authStore } from '../stores/auth.store.js';
 
 const routes = Object.fromEntries(
-    Object.entries(rawRoutes).map(([path, component]) => {
+    Object.entries(rawRoutes).map(([path, loader]) => {
         const config = /** @type {Record<string, any>} */ (routeConfig)[path];
         if (!config || config.type === 'FALLBACK') {
-            return [path, component];
+            return [
+                path,
+                wrap({
+                    asyncComponent: loader
+                })
+            ];
         }
 
         return [
             path,
             wrap({
-                component,
+                asyncComponent: loader,
                 conditions: (detail) => checkGuard(config, detail)
             })
         ];

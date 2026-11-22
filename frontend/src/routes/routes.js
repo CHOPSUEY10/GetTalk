@@ -1,17 +1,3 @@
-import Landing from '../pages/Landing.svelte';
-import Login from '../pages/Login.svelte';
-import Register from '../pages/Register.svelte';
-import Home from '../pages/Home.svelte';
-import Friends from '../pages/Friends.svelte';
-import Chat from '../pages/Chat.svelte';
-import NotFound from '../pages/Notfound.svelte';
-import SecuritySettings from '../pages/SecuritySettings.svelte';
-import Settings from '../pages/Settings.svelte';
-import ForgotPassword from '../pages/ForgotPassword.svelte';
-import VerifyOTP from '../pages/VerifyOTP.svelte';
-import VerifyEmail from '../pages/VerifyEmail.svelte';
-import ResetPassword from '../pages/ResetPassword.svelte';
-
 export const routeConfig = {
     '/': { type: 'ENTRY' },
     '/landing': { type: 'PUBLIC' },
@@ -32,22 +18,21 @@ export const routeConfig = {
 };
 
 export const rawRoutes = {
-    '/': Home,
-    '/landing': Landing,
-    '/login': Login,
-    '/register': Register,
-    '/register/verify': VerifyEmail,
-    '/verify-email': VerifyEmail,
-    '/forgot-password': ForgotPassword,
-    '/forgot-password/verify': VerifyOTP,
-    '/reset-password/verify': VerifyOTP,
-    '/reset-password': ResetPassword,
-    '/': Home,
-    '/friends': Friends,
-    '/settings': Settings,
-    '/settings/security': SecuritySettings,
-    '/settings/:tab': Settings,
-    '/chat/:conversationId': Chat,
-    '*': NotFound
+    '/': () => import('../pages/Home.svelte'),
+    '/landing': () => import('../pages/Landing.svelte'),
+    '/login': () => import('../pages/Login.svelte'),
+    '/register': () => import('../pages/Register.svelte'),
+    '/register/verify': () => import('../pages/VerifyEmail.svelte'),
+    '/verify-email': () => import('../pages/VerifyEmail.svelte'),
+    '/forgot-password': () => import('../pages/ForgotPassword.svelte'),
+    '/forgot-password/verify': () => import('../pages/VerifyOTP.svelte'),
+    '/reset-password/verify': () => import('../pages/VerifyOTP.svelte'),
+    '/reset-password': () => import('../pages/ResetPassword.svelte'),
+    '/friends': () => import('../pages/Friends.svelte'),
+    '/settings': () => import('../pages/Settings.svelte'),
+    '/settings/security': () => import('../pages/SecuritySettings.svelte'),
+    '/settings/:tab': () => import('../pages/Settings.svelte'),
+    '/chat/:conversationId': () => import('../pages/Chat.svelte'),
+    '*': () => import('../pages/Notfound.svelte')
 };
 
