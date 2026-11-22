@@ -1,6 +1,7 @@
 <script>
     import { themeStore } from "../../stores/ui.store.js";
     import Icon from "../common/Icon.svelte";
+    import gettalkLogo from "../../assets/gettalk.svg";
 </script>
 
 <div class="public-layout relative">
@@ -20,9 +21,9 @@
 
     <div class="public-container">
         <header class="public-header">
-            <div class="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-600 text-white font-extrabold text-xl mb-3 shadow-md shadow-indigo-500/25">
-                G
-            </div>
+            <a href="#/" class="inline-flex items-center justify-center mb-3 no-underline" aria-label="Halaman Utama GetTalk">
+                <img src={gettalkLogo} alt="GetTalk Logo" class="w-12 h-12 object-contain" />
+            </a>
             <h1 class="text-2xl font-bold tracking-tight text-slate-900 m-0">GetTalk</h1>
             <p class="text-xs font-medium text-slate-500 mt-1 flex items-center justify-center gap-1.5">
                 <Icon name="shield-check" size="xs" className="text-emerald-600" />

@@ -11,10 +11,11 @@
     import { replace } from "svelte-spa-router";
     import Icon from "../common/Icon.svelte";
     import ClearConversationDialog from "../chat/ClearConversationDialog.svelte";
+    import gettalkLogo from "../../assets/gettalk.svg";
 
     // Reactive safety check for authentication
     $: if (!$authStore.loading && !$authStore.authenticated) {
-        replace("/login");
+        replace("/");
     }
 
     function resolveHashPath() {
@@ -178,9 +179,7 @@
                     <Icon name="menu" size="md" />
                 </button>
                 <a href="#/" class="flex items-center gap-2 no-underline">
-                    <div class="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-sm shadow-xs">
-                        G
-                    </div>
+                    <img src={gettalkLogo} alt="GetTalk Logo" class="w-7 h-7 object-contain shrink-0" />
                     <span class="font-bold text-base text-slate-900 tracking-tight">GetTalk</span>
                 </a>
             </div>
@@ -252,9 +251,7 @@
                 <!-- Brand Header -->
                 <div class="px-4 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
                     <a href="#/" class="flex items-center gap-2.5 no-underline" on:click={() => uiStore.setSidebarOpen(false)}>
-                        <div class="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-bold text-base shadow-xs">
-                            G
-                        </div>
+                        <img src={gettalkLogo} alt="GetTalk Logo" class="w-8 h-8 object-contain shrink-0" />
                         <div>
                             <span class="font-bold text-base text-slate-900 tracking-tight block leading-none">GetTalk</span>
                             <span class="text-[10px] font-medium text-emerald-600 flex items-center gap-1 mt-0.5">

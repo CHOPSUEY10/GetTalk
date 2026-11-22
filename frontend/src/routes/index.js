@@ -24,7 +24,7 @@ const routes = Object.fromEntries(
 // Centralized 401 handling
 window.addEventListener('api:unauthorized', () => {
     authStore.setUnauthenticated();
-    replace('/login');
+    replace('/');
 });
 
 export { routes, push, replace, pop };

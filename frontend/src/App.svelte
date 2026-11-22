@@ -4,6 +4,7 @@
   import { routes } from "./routes/index.js";
   import { authStore } from "./stores/auth.store.js";
   import { socketStore } from "./stores/socket.store.js";
+  import gettalkLogo from "./assets/gettalk.svg";
 
   // Manage socket connection lifecycle based on authentication state
   $: if ($authStore.authenticated) {
@@ -23,8 +24,8 @@
     <div class="flex flex-col items-center justify-center min-h-screen w-full bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white p-6">
       <div class="flex flex-col items-center text-center max-w-sm">
         <!-- Logo Badge -->
-        <div class="relative flex items-center justify-center w-20 h-20 rounded-3xl bg-gradient-to-tr from-indigo-600 to-violet-500 shadow-2xl shadow-indigo-500/40 mb-6 animate-pulse">
-          <span class="text-3xl font-extrabold text-white">G</span>
+        <div class="relative flex items-center justify-center w-20 h-20 mb-6 animate-pulse">
+          <img src={gettalkLogo} alt="GetTalk Logo" class="w-20 h-20 object-contain drop-shadow-2xl" />
           <div class="absolute -inset-1 rounded-3xl bg-indigo-500/20 blur-sm -z-10"></div>
         </div>
 

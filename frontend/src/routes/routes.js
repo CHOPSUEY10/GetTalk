@@ -1,3 +1,4 @@
+import Landing from '../pages/Landing.svelte';
 import Login from '../pages/Login.svelte';
 import Register from '../pages/Register.svelte';
 import Home from '../pages/Home.svelte';
@@ -12,6 +13,8 @@ import VerifyEmail from '../pages/VerifyEmail.svelte';
 import ResetPassword from '../pages/ResetPassword.svelte';
 
 export const routeConfig = {
+    '/': { type: 'ENTRY' },
+    '/landing': { type: 'PUBLIC' },
     '/login': { type: 'PUBLIC' },
     '/register': { type: 'PUBLIC' },
     '/register/verify': { type: 'PUBLIC' },
@@ -20,7 +23,6 @@ export const routeConfig = {
     '/forgot-password/verify': { type: 'PUBLIC' },
     '/reset-password/verify': { type: 'PUBLIC' },
     '/reset-password': { type: 'PUBLIC' },
-    '/': { type: 'PROTECTED' },
     '/friends': { type: 'PROTECTED' },
     '/settings': { type: 'PROTECTED' },
     '/settings/security': { type: 'PROTECTED' },
@@ -30,6 +32,8 @@ export const routeConfig = {
 };
 
 export const rawRoutes = {
+    '/': Home,
+    '/landing': Landing,
     '/login': Login,
     '/register': Register,
     '/register/verify': VerifyEmail,

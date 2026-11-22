@@ -13,10 +13,13 @@ export function checkGuard(config, detail) {
         return false;
     }
 
+    if (config.type === 'ENTRY') {
+        return true;
+    }
+
     if (config.type === 'PROTECTED') {
         if (!auth.authenticated) {
-            const redirectUrl = encodeURIComponent(detail.location + (detail.querystring ? '?' + detail.querystring : ''));
-            replace(`/login?redirect=${redirectUrl}`);
+            replace('/');
             return false;
         }
     } else if (config.type === 'PUBLIC') {

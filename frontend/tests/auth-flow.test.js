@@ -482,4 +482,71 @@ describe('Frontend Registration -> Email OTP Verification -> Login Flow', () => 
       assert.ok(compiled.js.code.length > 0, `${filename} should compile cleanly`);
     }
   });
+
+  test('Landing.svelte, Home.svelte, App.svelte, PublicLayout.svelte, and AppShell.svelte compile cleanly and use gettalk.svg icon', () => {
+    const targets = [
+      ['Landing.svelte', '../src/pages/Landing.svelte'],
+      ['Home.svelte', '../src/pages/Home.svelte'],
+      ['App.svelte', '../src/App.svelte'],
+      ['PublicLayout.svelte', '../src/components/layout/PublicLayout.svelte'],
+      ['AppShell.svelte', '../src/components/layout/AppShell.svelte'],
+    ];
+
+    for (const [filename, relPath] of targets) {
+      const source = readFileSync(resolve(__dirname, relPath), 'utf8');
+      const compiled = compile(source, { filename });
+      assert.ok(compiled.js.code.length > 0, `${filename} should compile cleanly`);
+    }
+
+    for (const [filename, relPath] of [
+      ['Landing.svelte', '../src/pages/Landing.svelte'],
+      ['App.svelte', '../src/App.svelte'],
+      ['PublicLayout.svelte', '../src/components/layout/PublicLayout.svelte'],
+      ['AppShell.svelte', '../src/components/layout/AppShell.svelte'],
+    ]) {
+      const source = readFileSync(resolve(__dirname, relPath), 'utf8');
+      assert.ok(source.includes('assets/gettalk.svg'), `${filename} must use gettalk.svg icon`);
+    }
+
+    const landingSource = readFileSync(resolve(__dirname, '../src/pages/Landing.svelte'), 'utf8');
+    assert.ok(landingSource.includes('Aplikasi Chat Real-Time dengan'));
+    assert.ok(landingSource.includes('End-to-End Encryption (E2EE)'));
+    assert.ok(landingSource.includes('STANDAR KRIPTOGRAFI KLIEN'));
+    assert.ok(landingSource.includes('Mengedepankan Privasi dan Keamanan Pengguna'));
+    assert.ok(landingSource.includes('Mulai Obrolan Terenkripsi Penuh dengan GetTalk Hari Ini.'));
+  });
+
+  test('Page Flow: inactive session stays on landing page (/ or /landing), active session goes directly to main application (/)', () => {
+    const routesSource = readFileSync(resolve(__dirname, '../src/routes/routes.js'), 'utf8');
+    const guardsSource = readFileSync(resolve(__dirname, '../src/routes/guards.js'), 'utf8');
+    const routerIndexSource = readFileSync(resolve(__dirname, '../src/routes/index.js'), 'utf8');
+    const homeSource = readFileSync(resolve(__dirname, '../src/pages/Home.svelte'), 'utf8');
+    const appShellSource = readFileSync(
+      resolve(__dirname, '../src/components/layout/AppShell.svelte'),
+      'utf8'
+    );
+
+    assert.ok(routesSource.includes("'/': { type: 'ENTRY' }"), 'Root route / must be ENTRY type');
+    assert.ok(
+      routesSource.includes("'/landing': { type: 'PUBLIC' }"),
+      '/landing route must be PUBLIC type'
+    );
+    assert.ok(
+      guardsSource.includes("if (config.type === 'ENTRY')") &&
+        guardsSource.includes("replace('/')"),
+      'checkGuard must allow ENTRY route and redirect unauthenticated PROTECTED access to /'
+    );
+    assert.ok(
+      routerIndexSource.includes("replace('/')"),
+      'Unauthorized event handler must redirect to / (Landing Page)'
+    );
+    assert.ok(
+      appShellSource.includes('replace("/")'),
+      'AppShell must redirect unauthenticated users to / (Landing Page)'
+    );
+    assert.ok(
+      homeSource.includes('{#if !$authStore.authenticated}') && homeSource.includes('<Landing />'),
+      'Home.svelte must render Landing when session is not active and ProtectedLayout when active'
+    );
+  });
 });

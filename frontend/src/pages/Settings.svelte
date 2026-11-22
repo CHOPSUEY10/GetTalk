@@ -83,11 +83,8 @@
       <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 class="text-xl font-bold text-slate-900 dark:text-white">
-            Pengaturan Akun, Keamanan & Privasi
+            Pengaturan
           </h1>
-          <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Kelola profil tampilan, privasi ruang obrolan, autentikasi dua faktor, perangkat aktif, dan keamanan kunci E2EE.
-          </p>
         </div>
       </div>
 
@@ -102,12 +99,14 @@
               type="button"
               on:click={() => selectTab(tab.id)}
               aria-current={activeTab === tab.id ? "page" : undefined}
-              class="flex items-center gap-3 rounded-xl px-3.5 py-3 text-left transition-colors shrink-0 lg:w-full cursor-pointer {activeTab === tab.id
+              class="flex items-center gap-3 rounded-xl px-3.5 py-3 text-left transition-colors shrink-0 lg:w-full cursor-pointer {activeTab ===
+              tab.id
                 ? 'bg-indigo-50 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 font-semibold'
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-slate-200'}"
             >
               <div
-                class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 {activeTab === tab.id
+                class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 {activeTab ===
+                tab.id
                   ? 'bg-indigo-600 text-white'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}"
               >
@@ -115,7 +114,9 @@
               </div>
               <div class="min-w-0">
                 <p class="text-xs font-bold truncate">{tab.label}</p>
-                <p class="hidden sm:block text-[11px] text-slate-400 dark:text-slate-500 truncate mt-0.5">
+                <p
+                  class="hidden sm:block text-[11px] text-slate-400 dark:text-slate-500 truncate mt-0.5"
+                >
                   {tab.description}
                 </p>
               </div>
@@ -141,4 +142,3 @@
     </div>
   </div>
 </AppShell>
-
