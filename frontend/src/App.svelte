@@ -4,65 +4,78 @@
   import { routes } from "./routes/index.js";
   import { authStore } from "./stores/auth.store.js";
   import { socketStore } from "./stores/socket.store.js";
+  import ServiceUnavailable from "./pages/ServiceUnavailable.svelte";
   import gettalkLogo from "./assets/gettalk.svg";
 
   let serviceUnavailable = false;
+  let retryingConnection = false;
+  /** @type {string | null} */
+  let lastFailedEndpoint = null;
 
-  function handleServiceUnavailable() {
+  /**
+   * @param {CustomEvent<{ endpoint?: string, method?: string, status?: number }>} [event]
+   */
+  function handleServiceUnavailable(event) {
     serviceUnavailable = true;
+    retryingConnection = false;
+    lastFailedEndpoint = event?.detail?.endpoint || null;
+    socketStore.disconnect();
   }
 
-  function handleRetryConnection() {
-    serviceUnavailable = false;
-    authStore.initialize();
-    if ($authStore.authenticated) {
-      socketStore.reconnect();
+  function handleServiceAvailable() {
+    if (serviceUnavailable) {
+      serviceUnavailable = false;
+      retryingConnection = false;
+      lastFailedEndpoint = null;
+      if ($authStore.authenticated) {
+        socketStore.reconnect();
+      }
     }
   }
 
-  // Manage socket connection lifecycle based on authentication state
-  $: if ($authStore.authenticated) {
+  async function handleRetryConnection() {
+    retryingConnection = true;
+    try {
+      await authStore.initialize();
+      if (!serviceUnavailable && $authStore.authenticated) {
+        socketStore.reconnect();
+      }
+    } finally {
+      retryingConnection = false;
+    }
+  }
+
+  // Manage socket connection lifecycle based on authentication state and kill switch state
+  $: if ($authStore.authenticated && !serviceUnavailable) {
     socketStore.connect();
   } else {
     socketStore.disconnect();
   }
 
   onMount(() => {
-    authStore.initialize();
     if (typeof window !== "undefined") {
       window.addEventListener("api:service-unavailable", handleServiceUnavailable);
+      window.addEventListener("api:service-available", handleServiceAvailable);
     }
+    authStore.initialize();
   });
 
   onDestroy(() => {
     if (typeof window !== "undefined") {
       window.removeEventListener("api:service-unavailable", handleServiceUnavailable);
+      window.removeEventListener("api:service-available", handleServiceAvailable);
     }
   });
 </script>
 
 <main class="min-h-screen w-full">
   {#if serviceUnavailable}
-    <div
-      role="alert"
-      class="sticky top-0 z-50 w-full bg-rose-950/95 border-b border-rose-500/40 text-rose-100 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-sm"
-    >
-      <div>
-        <strong class="font-semibold">Layanan Sedang Dinonaktifkan Sementara (503)</strong>
-        <span class="block sm:inline sm:ml-2 text-rose-200/90 text-xs">
-          Server chat GetTalk sedang dalam pemeliharaan keamanan darurat. Silakan coba lagi beberapa saat lagi.
-        </span>
-      </div>
-      <button
-        type="button"
-        on:click={handleRetryConnection}
-        class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white cursor-pointer"
-      >
-        Coba Muat Ulang
-      </button>
-    </div>
-  {/if}
-  {#if $authStore.loading}
+    <ServiceUnavailable
+      retrying={retryingConnection}
+      {lastFailedEndpoint}
+      on:retry={handleRetryConnection}
+    />
+  {:else if $authStore.loading}
     <!-- Landing / Splash screen saat pertama kali masuk -->
     <div class="flex flex-col items-center justify-center min-h-screen w-full bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white p-6">
       <div class="flex flex-col items-center text-center max-w-sm">

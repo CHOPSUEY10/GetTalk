@@ -224,6 +224,79 @@ describe('Centralized Error Handling — Unit & Security Tests', () => {
       assert.equal(secondPass, firstPass);
       assert.equal(loggedErrors.length, 1);
     });
+
+    test('dispatches api:service-unavailable on every 503 API request (JSON and binary) and api:service-available on recovery', async () => {
+      /** @type {CustomEvent[]} */
+      const unavailableEvents = [];
+      /** @type {CustomEvent[]} */
+      const availableEvents = [];
+
+      const originalWindow = globalThis.window;
+      const eventTarget = new EventTarget();
+      globalThis.window = /** @type {any} */ ({
+        addEventListener: eventTarget.addEventListener.bind(eventTarget),
+        removeEventListener: eventTarget.removeEventListener.bind(eventTarget),
+        dispatchEvent: eventTarget.dispatchEvent.bind(eventTarget),
+      });
+
+      const onUnavailable = (e) => unavailableEvents.push(/** @type {CustomEvent} */ (e));
+      const onAvailable = (e) => availableEvents.push(/** @type {CustomEvent} */ (e));
+      globalThis.window.addEventListener('api:service-unavailable', onUnavailable);
+      globalThis.window.addEventListener('api:service-available', onAvailable);
+
+      try {
+        // 1. JSON API request returns 503 -> dispatches api:service-unavailable
+        globalThis.fetch = async () =>
+          new Response(
+            JSON.stringify({
+              error: {
+                code: 'SERVICE_UNAVAILABLE',
+                message: 'GetTalk chat server is temporarily unavailable due to emergency security maintenance.',
+              },
+            }),
+            { status: 503, headers: { 'Content-Type': 'application/json' } }
+          );
+
+        await assert.rejects(
+          () => api.get('/api/conversations'),
+          (err) => {
+            assert.equal(err.code, API_ERROR_CODES.SERVICE_UNAVAILABLE);
+            assert.equal(err.status, 503);
+            return true;
+          }
+        );
+        assert.equal(unavailableEvents.length, 1);
+        assert.equal(unavailableEvents[0].detail.endpoint, '/api/conversations');
+        assert.equal(unavailableEvents[0].detail.status, 503);
+
+        // 2. Binary attachment request returns 503 -> also dispatches api:service-unavailable
+        await assert.rejects(
+          () => api.getBinary('/api/attachments/file-123'),
+          (err) => {
+            assert.equal(err.code, API_ERROR_CODES.SERVICE_UNAVAILABLE);
+            assert.equal(err.status, 503);
+            return true;
+          }
+        );
+        assert.equal(unavailableEvents.length, 2);
+        assert.equal(unavailableEvents[1].detail.endpoint, '/api/attachments/file-123');
+        assert.equal(unavailableEvents[1].detail.status, 503);
+
+        // 3. Subsequent API request succeeds (200 OK) after SecAdmin re-enables backend -> dispatches api:service-available
+        globalThis.fetch = async () =>
+          new Response(JSON.stringify({ user: { id: 'u-1', username: 'alice' } }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+
+        await api.get('/api/auth/session', { suppressUnauthorizedEvent: true });
+        assert.equal(availableEvents.length, 1);
+        assert.equal(availableEvents[0].detail.endpoint, '/api/auth/session');
+        assert.equal(availableEvents[0].detail.status, 200);
+      } finally {
+        globalThis.window = originalWindow;
+      }
+    });
   });
 
   // ── 2. Encryption Error Normalization & E2EE Safety ────────────────────────

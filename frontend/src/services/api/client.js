@@ -79,7 +79,11 @@ async function fetchClient(endpoint, options = {}) {
       window.dispatchEvent(new CustomEvent('api:unauthorized'));
     }
     if (response.status === 503 && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('api:service-unavailable'));
+      window.dispatchEvent(
+        new CustomEvent('api:service-unavailable', {
+          detail: { endpoint, method, status: 503 },
+        })
+      );
     }
 
     const isExpectedAnonymousSessionCheck =
@@ -92,6 +96,14 @@ async function fetchClient(endpoint, options = {}) {
       data,
       silent: isExpectedAnonymousSessionCheck,
     });
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('api:service-available', {
+        detail: { endpoint, method, status: response.status },
+      })
+    );
   }
 
   return data;
@@ -132,12 +144,27 @@ async function fetchBinary(endpoint, options = {}) {
     if (response.status === 401 && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('api:unauthorized'));
     }
+    if (response.status === 503 && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('api:service-unavailable', {
+          detail: { endpoint, method, status: 503 },
+        })
+      );
+    }
     throw handleApiError(null, {
       endpoint,
       method,
       status: response.status,
       data,
     });
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('api:service-available', {
+        detail: { endpoint, method, status: response.status },
+      })
+    );
   }
 
   return response.arrayBuffer();

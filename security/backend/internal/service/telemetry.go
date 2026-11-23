@@ -44,7 +44,13 @@ func NewTelemetryService(
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
-	redisClient := NewRedisClient(cfg.Redis)
+	redisCfg := cfg.Redis
+	if strings.TrimSpace(redisCfg.RestURL) == "" &&
+		strings.TrimSpace(redisCfg.URL) == "" &&
+		cfg.Server.Environment == "development" {
+		redisCfg.URL = "redis://127.0.0.1:6379"
+	}
+	redisClient := NewRedisClient(redisCfg)
 	notifSvc := NewNotificationService(cfg.Notification, cfg.Redis, redisClient, nil, nil)
 	return &TelemetryService{
 		cfg:          cfg,

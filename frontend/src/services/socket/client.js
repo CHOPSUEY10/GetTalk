@@ -8,6 +8,24 @@ export const SOCKET_RECONNECTION_DELAY_MS = 1000;
 export const SOCKET_RECONNECTION_DELAY_MAX_MS = 5000;
 
 /**
+ * Notify the application when the backend rejects a Socket.IO operation with SERVICE_UNAVAILABLE (503).
+ * @param {any} response
+ */
+function notifyIfServiceUnavailable(response) {
+  if (
+    response?.code === 'SERVICE_UNAVAILABLE' &&
+    typeof window !== 'undefined' &&
+    typeof window.dispatchEvent === 'function'
+  ) {
+    window.dispatchEvent(
+      new CustomEvent('api:service-unavailable', {
+        detail: { endpoint: 'socket', method: 'SOCKET', status: 503 },
+      })
+    );
+  }
+}
+
+/**
  * Managed singleton Socket.IO client instance (Rule #18).
  * Never create additional Socket.IO instances inside components.
  */
@@ -27,7 +45,7 @@ export const socket = io(env.socketUrl, {
 /**
  * Join a specific conversation room on the server.
  * @param {string} conversationId
- * @returns {Promise<{ success?: boolean, error?: string }>}
+ * @returns {Promise<{ success?: boolean, error?: string, code?: string }>}
  */
 export function joinConversation(conversationId) {
   return new Promise((resolve) => {
@@ -37,6 +55,7 @@ export function joinConversation(conversationId) {
     }
 
     socket.emit(events.CONVERSATION_JOIN, { conversationId }, (response) => {
+      notifyIfServiceUnavailable(response);
       resolve(response || { success: true });
     });
   });
@@ -65,6 +84,7 @@ export function sendEncryptedMessage(payload) {
     }
 
     socket.emit(events.MESSAGE_SEND, payload, (response) => {
+      notifyIfServiceUnavailable(response);
       resolve(response || { success: true });
     });
   });
@@ -83,6 +103,7 @@ export function editEncryptedMessage(payload) {
     }
 
     socket.emit(events.MESSAGE_EDIT, payload, (response) => {
+      notifyIfServiceUnavailable(response);
       resolve(response || { success: true });
     });
   });
@@ -101,6 +122,7 @@ export function deleteEncryptedMessage(payload) {
     }
 
     socket.emit(events.MESSAGE_DELETE, payload, (response) => {
+      notifyIfServiceUnavailable(response);
       resolve(response || { success: true });
     });
   });

@@ -26,6 +26,7 @@ type Config struct {
 type RedisConfig struct {
 	RestURL            string `yaml:"-" json:"-"`
 	RestToken          string `yaml:"-" json:"-"`
+	URL                string `yaml:"-" json:"-"`
 	KillSwitchKey      string `yaml:"kill_switch_key" json:"killSwitchKey"`
 	CooldownPrefix     string `yaml:"cooldown_prefix" json:"cooldownPrefix"`
 	CooldownTTLSeconds int    `yaml:"cooldown_ttl_seconds" json:"cooldownTtlSeconds"`
@@ -286,7 +287,13 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.Security.BootstrapAdminPassword = v
 	}
 
-	// Upstash Redis configuration via environment variables
+	// Upstash Redis / TCP Redis configuration via environment variables
+	if v := strings.TrimSpace(os.Getenv("REDIS_URL")); v != "" {
+		cfg.Redis.URL = v
+	}
+	if v := strings.TrimSpace(os.Getenv("TELEMETRY_REDIS_URL")); v != "" {
+		cfg.Redis.URL = v
+	}
 	if v := strings.TrimSpace(os.Getenv("UPSTASH_REDIS_REST_URL")); v != "" {
 		cfg.Redis.RestURL = v
 	}
