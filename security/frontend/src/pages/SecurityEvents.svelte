@@ -67,9 +67,10 @@
         description: ingestDescription.trim(),
       });
       showIngestModal = false;
-      if (created.severity.toLowerCase() === 'critical') {
+      const sev = created.severity.toLowerCase();
+      if (sev === 'critical' || sev === 'high') {
         uiStore.notify(
-          `Critical event ${created.id} ingested. Async email notification triggered to secadmin (with Redis cooldown).`,
+          `${created.severity.toUpperCase()} event ${created.id} ingested. Async email notification triggered to secadmin (with Redis cooldown).`,
           'info'
         );
       } else {
@@ -285,7 +286,7 @@
           <div>
             <h3 class="text-sm font-bold text-white">Ingest SIEM Security Event</h3>
             <p class="text-[11px] text-slate-400">
-              Events with <code class="font-mono text-rose-300">critical</code> severity trigger an asynchronous email alert to <code class="font-mono text-slate-200">secadmin</code> (rate-limited via Upstash Redis SetNX cooldown).
+              Events with <code class="font-mono text-amber-300">high</code> or <code class="font-mono text-rose-300">critical</code> severity trigger an asynchronous email alert to <code class="font-mono text-slate-200">secadmin</code> (rate-limited via Upstash Redis SetNX cooldown).
             </p>
           </div>
           <button
@@ -324,7 +325,7 @@
               <select id="ingest-severity" bind:value={ingestSeverity} class="sec-input w-full">
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
-                <option value="high">High</option>
+                <option value="high">High (Notify SecAdmin)</option>
                 <option value="critical">Critical (Notify SecAdmin)</option>
               </select>
             </div>

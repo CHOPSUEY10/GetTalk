@@ -11,6 +11,24 @@
   let retryingConnection = false;
   /** @type {string | null} */
   let lastFailedEndpoint = null;
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let recoveryPollTimer = null;
+
+  function stopRecoveryPolling() {
+    if (recoveryPollTimer) {
+      clearInterval(recoveryPollTimer);
+      recoveryPollTimer = null;
+    }
+  }
+
+  function startRecoveryPolling() {
+    if (recoveryPollTimer || typeof window === "undefined") return;
+    recoveryPollTimer = setInterval(() => {
+      if (serviceUnavailable && !retryingConnection) {
+        handleRetryConnection();
+      }
+    }, 4000);
+  }
 
   /**
    * @param {CustomEvent<{ endpoint?: string, method?: string, status?: number }>} [event]
@@ -20,9 +38,11 @@
     retryingConnection = false;
     lastFailedEndpoint = event?.detail?.endpoint || null;
     socketStore.disconnect();
+    startRecoveryPolling();
   }
 
   function handleServiceAvailable() {
+    stopRecoveryPolling();
     if (serviceUnavailable) {
       serviceUnavailable = false;
       retryingConnection = false;
@@ -61,6 +81,7 @@
   });
 
   onDestroy(() => {
+    stopRecoveryPolling();
     if (typeof window !== "undefined") {
       window.removeEventListener("api:service-unavailable", handleServiceUnavailable);
       window.removeEventListener("api:service-available", handleServiceAvailable);

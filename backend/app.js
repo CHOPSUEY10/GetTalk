@@ -22,7 +22,7 @@ app.use(corsMiddleware);
 app.use(express.json({ limit: '500kb' }));
 app.use(sessionMiddleware);
 
-app.get('/', (req, res) => {
+app.get('/', killSwitchMiddleware, (req, res) => {
   res.json({
     name: 'GetTalk Backend',
     environment: env.nodeEnv,

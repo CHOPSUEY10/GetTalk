@@ -163,7 +163,7 @@ func (e *Engine) EvaluateCycle(ctx context.Context, now time.Time) ([]models.Sec
 					Payload:   *saved,
 				})
 			}
-			if isNew && e.notifier != nil && strings.EqualFold(saved.Severity, models.SeverityCritical) {
+			if isNew && e.notifier != nil && (strings.EqualFold(saved.Severity, models.SeverityCritical) || strings.EqualFold(saved.Severity, models.SeverityHigh)) {
 				e.notifier.NotifyCriticalEventAsync(models.TelemetryEvent{
 					ID:         saved.ID,
 					Source:     models.SourceSIEM,

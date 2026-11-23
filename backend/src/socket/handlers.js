@@ -38,6 +38,7 @@ export function registerHandlers(socket, io) {
           ack({ error: msg, code: SERVICE_UNAVAILABLE });
         }
         if (typeof socket.emit === 'function') {
+          socket.emit('service:unavailable', { code: SERVICE_UNAVAILABLE, message: msg });
           socket.emit('error', { code: SERVICE_UNAVAILABLE, message: msg });
         }
         const disconnectTimer = setTimeout(() => {

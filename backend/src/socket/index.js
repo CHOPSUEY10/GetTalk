@@ -28,6 +28,7 @@ function createKillSwitchMonitor(io, intervalMs = 2000) {
     const msg =
       'GetTalk chat server is temporarily unavailable due to emergency security maintenance.';
     for (const sock of sockets.values()) {
+      sock.emit('service:unavailable', { code: SERVICE_UNAVAILABLE, message: msg });
       sock.emit('error', { code: SERVICE_UNAVAILABLE, message: msg });
       const t = setTimeout(() => {
         sock.disconnect(true);

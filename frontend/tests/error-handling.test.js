@@ -294,6 +294,20 @@ describe('Centralized Error Handling — Unit & Security Tests', () => {
         assert.equal(availableEvents[0].detail.endpoint, '/api/auth/session');
         assert.equal(availableEvents[0].detail.status, 200);
 
+        // 3b. Unauthenticated session probe (401 Unauthorized) also dispatches api:service-available so 503 screen recovers
+        globalThis.fetch = async () =>
+          new Response(JSON.stringify({ error: { code: 'UNAUTHORIZED', message: 'Not authenticated' } }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          });
+
+        await assert.rejects(() =>
+          api.get('/api/auth/session', { suppressUnauthorizedEvent: true })
+        );
+        assert.equal(availableEvents.length, 2);
+        assert.equal(availableEvents[1].detail.endpoint, '/api/auth/session');
+        assert.equal(availableEvents[1].detail.status, 401);
+
         // 4. Socket.IO error event with SERVICE_UNAVAILABLE also dispatches api:service-unavailable
         socket.listeners('error').forEach((fn) =>
           fn({ code: 'SERVICE_UNAVAILABLE', message: 'Chat server disabled' })

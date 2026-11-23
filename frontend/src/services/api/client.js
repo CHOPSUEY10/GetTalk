@@ -84,6 +84,12 @@ async function fetchClient(endpoint, options = {}) {
           detail: { endpoint, method, status: 503 },
         })
       );
+    } else if (response.status > 0 && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('api:service-available', {
+          detail: { endpoint, method, status: response.status },
+        })
+      );
     }
 
     const isExpectedAnonymousSessionCheck =
@@ -148,6 +154,12 @@ async function fetchBinary(endpoint, options = {}) {
       window.dispatchEvent(
         new CustomEvent('api:service-unavailable', {
           detail: { endpoint, method, status: 503 },
+        })
+      );
+    } else if (response.status > 0 && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('api:service-available', {
+          detail: { endpoint, method, status: response.status },
         })
       );
     }

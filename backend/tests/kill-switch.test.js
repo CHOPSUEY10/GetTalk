@@ -133,6 +133,7 @@ describe('Chat Server Kill Switch — Integration & Security Tests', () => {
     redisMap.set('siem:backend:enabled', 'false');
 
     for (const ep of [
+      '/',
       '/api/users/me',
       '/api/conversations',
       '/api/friends',

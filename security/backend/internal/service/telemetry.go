@@ -278,7 +278,7 @@ func (s *TelemetryService) IngestSecurityEvent(ctx context.Context, input models
 		}
 	}
 
-	if IsCriticalSeverity(rawSeverity) && s.notifSvc != nil {
+	if IsHighOrCriticalSeverity(rawSeverity) && s.notifSvc != nil {
 		s.notifSvc.NotifyCriticalEventAsync(event, description)
 	}
 

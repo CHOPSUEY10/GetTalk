@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"sync"
@@ -25,6 +26,13 @@ type EmailSender interface {
 // IsCriticalSeverity checks whether a severity level is "critical" (case-insensitive).
 func IsCriticalSeverity(severity string) bool {
 	return strings.EqualFold(strings.TrimSpace(severity), models.SeverityCritical)
+}
+
+// IsHighOrCriticalSeverity checks whether a severity level is "high" or "critical" (case-insensitive).
+func IsHighOrCriticalSeverity(severity string) bool {
+	trimmed := strings.TrimSpace(severity)
+	return strings.EqualFold(trimmed, models.SeverityCritical) ||
+		strings.EqualFold(trimmed, models.SeverityHigh)
 }
 
 // ContainsHeaderInjection checks if any string contains CR, LF, or null byte characters that could enable SMTP Header Injection.
@@ -60,6 +68,36 @@ func NewSMTPEmailSender(cfg config.NotificationConfig) *SMTPEmailSender {
 	return &SMTPEmailSender{cfg: cfg}
 }
 
+func isPlaceholderAddress(addr string) bool {
+	lower := strings.ToLower(strings.TrimSpace(addr))
+	return strings.Contains(lower, "@gettalk.example") ||
+		strings.Contains(lower, "@gettalk.local") ||
+		strings.Contains(lower, "@gettalk.app")
+}
+
+// extractEnvelopeEmail extracts the raw RFC 5321 email address (without display name or angle brackets)
+// required by Go's smtp.SendMail for MAIL FROM and RCPT TO commands.
+func extractEnvelopeEmail(raw, fallbackUser string) string {
+	cleaned := SanitizeHeaderValue(raw)
+	fallback := SanitizeHeaderValue(fallbackUser)
+
+	var addr string
+	if parsed, err := mail.ParseAddress(cleaned); err == nil && parsed.Address != "" {
+		addr = strings.TrimSpace(parsed.Address)
+	} else if start := strings.IndexByte(cleaned, '<'); start != -1 {
+		if end := strings.IndexByte(cleaned[start+1:], '>'); end != -1 {
+			addr = strings.TrimSpace(cleaned[start+1 : start+1+end])
+		}
+	} else {
+		addr = strings.TrimSpace(cleaned)
+	}
+
+	if (addr == "" || isPlaceholderAddress(addr)) && strings.Contains(fallback, "@") && !isPlaceholderAddress(fallback) {
+		return fallback
+	}
+	return addr
+}
+
 func (s *SMTPEmailSender) SendEmail(_ context.Context, to, subject, body string) error {
 	if ContainsHeaderInjection(to, subject, s.cfg.SMTPFrom) {
 		return fmt.Errorf("%w: invalid characters in email header", ErrValidation)
@@ -67,6 +105,7 @@ func (s *SMTPEmailSender) SendEmail(_ context.Context, to, subject, body string)
 	cleanTo := SanitizeHeaderValue(to)
 	cleanFrom := SanitizeHeaderValue(s.cfg.SMTPFrom)
 	cleanSubject := SanitizeHeaderValue(subject)
+	cleanUser := SanitizeHeaderValue(s.cfg.SMTPUser)
 
 	if cleanTo == "" {
 		return fmt.Errorf("%w: recipient address is required", ErrValidation)
@@ -76,15 +115,34 @@ func (s *SMTPEmailSender) SendEmail(_ context.Context, to, subject, body string)
 		return nil
 	}
 
+	envelopeFrom := extractEnvelopeEmail(cleanFrom, cleanUser)
+	envelopeTo := extractEnvelopeEmail(cleanTo, cleanUser)
+	if envelopeFrom == "" {
+		envelopeFrom = cleanUser
+	}
+	if envelopeTo == "" {
+		return fmt.Errorf("%w: recipient address is required", ErrValidation)
+	}
+	if cleanFrom == "" || isPlaceholderAddress(cleanFrom) {
+		if envelopeFrom != "" {
+			cleanFrom = fmt.Sprintf("GetTalk SIEM <%s>", envelopeFrom)
+		}
+	}
+	if isPlaceholderAddress(cleanTo) && envelopeTo != "" {
+		cleanTo = envelopeTo
+	}
+
 	port := s.cfg.SMTPPort
 	if port <= 0 {
 		port = 587
 	}
-	addr := fmt.Sprintf("%s:%d", strings.TrimSpace(s.cfg.SMTPHost), port)
+	host := strings.TrimSpace(s.cfg.SMTPHost)
+	addr := fmt.Sprintf("%s:%d", host, port)
 
 	var auth smtp.Auth
-	if strings.TrimSpace(s.cfg.SMTPUser) != "" {
-		auth = smtp.PlainAuth("", strings.TrimSpace(s.cfg.SMTPUser), s.cfg.SMTPPass, strings.TrimSpace(s.cfg.SMTPHost))
+	if cleanUser != "" {
+		cleanPass := strings.Join(strings.Fields(s.cfg.SMTPPass), "")
+		auth = smtp.PlainAuth("", cleanUser, cleanPass, host)
 	}
 
 	msg := fmt.Sprintf(
@@ -95,7 +153,7 @@ func (s *SMTPEmailSender) SendEmail(_ context.Context, to, subject, body string)
 		body,
 	)
 
-	if err := smtp.SendMail(addr, auth, cleanFrom, []string{cleanTo}, []byte(msg)); err != nil {
+	if err := smtp.SendMail(addr, auth, envelopeFrom, []string{envelopeTo}, []byte(msg)); err != nil {
 		// Redact any underlying SMTP error so credentials/hosts are never exposed in logs
 		return ErrEmailDeliveryFailed
 	}
@@ -104,12 +162,13 @@ func (s *SMTPEmailSender) SendEmail(_ context.Context, to, subject, body string)
 
 // NotificationService coordinates asynchronous email notifications with Upstash Redis cooldown protection.
 type NotificationService struct {
-	notifCfg config.NotificationConfig
-	redisCfg config.RedisConfig
-	redis    RedisClient
-	sender   EmailSender
-	logger   *slog.Logger
-	wg       sync.WaitGroup
+	notifCfg         config.NotificationConfig
+	redisCfg         config.RedisConfig
+	redis            RedisClient
+	fallbackCooldown *MemoryRedisClient
+	sender           EmailSender
+	logger           *slog.Logger
+	wg               sync.WaitGroup
 }
 
 // NewNotificationService constructs a NotificationService.
@@ -129,8 +188,13 @@ func NewNotificationService(
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if strings.TrimSpace(notifCfg.SecAdminEmail) == "" {
-		notifCfg.SecAdminEmail = "secadmin@gettalk.example"
+	if strings.TrimSpace(notifCfg.SecAdminEmail) == "" ||
+		(isPlaceholderAddress(notifCfg.SecAdminEmail) && strings.Contains(notifCfg.SMTPUser, "@") && !isPlaceholderAddress(notifCfg.SMTPUser)) {
+		if strings.Contains(notifCfg.SMTPUser, "@") && !isPlaceholderAddress(notifCfg.SMTPUser) {
+			notifCfg.SecAdminEmail = strings.TrimSpace(notifCfg.SMTPUser)
+		} else if strings.TrimSpace(notifCfg.SecAdminEmail) == "" {
+			notifCfg.SecAdminEmail = "secadmin@gettalk.example"
+		}
 	}
 	if strings.TrimSpace(redisCfg.CooldownPrefix) == "" {
 		redisCfg.CooldownPrefix = "siem:alert:cooldown:"
@@ -139,11 +203,12 @@ func NewNotificationService(
 		redisCfg.CooldownTTLSeconds = 300
 	}
 	return &NotificationService{
-		notifCfg: notifCfg,
-		redisCfg: redisCfg,
-		redis:    redisClient,
-		sender:   sender,
-		logger:   logger,
+		notifCfg:         notifCfg,
+		redisCfg:         redisCfg,
+		redis:            redisClient,
+		fallbackCooldown: NewMemoryRedisClient(),
+		sender:           sender,
+		logger:           logger,
 	}
 }
 
@@ -159,17 +224,17 @@ func (n *NotificationService) CooldownKey(sourceIP, eventID string) string {
 	return n.redisCfg.CooldownPrefix + identifier
 }
 
-// NotifyCriticalEventAsync checks if the event is critical and asynchronously sends an email to secadmin
-// if not rate-limited by the Upstash Redis SetNX cooldown.
+// NotifyCriticalEventAsync checks if the event is high or critical severity and asynchronously sends an email
+// to secadmin if not rate-limited by the Upstash Redis SetNX cooldown.
 func (n *NotificationService) NotifyCriticalEventAsync(ev models.TelemetryEvent, description string) bool {
-	if !n.notifCfg.Enabled || !IsCriticalSeverity(ev.Severity) {
+	if !n.notifCfg.Enabled || !IsHighOrCriticalSeverity(ev.Severity) {
 		return false
 	}
 
 	n.wg.Add(1)
 	go func(event models.TelemetryEvent, desc string) {
 		defer n.wg.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
 		_ = n.processCriticalEventNotification(ctx, event, desc)
@@ -178,11 +243,11 @@ func (n *NotificationService) NotifyCriticalEventAsync(ev models.TelemetryEvent,
 }
 
 func (n *NotificationService) processCriticalEventNotification(ctx context.Context, ev models.TelemetryEvent, description string) error {
-	if !IsCriticalSeverity(ev.Severity) {
+	if !IsHighOrCriticalSeverity(ev.Severity) {
 		return nil
 	}
 	if ContainsHeaderInjection(ev.ID, ev.SourceIP, ev.EventType, description) {
-		n.logger.Warn("blocked potential SMTP header injection in critical event notification")
+		n.logger.Warn("blocked potential SMTP header injection in security event notification")
 		return ErrValidation
 	}
 
@@ -195,9 +260,13 @@ func (n *NotificationService) processCriticalEventNotification(ctx context.Conte
 	key := n.CooldownKey(ev.SourceIP, ev.ID)
 	allowed, err := n.redis.SetNX(ctx, key, "1", ttl)
 	if err != nil {
-		// Log safe message without leaking Redis credentials or URL
-		n.logger.Warn("redis cooldown check failed; proceeding cautiously", "event_id", SanitizeHeaderValue(ev.ID))
-		return ErrRedisUnavailable
+		// Log safe message without leaking Redis credentials or URL and fall back to local memory cooldown
+		n.logger.Warn("redis cooldown check failed; using in-memory cooldown fallback", "event_id", SanitizeHeaderValue(ev.ID))
+		if n.fallbackCooldown != nil {
+			allowed, _ = n.fallbackCooldown.SetNX(ctx, key, "1", ttl)
+		} else {
+			allowed = true
+		}
 	}
 	if !allowed {
 		// Cooldown active: suppress duplicate email flooding
@@ -209,11 +278,17 @@ func (n *NotificationService) processCriticalEventNotification(ctx context.Conte
 	cleanSource := SanitizeHeaderValue(ev.Source)
 	cleanType := SanitizeHeaderValue(ev.EventType)
 	cleanDesc := SanitizeHeaderValue(description)
+	upperSev := strings.ToUpper(SanitizeHeaderValue(ev.Severity))
+	if upperSev == "" {
+		upperSev = "CRITICAL"
+	}
 
-	subject := fmt.Sprintf("[CRITICAL] GetTalk SIEM Security Event (%s)", cleanID)
+	subject := fmt.Sprintf("[%s] GetTalk SIEM Security Event (%s)", upperSev, cleanID)
 	body := fmt.Sprintf(
-		"CRITICAL Security Event Detected\n\nEvent ID: %s\nSeverity: CRITICAL\nSource: %s\nEvent Type: %s\nSource IP: %s\nDescription: %s\nTimestamp: %s\n",
+		"%s Security Event Detected\n\nEvent ID: %s\nSeverity: %s\nSource: %s\nEvent Type: %s\nSource IP: %s\nDescription: %s\nTimestamp: %s\n",
+		upperSev,
 		cleanID,
+		upperSev,
 		cleanSource,
 		cleanType,
 		cleanIP,
@@ -222,7 +297,7 @@ func (n *NotificationService) processCriticalEventNotification(ctx context.Conte
 	)
 
 	if err := n.sender.SendEmail(ctx, n.notifCfg.SecAdminEmail, subject, body); err != nil {
-		n.logger.Error("failed to send critical security event email notification", "event_id", cleanID)
+		n.logger.Error("failed to send security event email notification", "event_id", cleanID, "severity", upperSev)
 		return ErrEmailDeliveryFailed
 	}
 	return nil
@@ -238,7 +313,7 @@ func (n *NotificationService) NotifyKillSwitchDeactivatedAsync(actorID, reason s
 	n.wg.Add(1)
 	go func(actor, rsn string) {
 		defer n.wg.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
 		cleanActor := SanitizeHeaderValue(actor)
