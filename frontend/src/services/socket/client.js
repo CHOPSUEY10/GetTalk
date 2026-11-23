@@ -12,8 +12,9 @@ export const SOCKET_RECONNECTION_DELAY_MAX_MS = 5000;
  * @param {any} response
  */
 function notifyIfServiceUnavailable(response) {
+  const code = response?.code || response?.data?.code || response?.error?.code;
   if (
-    response?.code === 'SERVICE_UNAVAILABLE' &&
+    code === 'SERVICE_UNAVAILABLE' &&
     typeof window !== 'undefined' &&
     typeof window.dispatchEvent === 'function'
   ) {
@@ -42,23 +43,65 @@ export const socket = io(env.socketUrl, {
   },
 });
 
+socket.on('error', (err) => {
+  notifyIfServiceUnavailable(err);
+});
+
+/**
+ * Emit a Socket.IO event with acknowledgement while preventing hanging Promises if the server
+ * disconnects the socket mid-flight (e.g. when the emergency kill switch is activated).
+ *
+ * @param {string} eventName
+ * @param {any} payload
+ * @param {any} disconnectedFallback
+ * @returns {Promise<any>}
+ */
+function emitWithAck(eventName, payload, disconnectedFallback) {
+  return new Promise((resolve) => {
+    if (!socket.connected) {
+      resolve(disconnectedFallback);
+      return;
+    }
+
+    let settled = false;
+    const finish = (res) => {
+      if (settled) return;
+      settled = true;
+      socket.off('disconnect', onDisconnect);
+      clearTimeout(timer);
+      notifyIfServiceUnavailable(res);
+      resolve(res);
+    };
+
+    const onDisconnect = () => {
+      finish(disconnectedFallback);
+    };
+
+    const timer = setTimeout(() => {
+      finish(disconnectedFallback);
+    }, 4000);
+    if (typeof timer?.unref === 'function') {
+      timer.unref();
+    }
+
+    socket.once('disconnect', onDisconnect);
+    socket.emit(eventName, payload, (response) => {
+      finish(response || { success: true });
+    });
+  });
+}
+
 /**
  * Join a specific conversation room on the server.
  * @param {string} conversationId
  * @returns {Promise<{ success?: boolean, error?: string, code?: string }>}
  */
 export function joinConversation(conversationId) {
-  return new Promise((resolve) => {
-    if (!socket.connected) {
-      resolve({ error: 'Socket is not connected' });
-      return;
-    }
-
-    socket.emit(events.CONVERSATION_JOIN, { conversationId }, (response) => {
-      notifyIfServiceUnavailable(response);
-      resolve(response || { success: true });
-    });
-  });
+  return emitWithAck(
+    events.CONVERSATION_JOIN,
+    { conversationId },
+    { error: 'Socket is not connected' }
+  );
 }
 
 /**
@@ -77,16 +120,9 @@ export function leaveConversation(conversationId) {
  * @returns {Promise<{ success?: boolean, message?: any, error?: string, code?: string, disconnected?: boolean }>}
  */
 export function sendEncryptedMessage(payload) {
-  return new Promise((resolve) => {
-    if (!socket.connected) {
-      resolve({ error: 'Socket is not connected', disconnected: true });
-      return;
-    }
-
-    socket.emit(events.MESSAGE_SEND, payload, (response) => {
-      notifyIfServiceUnavailable(response);
-      resolve(response || { success: true });
-    });
+  return emitWithAck(events.MESSAGE_SEND, payload, {
+    error: 'Socket is not connected',
+    disconnected: true,
   });
 }
 
@@ -96,16 +132,9 @@ export function sendEncryptedMessage(payload) {
  * @returns {Promise<{ success?: boolean, message?: any, error?: string, code?: string, disconnected?: boolean }>}
  */
 export function editEncryptedMessage(payload) {
-  return new Promise((resolve) => {
-    if (!socket.connected) {
-      resolve({ error: 'Socket is not connected', disconnected: true });
-      return;
-    }
-
-    socket.emit(events.MESSAGE_EDIT, payload, (response) => {
-      notifyIfServiceUnavailable(response);
-      resolve(response || { success: true });
-    });
+  return emitWithAck(events.MESSAGE_EDIT, payload, {
+    error: 'Socket is not connected',
+    disconnected: true,
   });
 }
 
@@ -115,16 +144,9 @@ export function editEncryptedMessage(payload) {
  * @returns {Promise<{ success?: boolean, deletedAt?: string, error?: string, code?: string, disconnected?: boolean }>}
  */
 export function deleteEncryptedMessage(payload) {
-  return new Promise((resolve) => {
-    if (!socket.connected) {
-      resolve({ error: 'Socket is not connected', disconnected: true });
-      return;
-    }
-
-    socket.emit(events.MESSAGE_DELETE, payload, (response) => {
-      notifyIfServiceUnavailable(response);
-      resolve(response || { success: true });
-    });
+  return emitWithAck(events.MESSAGE_DELETE, payload, {
+    error: 'Socket is not connected',
+    disconnected: true,
   });
 }
 
@@ -174,16 +196,11 @@ export function emitTypingStop(conversationId) {
  * @returns {Promise<{ success?: boolean, isOnline?: boolean, lastSeenAt?: string | null, error?: string }>}
  */
 export function emitPresenceUpdate(active) {
-  return new Promise((resolve) => {
-    if (!socket.connected) {
-      resolve({ success: false, error: 'Socket is not connected' });
-      return;
-    }
-
-    socket.emit(events.PRESENCE_UPDATE, { active: Boolean(active) }, (response) => {
-      resolve(response || { success: true });
-    });
-  });
+  return emitWithAck(
+    events.PRESENCE_UPDATE,
+    { active: Boolean(active) },
+    { success: false, error: 'Socket is not connected' }
+  );
 }
 
 /**
@@ -202,15 +219,13 @@ export function emitPresenceHeartbeat(active = true) {
  * @returns {Promise<{ success?: boolean, presence?: Record<string, { isOnline: boolean, lastSeenAt: string | null }>, error?: string }>}
  */
 export function syncPresence(userIds) {
-  return new Promise((resolve) => {
-    const uniqueIds = Array.from(new Set((userIds || []).filter(Boolean)));
-    if (!socket.connected || uniqueIds.length === 0) {
-      resolve({ success: false, presence: {} });
-      return;
-    }
-
-    socket.emit(events.PRESENCE_SYNC, { userIds: uniqueIds }, (response) => {
-      resolve(response || { success: true, presence: {} });
-    });
-  });
+  const uniqueIds = Array.from(new Set((userIds || []).filter(Boolean)));
+  if (!socket.connected || uniqueIds.length === 0) {
+    return Promise.resolve({ success: false, presence: {} });
+  }
+  return emitWithAck(
+    events.PRESENCE_SYNC,
+    { userIds: uniqueIds },
+    { success: false, presence: {} }
+  );
 }

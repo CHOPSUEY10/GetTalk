@@ -108,6 +108,13 @@ export const uploadAttachment = async ({
   });
 
   if (!putRes.ok) {
+    if (putRes.status === 503 && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('api:service-unavailable', {
+          detail: { endpoint: '/api/storage', method: 'PUT', status: 503 },
+        })
+      );
+    }
     throw new ApiError(putRes.status, 'Failed to upload encrypted attachment to storage.');
   }
 
@@ -125,6 +132,13 @@ export const downloadAttachmentContent = async (attachmentId) => {
   const res = await fetch(resolvePresignedUrl(url), { method: 'GET' });
 
   if (!res.ok) {
+    if (res.status === 503 && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('api:service-unavailable', {
+          detail: { endpoint: '/api/storage', method: 'GET', status: 503 },
+        })
+      );
+    }
     throw new ApiError(res.status, 'Failed to download encrypted attachment.');
   }
 

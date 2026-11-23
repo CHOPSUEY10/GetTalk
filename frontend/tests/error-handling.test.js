@@ -293,6 +293,14 @@ describe('Centralized Error Handling — Unit & Security Tests', () => {
         assert.equal(availableEvents.length, 1);
         assert.equal(availableEvents[0].detail.endpoint, '/api/auth/session');
         assert.equal(availableEvents[0].detail.status, 200);
+
+        // 4. Socket.IO error event with SERVICE_UNAVAILABLE also dispatches api:service-unavailable
+        socket.listeners('error').forEach((fn) =>
+          fn({ code: 'SERVICE_UNAVAILABLE', message: 'Chat server disabled' })
+        );
+        assert.equal(unavailableEvents.length, 3);
+        assert.equal(unavailableEvents[2].detail.endpoint, 'socket');
+        assert.equal(unavailableEvents[2].detail.status, 503);
       } finally {
         globalThis.window = originalWindow;
       }

@@ -11,9 +11,39 @@ import {
   setLiveSocketChecker,
   pruneStalePresenceOnStartup,
 } from '../services/presence.service.js';
+import { isChatBackendEnabled } from '../services/kill-switch.service.js';
+import { SERVICE_UNAVAILABLE } from '../errors/error-codes.js';
 import { createCorsOptions } from '../config/cors.js';
 import sessionMiddleware from '../config/session.js';
 import logger from '../utils/logger.js';
+
+function createKillSwitchMonitor(io, intervalMs = 2000) {
+  const timer = setInterval(async () => {
+    const sockets = io?.sockets?.sockets;
+    if (!sockets || sockets.size === 0) return;
+
+    const enabled = await isChatBackendEnabled();
+    if (enabled) return;
+
+    const msg =
+      'GetTalk chat server is temporarily unavailable due to emergency security maintenance.';
+    for (const sock of sockets.values()) {
+      sock.emit('error', { code: SERVICE_UNAVAILABLE, message: msg });
+      const t = setTimeout(() => {
+        sock.disconnect(true);
+      }, 50);
+      if (typeof t?.unref === 'function') {
+        t.unref();
+      }
+    }
+  }, intervalMs);
+
+  if (typeof timer.unref === 'function') {
+    timer.unref();
+  }
+
+  return () => clearInterval(timer);
+}
 
 export function createSocketServer(httpServer, env) {
   const io = new Server(httpServer, {
@@ -42,9 +72,11 @@ export function createSocketServer(httpServer, env) {
   pruneStalePresenceOnStartup().catch(() => {});
 
   const stopPresenceMonitor = createPresenceMonitor(io);
+  const stopKillSwitchMonitor = createKillSwitchMonitor(io);
   const originalClose = io.close.bind(io);
   io.close = (cb) => {
     stopPresenceMonitor();
+    stopKillSwitchMonitor();
     setLiveSocketChecker(null);
     return originalClose(cb);
   };

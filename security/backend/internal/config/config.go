@@ -1,9 +1,11 @@
 package config
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -201,7 +203,8 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Load reads configuration from an optional YAML file and overlays environment variables.
+// Load reads configuration from an optional YAML file and overlays environment variables
+// (including .env files from security/backend and shared backend/.env* when not set in process env).
 func Load(yamlPath string) (*Config, error) {
 	cfg := DefaultConfig()
 
@@ -215,6 +218,7 @@ func Load(yamlPath string) (*Config, error) {
 		}
 	}
 
+	loadDotEnvDefaults(cfg.Server.Environment, yamlPath)
 	applyEnvOverrides(cfg)
 
 	if err := cfg.Validate(); err != nil {
@@ -222,6 +226,95 @@ func Load(yamlPath string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func stripQuotes(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 {
+		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+			return strings.TrimSpace(s[1 : len(s)-1])
+		}
+	}
+	return s
+}
+
+func parseDotEnvFile(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		idx := strings.IndexByte(line, '=')
+		if idx <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:idx])
+		val := stripQuotes(line[idx+1:])
+		if key == "" || val == "" {
+			continue
+		}
+		if existing := strings.TrimSpace(os.Getenv(key)); existing == "" {
+			_ = os.Setenv(key, val)
+		}
+	}
+}
+
+func loadDotEnvDefaults(envMode, yamlPath string) {
+	mode := strings.TrimSpace(os.Getenv("TELEMETRY_ENV"))
+	if mode == "" {
+		mode = strings.TrimSpace(envMode)
+	}
+	if mode == "" {
+		mode = "development"
+	}
+	if mode == "test" {
+		return
+	}
+
+	baseDirs := []string{".", "..", "../.."}
+	if yamlPath != "" {
+		yamlDir := filepath.Dir(yamlPath)
+		baseDirs = append(baseDirs, yamlDir, filepath.Join(yamlDir, ".."), filepath.Join(yamlDir, "../.."))
+	}
+
+	var candidateDirs []string
+	seenDirs := make(map[string]bool)
+	addDir := func(d string) {
+		clean := filepath.Clean(d)
+		if !seenDirs[clean] {
+			seenDirs[clean] = true
+			candidateDirs = append(candidateDirs, clean)
+		}
+	}
+
+	for _, b := range baseDirs {
+		addDir(b)
+		addDir(filepath.Join(b, "security", "backend"))
+		addDir(filepath.Join(b, "backend"))
+	}
+
+	fileNames := []string{
+		fmt.Sprintf(".env.%s.local", mode),
+		fmt.Sprintf(".env.%s", mode),
+		".env.local",
+		".env",
+	}
+
+	for _, dir := range candidateDirs {
+		for _, name := range fileNames {
+			parseDotEnvFile(filepath.Join(dir, name))
+		}
+	}
 }
 
 func applyEnvOverrides(cfg *Config) {

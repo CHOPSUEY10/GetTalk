@@ -191,9 +191,9 @@ function sortChronologically(list) {
 function isIdentityKeyChangedError(err) {
   return Boolean(
     err instanceof IdentityKeyChangedError ||
-      err?.name === 'IdentityKeyChangedError' ||
-      err?.code === ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED ||
-      err?.category === ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED
+    err?.name === 'IdentityKeyChangedError' ||
+    err?.code === ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED ||
+    err?.category === ENCRYPTION_ERROR_CODES.IDENTITY_KEY_CHANGED
   );
 }
 
@@ -723,8 +723,8 @@ function createMessagesStore() {
                 ...s.messagesByConversation,
                 [conversationId]: list.map((m) =>
                   m.id === item.queueId ||
-                  m.queueId === item.queueId ||
-                  m.client_message_id === item.queueId
+                    m.queueId === item.queueId ||
+                    m.client_message_id === item.queueId
                     ? { ...m, status: /** @type {MessageItem['status']} */ ('sending') }
                     : m
                 )
@@ -788,8 +788,8 @@ function createMessagesStore() {
             const list = s.messagesByConversation[conversationId] || [];
             const replaced = list.map((m) =>
               m.id === item.queueId ||
-              m.queueId === item.queueId ||
-              m.client_message_id === item.queueId
+                m.queueId === item.queueId ||
+                m.client_message_id === item.queueId
                 ? confirmed
                 : m
             );
@@ -931,7 +931,7 @@ function createMessagesStore() {
             await assertPeerIdentityKey(peerUserId);
           } catch (err) {
             if (isIdentityKeyChangedError(err)) {
-              conversationsStore.recordKeyChange(/** @type {any} */ (err), conversationId);
+              conversationsStore.recordKeyChange(/** @type {any} */(err), conversationId);
             }
           }
         }
@@ -948,12 +948,12 @@ function createMessagesStore() {
           if (peerUserId) {
             await assertPeerIdentityKey(peerUserId);
           }
-          const encrypted = await encryptMessage(conversationId, /** @type {string} */ (resolvedPlaintext));
+          const encrypted = await encryptMessage(conversationId, /** @type {string} */(resolvedPlaintext));
           bodyCiphertext = encrypted.bodyCiphertext;
           nonce = encrypted.nonce;
         } catch (err) {
           if (isIdentityKeyChangedError(err) && resolvedPlaintext) {
-            conversationsStore.recordKeyChange(/** @type {any} */ (err), conversationId);
+            conversationsStore.recordKeyChange(/** @type {any} */(err), conversationId);
             return messagesStore.queuePendingMessage(conversationId, {
               plaintext: resolvedPlaintext,
               senderId,
@@ -1132,7 +1132,7 @@ function createMessagesStore() {
 
       // 2. Send the owning E2EE message first so the upload is authorized against its messageId
       const sizeStr = (file.size / 1024).toFixed(1);
-      const caption = `📎 [Berkas Terenkripsi] ${file.name} (${sizeStr} KB)`;
+      const caption = `📎${file.name} (${sizeStr} KB)`;
 
       const confirmed = await messagesStore.sendMessage(conversationId, {
         plaintext: caption,

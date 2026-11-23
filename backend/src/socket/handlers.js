@@ -37,10 +37,16 @@ export function registerHandlers(socket, io) {
         if (typeof ack === 'function') {
           ack({ error: msg, code: SERVICE_UNAVAILABLE });
         }
-        const err = new Error(msg);
-        /** @type {any} */ (err).data = { code: SERVICE_UNAVAILABLE, message: msg };
-        socket.disconnect(true);
-        return next(err);
+        if (typeof socket.emit === 'function') {
+          socket.emit('error', { code: SERVICE_UNAVAILABLE, message: msg });
+        }
+        const disconnectTimer = setTimeout(() => {
+          socket.disconnect(true);
+        }, 50);
+        if (typeof disconnectTimer?.unref === 'function') {
+          disconnectTimer.unref();
+        }
+        return;
       }
       return next();
     });

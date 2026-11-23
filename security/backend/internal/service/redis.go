@@ -30,15 +30,19 @@ type RedisClient interface {
 	Set(ctx context.Context, key string, value string, ttl time.Duration) error
 }
 
-// NewRedisClient creates an Upstash REST Redis client when configured, a standard TCP Redis client when REDIS_URL is configured and reachable, or falls back to an in-memory Redis store.
+// NewRedisClient creates an Upstash REST Redis client when configured, a standard TCP/TLS Redis client
+// when REDIS_URL is configured, or falls back to a local TCP Redis / in-memory Redis store.
 func NewRedisClient(cfg config.RedisConfig) RedisClient {
 	if strings.TrimSpace(cfg.RestURL) != "" && strings.TrimSpace(cfg.RestToken) != "" {
 		return NewUpstashRedisClient(cfg.RestURL, cfg.RestToken, nil)
 	}
 	if strings.TrimSpace(cfg.URL) != "" {
 		tcpClient, err := NewTCPRedisClient(cfg.URL)
-		if err == nil && tcpClient.Ping(context.Background()) == nil {
-			return tcpClient
+		if err == nil {
+			// If explicitly configured (or reachable), use the TCP/TLS Redis client so state is shared with Chat Server.
+			if !strings.HasPrefix(strings.TrimSpace(cfg.URL), "redis://127.0.0.1:6379") || tcpClient.Ping(context.Background()) == nil {
+				return tcpClient
+			}
 		}
 	}
 	return NewMemoryRedisClient()
@@ -213,7 +217,7 @@ func NewTCPRedisClient(rawURL string) (*TCPRedisClient, error) {
 		password: password,
 		db:       db,
 		useTLS:   strings.EqualFold(u.Scheme, "rediss"),
-		timeout:  2 * time.Second,
+		timeout:  5 * time.Second,
 	}, nil
 }
 
@@ -289,6 +293,9 @@ func (c *TCPRedisClient) execRESP(ctx context.Context, args ...string) (string, 
 		var authErr error
 		if c.username != "" {
 			_, _, authErr = sendAndRead("AUTH", c.username, c.password)
+			if authErr != nil {
+				_, _, authErr = sendAndRead("AUTH", c.password)
+			}
 		} else {
 			_, _, authErr = sendAndRead("AUTH", c.password)
 		}
