@@ -322,6 +322,9 @@
 
     // Re-join room and resync Redis presence whenever socket reconnects
     $: {
+        if (selfConnected && conversationId && $socketStore.joinedRooms.includes(conversationId)) {
+            roomStatus = "connected";
+        }
         if (selfConnected && !wasSocketConnected && conversationId) {
             wasSocketConnected = true;
             socketStore.joinRoom(conversationId).then((res) => {

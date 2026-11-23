@@ -139,10 +139,50 @@ function createSocketStore() {
   let heartbeatTimer = null;
   /** @type {ReturnType<typeof setTimeout> | null} */
   let idleTimer = null;
+  /** @type {ReturnType<typeof setTimeout>[]} */
+  let reconnectSyncTimers = [];
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let fallbackReconnectTimer = null;
   /** @type {(() => void) | null} */
   let cleanupBrowserListeners = null;
   let lastActivityBumpMs = 0;
   let wasAppLocked = false;
+  let manuallyDisconnected = false;
+
+  const clearReconnectSyncTimers = () => {
+    for (const t of reconnectSyncTimers) {
+      clearTimeout(t);
+    }
+    reconnectSyncTimers = [];
+  };
+
+  const stopFallbackReconnect = () => {
+    if (fallbackReconnectTimer) {
+      clearTimeout(fallbackReconnectTimer);
+      fallbackReconnectTimer = null;
+    }
+  };
+
+  const scheduleFallbackReconnect = (delayMs = 3000) => {
+    stopFallbackReconnect();
+    if (manuallyDisconnected || socket.connected) return;
+    const st = get(internalStore);
+    if (
+      st.errorCode === API_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED ||
+      st.errorCode === API_ERROR_CODES.SERVICE_UNAVAILABLE
+    ) {
+      return;
+    }
+    fallbackReconnectTimer = setTimeout(() => {
+      fallbackReconnectTimer = null;
+      if (!manuallyDisconnected && !socket.connected) {
+        connectSocket();
+      }
+    }, delayMs);
+    if (typeof fallbackReconnectTimer?.unref === 'function') {
+      fallbackReconnectTimer.unref();
+    }
+  };
 
   const stopHeartbeat = () => {
     if (heartbeatTimer) {
@@ -320,6 +360,15 @@ function createSocketStore() {
       if (document.visibilityState === 'hidden') {
         setLocalActivity(false);
       } else {
+        if (!socket.connected && !manuallyDisconnected) {
+          const st = get(internalStore);
+          if (
+            st.errorCode !== API_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED &&
+            st.errorCode !== API_ERROR_CODES.SERVICE_UNAVAILABLE
+          ) {
+            connectSocket();
+          }
+        }
         setLocalActivity(true);
       }
     };
@@ -363,7 +412,19 @@ function createSocketStore() {
       if (now - lastActivityBumpMs < 1000) return;
       lastActivityBumpMs = now;
 
-      if (!isBrowserDocumentActive() || !socket.connected) return;
+      if (!isBrowserDocumentActive()) return;
+      if (!socket.connected) {
+        if (!manuallyDisconnected) {
+          const st = get(internalStore);
+          if (
+            st.errorCode !== API_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED &&
+            st.errorCode !== API_ERROR_CODES.SERVICE_UNAVAILABLE
+          ) {
+            connectSocket();
+          }
+        }
+        return;
+      }
 
       const state = get(internalStore);
       if (!state.selfActive) {
@@ -446,8 +507,15 @@ function createSocketStore() {
   // Sync with native socket lifecycle events
   socket.on('connect', () => {
     uiStore.dismissNotification(SOCKET_QUOTA_NOTIFICATION_ID);
+    clearReconnectSyncTimers();
+    stopFallbackReconnect();
 
     const activeNow = isBrowserDocumentActive() && !Boolean(get(userStore)?.appLock?.locked);
+    const prevActiveConvId =
+      get(internalStore).activeConversationId ||
+      get(conversationsStore).activeConversationId ||
+      get(conversationsStore).activeConversation?.id ||
+      null;
 
     update((state) => ({
       ...state,
@@ -466,7 +534,6 @@ function createSocketStore() {
     conversationsStore.initSocketListeners();
     attachBrowserPresenceListeners();
 
-    emitPresenceUpdate(activeNow).catch(() => { });
     if (activeNow) {
       startHeartbeat();
       resetIdleTimer();
@@ -475,13 +542,74 @@ function createSocketStore() {
       stopIdleTimer();
     }
 
-    friendsStore.loadAll();
-    syncKnownPeers();
+    // Re-announce local active state first, re-join open conversation room after backend restart,
+    // and then synchronize authoritative Redis presence for all known peers.
+    (async () => {
+      try {
+        await emitPresenceUpdate(activeNow);
+      } catch {
+        // Best-effort presence update
+      }
+
+      if (prevActiveConvId && socket.connected) {
+        try {
+          const joinRes = await apiJoin(prevActiveConvId);
+          if (joinRes?.success) {
+            update((state) => {
+              let nextMap = state.presenceByUserId;
+              if (joinRes?.peerPresence?.userId) {
+                nextMap = mergePresenceMap(
+                  nextMap,
+                  joinRes.peerPresence.userId,
+                  Boolean(joinRes.peerPresence.isOnline),
+                  true,
+                  joinRes.peerPresence.lastSeenAt ?? null
+                );
+              }
+              return {
+                ...state,
+                activeConversationId: prevActiveConvId,
+                joinedRooms: Array.from(new Set([...state.joinedRooms, prevActiveConvId])),
+                presenceByUserId: nextMap,
+              };
+            });
+            if (joinRes?.peerPresence?.userId) {
+              conversationsStore.applyPresenceUpdate(joinRes.peerPresence);
+              friendsStore.applyPresenceUpdate(joinRes.peerPresence);
+            }
+          }
+        } catch {
+          // Best-effort room rejoin
+        }
+      }
+
+      await Promise.allSettled([
+        friendsStore.loadAll(),
+        get(conversationsStore).conversations?.length > 0
+          ? conversationsStore.loadConversations()
+          : Promise.resolve(),
+      ]);
+      syncKnownPeers();
+    })();
+
+    // Follow-up presence syncs to catch peers whose Socket.IO reconnect backoff completed slightly later
+    for (const delayMs of [1500, 3500]) {
+      const t = setTimeout(() => {
+        if (socket.connected) {
+          syncKnownPeers();
+        }
+      }, delayMs);
+      if (typeof t?.unref === 'function') {
+        t.unref();
+      }
+      reconnectSyncTimers.push(t);
+    }
   });
 
   socket.on('disconnect', () => {
     stopHeartbeat();
     stopIdleTimer();
+    clearReconnectSyncTimers();
     const nowIso = new Date().toISOString();
 
     update((state) => {
@@ -496,7 +624,6 @@ function createSocketStore() {
           ...state,
           connected: false,
           id: null,
-          activeConversationId: null,
           joinedRooms: [],
           selfActive: false,
           selfLastSeenAt: nowIso,
@@ -509,7 +636,6 @@ function createSocketStore() {
         status: 'disconnected',
         connected: false,
         id: null,
-        activeConversationId: null,
         joinedRooms: [],
         selfActive: false,
         selfLastSeenAt: nowIso,
@@ -522,6 +648,7 @@ function createSocketStore() {
 
     conversationsStore.markAllPeersOffline();
     friendsStore.markAllFriendsOffline();
+    scheduleFallbackReconnect(3000);
   });
 
   socket.on('connect_error', (err) => {
@@ -598,7 +725,17 @@ function createSocketStore() {
       errorCode: normalized.code,
       errorMessage: userMessage,
     }));
+
+    if (normalized.code !== API_ERROR_CODES.SERVICE_UNAVAILABLE) {
+      scheduleFallbackReconnect(3500);
+    }
   });
+
+  if (socket.io && typeof socket.io.on === 'function') {
+    socket.io.on('reconnect_failed', () => {
+      scheduleFallbackReconnect(3000);
+    });
+  }
 
   socket.on('reconnect_attempt', () => {
     update((state) => ({
@@ -608,6 +745,8 @@ function createSocketStore() {
   });
 
   const connectSocket = () => {
+    manuallyDisconnected = false;
+    stopFallbackReconnect();
     if (!socket.connected) {
       if (socket.io?.opts) {
         socket.io.opts.reconnection = true;
@@ -632,14 +771,19 @@ function createSocketStore() {
      * Manually re-initiate WebSocket connection (e.g. after closing other active tabs).
      */
     reconnect: () => {
+      manuallyDisconnected = false;
+      stopFallbackReconnect();
       if (socket.connected) {
         socket.disconnect();
       }
       connectSocket();
     },
     disconnect: () => {
+      manuallyDisconnected = true;
       stopHeartbeat();
       stopIdleTimer();
+      clearReconnectSyncTimers();
+      stopFallbackReconnect();
       detachBrowserPresenceListeners();
 
       if (socket.io?.opts) {
@@ -672,17 +816,13 @@ function createSocketStore() {
           if (!hasOnline && !hasLastSeen) continue;
           const existing = nextMap[uid];
           const nextOnline = hasOnline ? Boolean(item.isOnline) : Boolean(existing?.isOnline);
-          const nextLastSeen = hasLastSeen ? (item.lastSeenAt ?? null) : (existing?.lastSeenAt ?? null);
-          if (existing && existing.isOnline === nextOnline && existing.lastSeenAt === nextLastSeen) {
-            continue;
-          }
-          nextMap = {
-            ...nextMap,
-            [uid]: {
-              isOnline: nextOnline,
-              lastSeenAt: nextLastSeen,
-            },
-          };
+          nextMap = mergePresenceMap(
+            nextMap,
+            uid,
+            nextOnline,
+            hasLastSeen,
+            hasLastSeen ? (item.lastSeenAt ?? null) : undefined
+          );
         }
         return nextMap === state.presenceByUserId
           ? state

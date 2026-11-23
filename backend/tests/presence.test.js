@@ -18,6 +18,8 @@ import {
   clearUserActiveSockets,
   getPresence,
   getPresenceBatch,
+  setLiveSocketChecker,
+  pruneStalePresenceOnStartup,
 } from '../src/services/presence.service.js';
 import { registerHandlers } from '../src/socket/handlers.js';
 import {
@@ -401,6 +403,109 @@ describe('Redis Presence Service — Non-Redundant Metadata & Sync', () => {
     } finally {
       client?.disconnect();
       await new Promise((resolve) => io.close(resolve));
+    }
+  });
+
+  test('Backend restart presence sync: prunes pre-restart ghost socket IDs so reconnect broadcasts online and disconnect transitions offline', async () => {
+    // Use an in-memory mock Redis hash store so this test always runs even when local Redis daemon is stopped
+    const store = new Map();
+    const mockRedis = {
+      async keys(pattern) {
+        const prefix = pattern.replace(/\*$/, '');
+        return Array.from(store.keys()).filter((k) => k.startsWith(prefix));
+      },
+      async hGetAll(key) {
+        return { ...(store.get(key) || {}) };
+      },
+      multi() {
+        const ops = [];
+        return {
+          hDel(key, fields) {
+            ops.push(() => {
+              const cur = store.get(key) || {};
+              for (const f of [].concat(fields)) delete cur[f];
+              store.set(key, cur);
+            });
+            return this;
+          },
+          hSet(key, field, val) {
+            ops.push(() => {
+              const cur = store.get(key) || {};
+              cur[field] = val;
+              store.set(key, cur);
+            });
+            return this;
+          },
+          expire() {
+            return this;
+          },
+          async exec() {
+            ops.forEach((fn) => fn());
+            return [];
+          },
+        };
+      },
+    };
+
+    const userA = 'restart-user-a';
+    const userB = 'restart-user-b';
+    const tBeforeRestart = 1_770_010_000_000;
+
+    try {
+      // 1. Before backend restart: both userA and userB had active sockets in Redis
+      await markSocketActive(userA, 'old-sock-a', { nowMs: tBeforeRestart, redis: mockRedis });
+      await markSocketActive(userB, 'old-sock-b', { nowMs: tBeforeRestart, redis: mockRedis });
+
+      // 2. Backend restarts! The new Socket.IO server process initially has 0 connected sockets.
+      const liveSockets = new Set();
+      setLiveSocketChecker((sockId) => liveSockets.has(sockId));
+
+      // Startup prune immediately cleans pre-restart ghost sockets and marks users offline until they reconnect
+      const cleaned = await pruneStalePresenceOnStartup({
+        nowMs: tBeforeRestart + 1_000,
+        redis: mockRedis,
+      });
+      assert.equal(cleaned, 2);
+
+      const presBWhileDisconnected = await getPresence(userB, {
+        nowMs: tBeforeRestart + 1_500,
+        redis: mockRedis,
+      });
+      assert.equal(presBWhileDisconnected.isOnline, false);
+      assert.equal(presBWhileDisconnected.lastSeenAt, new Date(tBeforeRestart).toISOString());
+
+      // 3. Even if startup prune hadn't run yet for a key, reconnecting with a new socket ID
+      //    within the 45s TTL window must prune `old-sock-a` and report `transitioned: true`!
+      store.set(presenceKey(userA), { [socketField('old-sock-a')]: String(tBeforeRestart) });
+      liveSockets.add('new-sock-a');
+
+      const reconnectRes = await markSocketActive(userA, 'new-sock-a', {
+        nowMs: tBeforeRestart + 2_000,
+        redis: mockRedis,
+      });
+      assert.equal(reconnectRes.isOnline, true);
+      assert.equal(
+        reconnectRes.transitioned,
+        true,
+        'Reconnecting after backend restart must trigger offline -> online transition'
+      );
+      assert.equal(reconnectRes.activeCount, 1);
+
+      const hashAfterReconnect = await mockRedis.hGetAll(presenceKey(userA));
+      assert.equal(hashAfterReconnect[socketField('old-sock-a')], undefined);
+      assert.equal(hashAfterReconnect[socketField('new-sock-a')], String(tBeforeRestart + 2_000));
+
+      // 4. When userA hides tab or disconnects `new-sock-a`, userA must immediately transition offline
+      //    (never stuck online due to `old-sock-a`).
+      const inactiveRes = await markSocketInactive(userA, 'new-sock-a', {
+        nowMs: tBeforeRestart + 5_000,
+        redis: mockRedis,
+      });
+      assert.equal(inactiveRes.isOnline, false);
+      assert.equal(inactiveRes.transitioned, true);
+      assert.equal(inactiveRes.activeCount, 0);
+    } finally {
+      setLiveSocketChecker(null);
     }
   });
 });

@@ -230,6 +230,10 @@ export async function handleSocketActive(io, socket) {
     });
   }
 
+  // Always synchronize reciprocal presence visibility with connected peers on connect/active
+  // so peers reconnecting in any order after a backend restart immediately see each other's live state.
+  await syncPresenceVisibilityForPeers(io, userId);
+
   return result;
 }
 
@@ -411,4 +415,23 @@ export function createPresenceMonitor(
   }
 
   return () => clearInterval(timer);
+}
+
+/**
+ * Mark all currently connected sockets inactive in Redis during graceful server shutdown
+ * so no stale `s:<socketId>` fields remain in Redis across a backend restart.
+ *
+ * @param {import('socket.io').Server | null | undefined} io
+ */
+export async function deactivateAllConnectedSockets(io) {
+  const sockets = io?.sockets?.sockets;
+  if (!sockets || sockets.size === 0) return;
+
+  const tasks = [];
+  for (const socket of sockets.values()) {
+    const userId = socket?.data?.user?.id;
+    if (!userId) continue;
+    tasks.push(handleSocketInactive(io, socket).catch(() => {}));
+  }
+  await Promise.allSettled(tasks);
 }

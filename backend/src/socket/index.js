@@ -7,6 +7,10 @@ import {
   handleSocketInactive,
   createPresenceMonitor,
 } from './presence.js';
+import {
+  setLiveSocketChecker,
+  pruneStalePresenceOnStartup,
+} from '../services/presence.service.js';
 import { createCorsOptions } from '../config/cors.js';
 import sessionMiddleware from '../config/session.js';
 import logger from '../utils/logger.js';
@@ -32,10 +36,16 @@ export function createSocketServer(httpServer, env) {
   // Enforce maximum 3 concurrent WebSocket connections per user account (Rule #18)
   io.use(socketConnectionLimit);
 
+  // Authoritatively verify Redis socket fields against live connected sockets on this server
+  // so any ghost `s:<socketId>` left over from before a backend restart is immediately pruned.
+  setLiveSocketChecker((socketId) => Boolean(io?.sockets?.sockets?.has(socketId)));
+  pruneStalePresenceOnStartup().catch(() => {});
+
   const stopPresenceMonitor = createPresenceMonitor(io);
   const originalClose = io.close.bind(io);
   io.close = (cb) => {
     stopPresenceMonitor();
+    setLiveSocketChecker(null);
     return originalClose(cb);
   };
 
@@ -58,6 +68,10 @@ export function createSocketServer(httpServer, env) {
     } else {
       socket.data.presenceActive = false;
       socket.data.lastHeartbeatAt = Date.now();
+      if (userId) {
+        // Prune any stale pre-restart socket entries in Redis when reconnecting in a hidden tab
+        handleSocketInactive(io, socket).catch(() => {});
+      }
     }
 
     socket.on('disconnect', (reason) => {

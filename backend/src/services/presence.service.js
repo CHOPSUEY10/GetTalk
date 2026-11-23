@@ -32,6 +32,23 @@ export const PRESENCE_TTL_MS = 45_000;
 /** Key retention TTL in seconds (7 days) to prevent unbounded Redis growth. */
 export const PRESENCE_RETENTION_SECONDS = 7 * 24 * 60 * 60;
 
+/** @type {((socketId: string) => boolean) | null} */
+let liveSocketChecker = null;
+
+/**
+ * Register a callback that checks whether a `socketId` is currently connected
+ * to the active Socket.IO server process.
+ *
+ * When registered, any `s:<socketId>` field in Redis whose socket ID is not
+ * present on the live Socket.IO server (e.g. left over in Redis from before a
+ * backend restart or crash) is immediately treated as stale and pruned.
+ *
+ * @param {((socketId: string) => boolean) | null} checkerFn
+ */
+export function setLiveSocketChecker(checkerFn) {
+  liveSocketChecker = typeof checkerFn === 'function' ? checkerFn : null;
+}
+
 /**
  * @param {string} userId
  * @returns {string}
@@ -89,8 +106,10 @@ function inspectPresenceHash(hash, nowMs, ttlMs) {
 
   for (const [field, rawVal] of Object.entries(hash || {})) {
     if (!field.startsWith(SOCKET_FIELD_PREFIX)) continue;
+    const sockId = field.slice(SOCKET_FIELD_PREFIX.length);
     const ts = Number(rawVal);
-    if (Number.isFinite(ts) && ts > 0 && nowMs - ts < ttlMs) {
+    const isLiveOnServer = liveSocketChecker ? Boolean(liveSocketChecker(sockId)) : true;
+    if (isLiveOnServer && Number.isFinite(ts) && ts > 0 && nowMs - ts < ttlMs) {
       activeSocketFields.push(field);
     } else {
       expiredSocketFields.push(field);
@@ -504,6 +523,60 @@ export async function getPresenceBatch(
       result.set(id, fallbackEntry(id));
     }
     return result;
+  }
+}
+
+/**
+ * Scan all `presence:*` hashes in Redis on server startup (or demand) and prune
+ * any `s:<socketId>` fields that do not exist on the currently running Socket.IO
+ * server instance. Ensures zero ghost online statuses remain after a backend restart.
+ *
+ * @param {{ nowMs?: number, ttlMs?: number, redis?: any }} [options]
+ * @returns {Promise<number>} Number of user presence hashes cleaned
+ */
+export async function pruneStalePresenceOnStartup({
+  nowMs = Date.now(),
+  ttlMs = PRESENCE_TTL_MS,
+  redis: injectedRedis = null,
+} = {}) {
+  const redis = await getRedisClient(injectedRedis);
+  if (!redis) return 0;
+
+  try {
+    const keys = await redis.keys(`${PRESENCE_KEY_PREFIX}*`);
+    if (!Array.isArray(keys) || keys.length === 0) return 0;
+
+    let cleanedCount = 0;
+    const nowIso = new Date(nowMs).toISOString();
+
+    for (const key of keys) {
+      const hash = await redis.hGetAll(key);
+      const {
+        activeSocketFields,
+        expiredSocketFields,
+        storedLastSeenAt,
+        expiredLastSeenAt,
+      } = inspectPresenceHash(hash, nowMs, ttlMs);
+
+      if (expiredSocketFields.length === 0) continue;
+
+      const multi = redis.multi();
+      multi.hDel(key, expiredSocketFields);
+      if (activeSocketFields.length === 0) {
+        const nextLastSeen = maxTimestamp(storedLastSeenAt, expiredLastSeenAt) || nowIso;
+        multi.hSet(key, LAST_SEEN_FIELD, nextLastSeen);
+      }
+      multi.expire(key, PRESENCE_RETENTION_SECONDS);
+      await multi.exec();
+      cleanedCount += 1;
+    }
+
+    return cleanedCount;
+  } catch (err) {
+    logger.warn('Failed to prune stale presence keys on startup', {
+      message: err?.message,
+    });
+    return 0;
   }
 }
 

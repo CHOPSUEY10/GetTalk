@@ -5,6 +5,7 @@ import env from './src/config/env.js';
 import pool from './src/config/database.js';
 import { closeRedis } from './src/config/redis.js';
 import { createSocketServer } from './src/socket/index.js';
+import { deactivateAllConnectedSockets } from './src/socket/presence.js';
 import logger from './src/utils/logger.js';
 
 const httpServer = http.createServer(app);
@@ -37,6 +38,7 @@ async function shutdown(signal) {
   forceExitTimer.unref();
 
   try {
+    await deactivateAllConnectedSockets(io).catch(() => {});
     await new Promise((resolve) => io.close(() => resolve()));
     await new Promise((resolve) => {
       if (!httpServer.listening) return resolve();
