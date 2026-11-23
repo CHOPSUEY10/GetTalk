@@ -27,6 +27,15 @@ function createRedisClient() {
 
   redis.on('error', (err) => {
     logger.error('Redis client error', { message: err.message });
+    if (client === redis && (!redis.isOpen || !redis.isReady)) {
+      client = null;
+    }
+  });
+
+  redis.on('end', () => {
+    if (client === redis) {
+      client = null;
+    }
   });
 
   return redis;
@@ -34,11 +43,21 @@ function createRedisClient() {
 
 /**
  * Connect on demand. Concurrent callers share one connection attempt.
+ * Automatically recreates the client if an idle socket was closed remotely (e.g. Upstash).
  * @returns {Promise<import('redis').RedisClientType>}
  */
 export async function connectRedis() {
+  if (client && !connecting && (!client.isOpen || !client.isReady)) {
+    try {
+      client.destroy?.();
+    } catch {
+      // Ignore cleanup error on already-closed socket
+    }
+    client = null;
+  }
+
   if (!client) client = createRedisClient();
-  if (client.isOpen) return client;
+  if (client.isOpen && client.isReady) return client;
 
   if (!connecting) {
     const redis = client;
@@ -47,7 +66,9 @@ export async function connectRedis() {
       .then(() => redis)
       .catch((err) => {
         logger.error('Redis connection failed', { message: err.message });
-        client = null; // drop the broken client so the next request retries
+        if (client === redis) {
+          client = null; // drop the broken client so the next request retries
+        }
         throw err;
       })
       .finally(() => {
@@ -56,6 +77,22 @@ export async function connectRedis() {
   }
 
   return connecting;
+}
+
+/**
+ * Force-reset the current Redis client instance so the next call opens a fresh socket.
+ */
+export async function resetRedis() {
+  const prev = client;
+  client = null;
+  connecting = null;
+  if (prev) {
+    try {
+      prev.destroy?.();
+    } catch {
+      // Ignore cleanup error
+    }
+  }
 }
 
 /**

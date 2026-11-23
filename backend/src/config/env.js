@@ -32,6 +32,11 @@ const REDIS_ENV_KEYS = [
  * @param {string} filePath
  * @param {{ onlyKeys?: string[] }} [options]
  */
+function isDefaultLocalRedisUrl(value) {
+  const cleaned = stripOuterQuotes(value).toLowerCase().replace(/\/+$/, '');
+  return cleaned === 'redis://127.0.0.1:6379' || cleaned === 'redis://localhost:6379';
+}
+
 function loadEnvFile(filePath, { onlyKeys = null } = {}) {
   if (!existsSync(filePath)) return;
   try {
@@ -41,7 +46,12 @@ function loadEnvFile(filePath, { onlyKeys = null } = {}) {
       const value = typeof rawValue === 'string' ? rawValue.trim() : '';
       if (!value) continue;
       const existing = process.env[key];
-      if (existing === undefined || existing.trim() === '') {
+      const shouldReplaceDefaultRedis =
+        key === 'REDIS_URL' &&
+        existing &&
+        isDefaultLocalRedisUrl(existing) &&
+        !isDefaultLocalRedisUrl(value);
+      if (existing === undefined || existing.trim() === '' || shouldReplaceDefaultRedis) {
         process.env[key] = value;
       }
     }
@@ -93,8 +103,8 @@ const defaultLocalEnvPath = resolve(backendRoot, '.env.local');
 // check `.env.local` / `.env` first, and prefer `.env.production` if
 // `.env.development` does not exist.
 if (!explicitNodeEnv) {
-  loadEnvFile(defaultLocalEnvPath);
-  loadEnvFile(defaultEnvPath);
+  loadEnvFile(defaultLocalEnvPath, { onlyKeys: ['NODE_ENV'] });
+  loadEnvFile(defaultEnvPath, { onlyKeys: ['NODE_ENV'] });
 }
 
 const resolvedMode =
@@ -128,7 +138,7 @@ if (!process.env.SMTP_USER?.trim() || !process.env.SMTP_PASS?.trim()) {
   }
 }
 
-if (!process.env.REDIS_URL?.trim()) {
+if (!process.env.REDIS_URL?.trim() || isDefaultLocalRedisUrl(process.env.REDIS_URL)) {
   for (const candidate of [
     resolve(backendRoot, '.env.production.local'),
     resolve(backendRoot, '.env.production'),

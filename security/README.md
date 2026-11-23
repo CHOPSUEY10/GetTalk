@@ -18,8 +18,8 @@ An independent, passive host-based infrastructure telemetry and intrusion detect
    - Evaluates `APP-001` (High CPU usage), `APP-002` (High memory usage), and `APP-003` (Repeated process restart).
 4. **Cross-Layer Correlation (`COR-001`):**
    - Correlates verified source IPs and concurrent anomalies across Firewalld, Nginx, and PM2.
-5. **SIEM Critical Event Email Notification (`internal/service/notification.go` & `internal/detection/engine.go`):**
-   - Inspects incoming SIEM security events (`POST /api/v1/events` and `POST /api/v1/siem/events`) as well as automated IDS critical alerts (e.g. `COR-001`) for `critical` severity (case-insensitive).
+5. **SIEM High & Critical Event Email Notification (`internal/service/notification.go`, `internal/collector/collector.go`, & `internal/detection/engine.go`):**
+   - Inspects incoming SIEM security events (`POST /api/v1/events` and `POST /api/v1/siem/events`), host collector events, and automated IDS alerts (e.g. `NET-002`, `WEB-001`, `WEB-003`, `APP-002`, `APP-003`, `COR-001`) for `high` and `critical` severities (case-insensitive).
    - Dispatches email alerts to `secadmin` asynchronously via goroutines so HTTP ingestion latency is unaffected.
    - Enforces per-`source_ip` / per-`event_id` notification cooldowns using **Upstash Redis** (`SetNX` with configurable TTL, default `300s`) to prevent email flooding, with strict CRLF/header-injection validation.
 6. **GetTalk Chat Server Kill Switch (`security/backend` Control + `backend/` Enforcement via Shared Upstash Redis):**

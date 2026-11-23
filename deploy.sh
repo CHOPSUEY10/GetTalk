@@ -38,8 +38,8 @@ cd "$REPO_DIR/backend"
 install_deps_if_needed
 npm run db:generate
 npm run db:deploy
-# Restart proses backend utama di PM2
-pm2 restart all
+# Restart proses backend utama di PM2 dan sinkronkan variabel environment terbaru
+pm2 restart all --update-env
 
 echo "============================================================"
 echo " [3/4] Build & Deploy Frontend SecAdmin (Security Dashboard)"
@@ -62,12 +62,25 @@ cd "$REPO_DIR/security/backend"
 mkdir -p bin
 go build -o bin/gettalk-telemetry.new ./cmd/telemetry
 # Salin binary terbaru & sinkronkan konfigurasi ke /opt/gettalk/security
-sudo mkdir -p /opt/gettalk/security/backend/bin /opt/gettalk/security/configs
+sudo mkdir -p /opt/gettalk/security/backend/bin /opt/gettalk/security/configs /opt/gettalk/backend
 sudo mv bin/gettalk-telemetry.new /opt/gettalk/security/backend/bin/gettalk-telemetry
 sudo cp -r "$REPO_DIR/security/configs/"* /opt/gettalk/security/configs/
-# Pastikan kepemilikan, permission executable, & SELinux context (agar tidak 203/EXEC)
-sudo chown gettalk-sec-api:gettalk-sec-api /opt/gettalk/security/backend/bin/gettalk-telemetry
+# Sinkronkan file .env (REDIS_URL, UPSTASH_REDIS_*, SMTP_*) agar service SecAdmin berbagi Redis & SMTP yang sama dengan Chat Backend
+for envfile in "$REPO_DIR/backend"/.env*; do
+  if [ -f "$envfile" ] && [ "$(basename "$envfile")" != ".env.example" ]; then
+    sudo cp "$envfile" /opt/gettalk/backend/
+  fi
+done
+for envfile in "$REPO_DIR/security/backend"/.env*; do
+  if [ -f "$envfile" ] && [ "$(basename "$envfile")" != ".env.example" ]; then
+    sudo cp "$envfile" /opt/gettalk/security/backend/
+  fi
+done
+# Pastikan kepemilikan, permission executable, & SELinux context (agar tidak 203/EXEC atau permission denied)
+sudo chown -R gettalk-sec-api:gettalk-sec-api /opt/gettalk/security /opt/gettalk/backend
+sudo chmod 600 /opt/gettalk/backend/.env* /opt/gettalk/security/backend/.env* 2>/dev/null || true
 sudo chmod 755 /opt/gettalk/security/backend/bin/gettalk-telemetry
+sudo chcon -Rt usr_t /opt/gettalk/security /opt/gettalk/backend 2>/dev/null || true
 sudo chcon -t bin_t /opt/gettalk/security/backend/bin/gettalk-telemetry
 # Restart systemd service SecAdmin
 sudo systemctl restart gettalk-security-api

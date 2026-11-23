@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -283,29 +284,35 @@ func TestSeverityFilterLogic(t *testing.T) {
 	cases := []struct {
 		severity       string
 		expectCritical bool
+		expectAlert    bool
 	}{
-		{"low", false},
-		{"LOW", false},
-		{"medium", false},
-		{"Medium", false},
-		{"high", false},
-		{"HIGH", false},
-		{"info", false},
-		{"", false},
-		{"critical", true},
-		{"CRITICAL", true},
-		{"Critical", true},
-		{"  CrItIcAl  ", true},
+		{"low", false, false},
+		{"LOW", false, false},
+		{"medium", false, false},
+		{"Medium", false, false},
+		{"high", false, true},
+		{"HIGH", false, true},
+		{"  HiGh  ", false, true},
+		{"info", false, false},
+		{"", false, false},
+		{"critical", true, true},
+		{"CRITICAL", true, true},
+		{"Critical", true, true},
+		{"  CrItIcAl  ", true, true},
 	}
 
 	for _, tc := range cases {
-		got := service.IsCriticalSeverity(tc.severity)
-		if got != tc.expectCritical {
-			t.Errorf("IsCriticalSeverity(%q) = %v; expected %v", tc.severity, got, tc.expectCritical)
+		gotCrit := service.IsCriticalSeverity(tc.severity)
+		if gotCrit != tc.expectCritical {
+			t.Errorf("IsCriticalSeverity(%q) = %v; expected %v", tc.severity, gotCrit, tc.expectCritical)
+		}
+		gotAlert := service.IsHighOrCriticalSeverity(tc.severity)
+		if gotAlert != tc.expectAlert {
+			t.Errorf("IsHighOrCriticalSeverity(%q) = %v; expected %v", tc.severity, gotAlert, tc.expectAlert)
 		}
 	}
 
-	// Verify NotificationService only triggers email for critical severity
+	// Verify NotificationService triggers email for both HIGH and CRITICAL severities, and ignores info/low/medium
 	mockRedis := service.NewMemoryRedisClient()
 	mockMailer := &mockEmailSender{}
 	notifSvc := service.NewNotificationService(
@@ -316,27 +323,28 @@ func TestSeverityFilterLogic(t *testing.T) {
 		nil,
 	)
 
-	for _, sev := range []string{"low", "medium", "high", "CRITICAL"} {
+	for i, sev := range []string{"info", "low", "medium", "high", "CRITICAL"} {
 		ev := models.TelemetryEvent{
 			ID:         "evt-" + strings.ToLower(sev),
 			Source:     models.SourceSIEM,
 			EventType:  "test_event",
-			SourceIP:   "198.51.100.10",
+			SourceIP:   fmt.Sprintf("198.51.100.%d", 10+i),
 			Severity:   sev,
 			OccurredAt: time.Now().UTC(),
 		}
 		triggered := notifSvc.NotifyCriticalEventAsync(ev, "Unit test severity filter "+sev)
-		if strings.EqualFold(sev, "critical") && !triggered {
-			t.Fatalf("expected critical event to trigger notification")
+		expectTriggered := strings.EqualFold(sev, "critical") || strings.EqualFold(sev, "high")
+		if expectTriggered && !triggered {
+			t.Fatalf("expected %s event to trigger notification", sev)
 		}
-		if !strings.EqualFold(sev, "critical") && triggered {
-			t.Fatalf("expected non-critical severity %q NOT to trigger notification", sev)
+		if !expectTriggered && triggered {
+			t.Fatalf("expected non-high/critical severity %q NOT to trigger notification", sev)
 		}
 	}
 
 	notifSvc.WaitPending(2 * time.Second)
-	if mockMailer.Count() != 1 {
-		t.Fatalf("expected exactly 1 email sent for critical severity only, got %d", mockMailer.Count())
+	if mockMailer.Count() != 2 {
+		t.Fatalf("expected exactly 2 emails sent (for high and critical severities), got %d", mockMailer.Count())
 	}
 }
 

@@ -238,6 +238,31 @@ func stripQuotes(s string) string {
 	return s
 }
 
+func isDefaultLocalRedisURL(val string) bool {
+	cleaned := strings.TrimRight(strings.ToLower(stripQuotes(val)), "/")
+	return cleaned == "redis://127.0.0.1:6379" || cleaned == "redis://localhost:6379"
+}
+
+func isPlaceholderEmailValue(val string) bool {
+	lower := strings.ToLower(stripQuotes(val))
+	return strings.Contains(lower, "@gettalk.example") ||
+		strings.Contains(lower, "@gettalk.local") ||
+		strings.Contains(lower, "@gettalk.app")
+}
+
+func isLikelyEmailAddress(val string) bool {
+	cleaned := stripQuotes(val)
+	if cleaned == "" || strings.ContainsAny(cleaned, " \t\r\n<>") {
+		return false
+	}
+	at := strings.IndexByte(cleaned, '@')
+	if at <= 0 || at >= len(cleaned)-3 {
+		return false
+	}
+	domain := cleaned[at+1:]
+	return strings.Contains(domain, ".") && !isPlaceholderEmailValue(cleaned)
+}
+
 func parseDotEnvFile(path string) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -263,7 +288,19 @@ func parseDotEnvFile(path string) {
 		if key == "" || val == "" {
 			continue
 		}
-		if existing := strings.TrimSpace(os.Getenv(key)); existing == "" {
+		existing := strings.TrimSpace(os.Getenv(key))
+		shouldOverride := existing == ""
+		if !shouldOverride && (key == "REDIS_URL" || key == "TELEMETRY_REDIS_URL") {
+			if isDefaultLocalRedisURL(existing) && !isDefaultLocalRedisURL(val) {
+				shouldOverride = true
+			}
+		}
+		if !shouldOverride && (key == "SMTP_FROM" || key == "TELEMETRY_SMTP_FROM" || key == "TELEMETRY_SECADMIN_EMAIL" || key == "SECADMIN_EMAIL" || key == "TELEMETRY_BOOTSTRAP_ADMIN_EMAIL") {
+			if isPlaceholderEmailValue(existing) && !isPlaceholderEmailValue(val) {
+				shouldOverride = true
+			}
+		}
+		if shouldOverride {
 			_ = os.Setenv(key, val)
 		}
 	}
@@ -281,10 +318,31 @@ func loadDotEnvDefaults(envMode, yamlPath string) {
 		return
 	}
 
-	baseDirs := []string{".", "..", "../.."}
+	baseDirs := []string{
+		".",
+		"..",
+		"../..",
+		"/opt/gettalk",
+		"/root/GetTalk",
+		"/root/gettalk",
+		"/var/www/GetTalk",
+		"/var/www/gettalk",
+		"/etc/gettalk-security",
+	}
 	if yamlPath != "" {
 		yamlDir := filepath.Dir(yamlPath)
 		baseDirs = append(baseDirs, yamlDir, filepath.Join(yamlDir, ".."), filepath.Join(yamlDir, "../.."))
+	}
+	if homeDir, err := os.UserHomeDir(); err == nil && strings.TrimSpace(homeDir) != "" {
+		baseDirs = append(baseDirs, filepath.Join(homeDir, "GetTalk"), filepath.Join(homeDir, "gettalk"))
+	}
+	if matches, err := filepath.Glob("/home/*/*"); err == nil {
+		for _, m := range matches {
+			base := strings.ToLower(filepath.Base(m))
+			if base == "gettalk" {
+				baseDirs = append(baseDirs, m)
+			}
+		}
 	}
 
 	var candidateDirs []string
@@ -308,12 +366,15 @@ func loadDotEnvDefaults(envMode, yamlPath string) {
 		".env.production",
 		fmt.Sprintf(".env.%s.local", mode),
 		fmt.Sprintf(".env.%s", mode),
+		".env.development.local",
+		".env.development",
 		".env.local",
 		".env",
+		"api.env",
 	}
 
-	for _, dir := range candidateDirs {
-		for _, name := range fileNames {
+	for _, name := range fileNames {
+		for _, dir := range candidateDirs {
 			parseDotEnvFile(filepath.Join(dir, name))
 		}
 	}
@@ -401,8 +462,11 @@ func applyEnvOverrides(cfg *Config) {
 	if v := strings.TrimSpace(os.Getenv("TELEMETRY_UPSTASH_REDIS_REST_TOKEN")); v != "" {
 		cfg.Redis.RestToken = v
 	}
+	if v := strings.TrimSpace(os.Getenv("KILL_SWITCH_REDIS_KEY")); v != "" {
+		cfg.Redis.KillSwitchKey = stripQuotes(v)
+	}
 	if v := strings.TrimSpace(os.Getenv("TELEMETRY_KILL_SWITCH_KEY")); v != "" {
-		cfg.Redis.KillSwitchKey = v
+		cfg.Redis.KillSwitchKey = stripQuotes(v)
 	}
 	if v := strings.TrimSpace(os.Getenv("TELEMETRY_ALERT_COOLDOWN_SECONDS")); v != "" {
 		if sec, err := strconv.Atoi(v); err == nil && sec > 0 {
@@ -411,10 +475,10 @@ func applyEnvOverrides(cfg *Config) {
 	}
 
 	// SMTP & SecAdmin email notification configuration via environment variables
-	if v := strings.TrimSpace(os.Getenv("SMTP_HOST")); v != "" {
+	if v := stripQuotes(os.Getenv("SMTP_HOST")); v != "" {
 		cfg.Notification.SMTPHost = v
 	}
-	if v := strings.TrimSpace(os.Getenv("TELEMETRY_SMTP_HOST")); v != "" {
+	if v := stripQuotes(os.Getenv("TELEMETRY_SMTP_HOST")); v != "" {
 		cfg.Notification.SMTPHost = v
 	}
 	if v := strings.TrimSpace(os.Getenv("SMTP_PORT")); v != "" {
@@ -427,26 +491,44 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.Notification.SMTPPort = p
 		}
 	}
-	if v := strings.TrimSpace(os.Getenv("SMTP_USER")); v != "" {
+	if v := stripQuotes(os.Getenv("SMTP_USER")); v != "" {
 		cfg.Notification.SMTPUser = v
 	}
-	if v := strings.TrimSpace(os.Getenv("TELEMETRY_SMTP_USER")); v != "" {
+	if v := stripQuotes(os.Getenv("TELEMETRY_SMTP_USER")); v != "" {
 		cfg.Notification.SMTPUser = v
 	}
-	if v := os.Getenv("SMTP_PASS"); v != "" {
-		cfg.Notification.SMTPPass = v
+	if v := stripQuotes(os.Getenv("SMTP_PASS")); v != "" {
+		cfg.Notification.SMTPPass = strings.Join(strings.Fields(v), "")
 	}
-	if v := os.Getenv("TELEMETRY_SMTP_PASS"); v != "" {
-		cfg.Notification.SMTPPass = v
+	if v := stripQuotes(os.Getenv("TELEMETRY_SMTP_PASS")); v != "" {
+		cfg.Notification.SMTPPass = strings.Join(strings.Fields(v), "")
 	}
-	if v := strings.TrimSpace(os.Getenv("SMTP_FROM")); v != "" {
+	if v := stripQuotes(os.Getenv("SMTP_FROM")); v != "" {
 		cfg.Notification.SMTPFrom = v
 	}
-	if v := strings.TrimSpace(os.Getenv("TELEMETRY_SMTP_FROM")); v != "" {
-		cfg.Notification.SMTPFrom = v
+	if v := stripQuotes(os.Getenv("TELEMETRY_SMTP_FROM")); v != "" {
+		if !isPlaceholderEmailValue(v) || cfg.Notification.SMTPFrom == "" {
+			cfg.Notification.SMTPFrom = v
+		}
 	}
-	if v := strings.TrimSpace(os.Getenv("TELEMETRY_SECADMIN_EMAIL")); v != "" {
-		cfg.Notification.SecAdminEmail = v
+	for _, envKey := range []string{"ADMIN_EMAIL", "SECADMIN_EMAIL", "TELEMETRY_SECADMIN_EMAIL"} {
+		if v := stripQuotes(os.Getenv(envKey)); v != "" {
+			if !isPlaceholderEmailValue(v) || cfg.Notification.SecAdminEmail == "" {
+				cfg.Notification.SecAdminEmail = v
+			}
+		}
+	}
+
+	// Normalize placeholder SMTPFrom / SecAdminEmail when a real SMTPUser email is configured
+	if isLikelyEmailAddress(cfg.Notification.SMTPUser) {
+		isGmail := strings.Contains(strings.ToLower(cfg.Notification.SMTPHost), "gmail.com")
+		containsUser := strings.Contains(strings.ToLower(cfg.Notification.SMTPFrom), strings.ToLower(cfg.Notification.SMTPUser))
+		if cfg.Notification.SMTPFrom == "" || isPlaceholderEmailValue(cfg.Notification.SMTPFrom) || (isGmail && !containsUser) {
+			cfg.Notification.SMTPFrom = fmt.Sprintf("GetTalk SIEM <%s>", cfg.Notification.SMTPUser)
+		}
+		if cfg.Notification.SecAdminEmail == "" || isPlaceholderEmailValue(cfg.Notification.SecAdminEmail) {
+			cfg.Notification.SecAdminEmail = cfg.Notification.SMTPUser
+		}
 	}
 }
 

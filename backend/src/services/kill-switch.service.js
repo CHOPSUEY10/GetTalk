@@ -1,5 +1,5 @@
 import env from '../config/env.js';
-import { connectRedis } from '../config/redis.js';
+import { connectRedis, resetRedis } from '../config/redis.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -112,8 +112,14 @@ async function readRawKillSwitchState(key) {
 
   // Fallback to standard Redis client only if REDIS_URL is explicitly configured and reachable
   if (env.redisUrl) {
-    const redis = await connectRedis();
-    return redis.get(key);
+    try {
+      const redis = await connectRedis();
+      return await redis.get(key);
+    } catch {
+      await resetRedis();
+      const redis = await connectRedis();
+      return await redis.get(key);
+    }
   }
 
   return null;

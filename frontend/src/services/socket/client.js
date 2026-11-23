@@ -47,6 +47,10 @@ socket.on('error', (err) => {
   notifyIfServiceUnavailable(err);
 });
 
+socket.on('service:unavailable', (err) => {
+  notifyIfServiceUnavailable(err);
+});
+
 /**
  * Emit a Socket.IO event with acknowledgement while preventing hanging Promises if the server
  * disconnects the socket mid-flight (e.g. when the emergency kill switch is activated).

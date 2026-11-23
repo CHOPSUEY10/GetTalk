@@ -392,6 +392,22 @@ func TestSIEMCriticalNotificationAndKillSwitchEndToEndFlow(t *testing.T) {
 		t.Fatalf("expected cooldown key %s to be stored in Redis, got val=%q err=%v", cooldownKey, cdVal, err)
 	}
 
+	// 2b. Send a HIGH severity SIEM event from a distinct IP -> 201 Created, email also sent to secadmin
+	respHigh := postJSON("/api/v1/events", map[string]interface{}{
+		"event_id":    "evt-high-001",
+		"source_ip":   "198.51.100.88",
+		"severity":    "HIGH",
+		"description": "Suspicious path traversal and port scan detected",
+	})
+	respHigh.Body.Close()
+	if respHigh.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created for high severity event, got %d", respHigh.StatusCode)
+	}
+	telemetrySvc.NotificationService().WaitPending(2 * time.Second)
+	if mockMailer.Count() != 2 {
+		t.Fatalf("expected 2 emails (1 critical + 1 high), got %d", mockMailer.Count())
+	}
+
 	// 3. Turn OFF backend kill switch via admin endpoint -> 200 OK
 	respKillOff := postJSON("/api/v1/admin/kill-switch", map[string]interface{}{
 		"enabled": false,
@@ -402,8 +418,8 @@ func TestSIEMCriticalNotificationAndKillSwitchEndToEndFlow(t *testing.T) {
 		t.Fatalf("expected 200 OK when disabling kill switch, got %d", respKillOff.StatusCode)
 	}
 	telemetrySvc.NotificationService().WaitPending(2 * time.Second)
-	if mockMailer.Count() != 2 {
-		t.Fatalf("expected kill switch deactivation to send warning email (total 2), got %d", mockMailer.Count())
+	if mockMailer.Count() != 3 {
+		t.Fatalf("expected kill switch deactivation to send warning email (total 3), got %d", mockMailer.Count())
 	}
 
 	// 4. Verify SIEM dashboard routes remain 200 OK while Chat Server Kill Switch is OFF,

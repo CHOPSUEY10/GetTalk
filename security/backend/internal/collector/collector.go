@@ -2,7 +2,9 @@ package collector
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,11 +38,17 @@ type StreamBroadcaster interface {
 	Publish(msg models.StreamMessage)
 }
 
+// EventNotifier dispatches asynchronous notifications for high/critical telemetry events.
+type EventNotifier interface {
+	NotifyCriticalEventAsync(ev models.TelemetryEvent, description string) bool
+}
+
 // Manager coordinates multiple independent collectors and bounded ingestion queues.
 type Manager struct {
 	collectors  []Collector
 	store       PersistenceStore
 	broadcaster StreamBroadcaster
+	notifier    EventNotifier
 	logger      *slog.Logger
 
 	eventQueue    chan models.TelemetryEvent
@@ -98,6 +106,13 @@ func (m *Manager) Register(c Collector) {
 	m.collectors = append(m.collectors, c)
 }
 
+// SetEventNotifier attaches an asynchronous email notifier for high and critical severity events.
+func (m *Manager) SetEventNotifier(n EventNotifier) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.notifier = n
+}
+
 // EmitEvent enqueues a normalized telemetry event without blocking if the queue is full.
 func (m *Manager) EmitEvent(event models.TelemetryEvent) bool {
 	if event.OccurredAt.IsZero() {
@@ -118,6 +133,25 @@ func (m *Manager) EmitEvent(event models.TelemetryEvent) bool {
 				Timestamp: time.Now().UTC(),
 				Payload:   event,
 			})
+		}
+		if m.notifier != nil && (strings.EqualFold(event.Severity, models.SeverityCritical) || strings.EqualFold(event.Severity, models.SeverityHigh)) {
+			evCopy := event
+			if strings.TrimSpace(evCopy.ID) == "" {
+				if strings.TrimSpace(evCopy.Fingerprint) != "" {
+					evCopy.ID = evCopy.Fingerprint
+				} else {
+					evCopy.ID = fmt.Sprintf("%s-%s-%d", evCopy.Source, evCopy.EventType, evCopy.OccurredAt.Unix())
+				}
+			}
+			desc := fmt.Sprintf("High/Critical %s event (%s) detected", evCopy.Source, evCopy.EventType)
+			if rawDesc, ok := evCopy.EventData["description"].(string); ok && strings.TrimSpace(rawDesc) != "" {
+				desc = rawDesc
+			} else if ep, ok := evCopy.EventData["endpoint"].(string); ok && strings.TrimSpace(ep) != "" {
+				desc = fmt.Sprintf("Suspicious request on %s (%s)", ep, evCopy.EventType)
+			} else if procName, ok := evCopy.EventData["process_name"].(string); ok && strings.TrimSpace(procName) != "" {
+				desc = fmt.Sprintf("PM2 process %s reported %s", procName, evCopy.EventType)
+			}
+			m.notifier.NotifyCriticalEventAsync(evCopy, desc)
 		}
 		return true
 	default:
