@@ -1,5 +1,5 @@
 import { Server } from 'socket.io';
-import { socketAuth, socketConnectionLimit } from './middleware.js';
+import { socketKillSwitch, socketAuth, socketConnectionLimit } from './middleware.js';
 import { registerHandlers } from './handlers.js';
 import * as rooms from './rooms.js';
 import {
@@ -17,6 +17,9 @@ export function createSocketServer(httpServer, env) {
     pingInterval: 15_000,
     pingTimeout: 10_000,
   });
+
+  // Reject new WebSocket connections immediately if Chat Server Kill Switch is engaged
+  io.use(socketKillSwitch);
 
   // Share session middleware with Socket.IO
   io.use((socket, next) => {

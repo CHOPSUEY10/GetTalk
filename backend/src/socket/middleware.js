@@ -5,10 +5,40 @@ import {
   UNAUTHORIZED,
   MAX_CONCURRENT_SOCKETS_EXCEEDED,
   INTERNAL_ERROR,
+  SERVICE_UNAVAILABLE,
 } from '../errors/error-codes.js';
+import { isChatBackendEnabled } from '../services/kill-switch.service.js';
 import logger from '../utils/logger.js';
 
 export const MAX_CONCURRENT_SOCKETS = 3;
+
+/**
+ * Socket.IO Kill Switch middleware.
+ * Rejects incoming WebSocket connections when SecAdmin has disabled the chat server
+ * via Upstash Redis (`siem:backend:enabled = false`).
+ *
+ * @param {import('socket.io').Socket} socket
+ * @param {Function} next
+ */
+export async function socketKillSwitch(_socket, next) {
+  try {
+    const enabled = await isChatBackendEnabled();
+    if (!enabled) {
+      const message =
+        'GetTalk chat server is temporarily unavailable due to emergency security maintenance.';
+      const error = new Error(message);
+      /** @type {any} */ (error).code = SERVICE_UNAVAILABLE;
+      /** @type {any} */ (error).data = {
+        code: SERVICE_UNAVAILABLE,
+        message,
+      };
+      return next(error);
+    }
+    return next();
+  } catch {
+    return next();
+  }
+}
 
 /**
  * Socket.IO authentication middleware (plan §16, rule §19).

@@ -9,6 +9,8 @@ import * as messagesService from '../services/messages.service.js';
 import * as convRepo from '../repositories/conversations.repository.js';
 import * as messagesRepo from '../repositories/messages.repository.js';
 import * as usersRepo from '../repositories/users.repository.js';
+import { isChatBackendEnabled } from '../services/kill-switch.service.js';
+import { SERVICE_UNAVAILABLE } from '../errors/error-codes.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -23,6 +25,26 @@ import logger from '../utils/logger.js';
 export function registerHandlers(socket, io) {
   const userId = socket.data?.user?.id;
   if (!userId) return;
+
+  // Enforce Chat Server Kill Switch on active WebSocket events as well
+  if (typeof socket.use === 'function') {
+    socket.use(async (packet, next) => {
+      const enabled = await isChatBackendEnabled();
+      if (!enabled) {
+        const ack = packet?.[packet.length - 1];
+        const msg =
+          'GetTalk chat server is temporarily unavailable due to emergency security maintenance.';
+        if (typeof ack === 'function') {
+          ack({ error: msg, code: SERVICE_UNAVAILABLE });
+        }
+        const err = new Error(msg);
+        /** @type {any} */ (err).data = { code: SERVICE_UNAVAILABLE, message: msg };
+        socket.disconnect(true);
+        return next(err);
+      }
+      return next();
+    });
+  }
 
   // Automatically join personal user room for targeted notifications
   socket.join(rooms.userRoom(userId));

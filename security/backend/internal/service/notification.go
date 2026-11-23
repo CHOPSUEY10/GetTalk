@@ -246,9 +246,9 @@ func (n *NotificationService) NotifyKillSwitchDeactivatedAsync(actorID, reason s
 		if cleanReason == "" {
 			cleanReason = "Administrative emergency shutdown"
 		}
-		subject := "[WARNING] GetTalk SIEM Backend Disabled (Kill Switch Activated)"
+		subject := "[WARNING] GetTalk Chat Server Disabled (Kill Switch Activated)"
 		body := fmt.Sprintf(
-			"WARNING: GetTalk SIEM Backend has been DISABLED via the Kill Switch.\n\nActor ID: %s\nReason: %s\nTimestamp: %s\n",
+			"WARNING: GetTalk Chat Server Backend has been DISABLED via the SIEM Kill Switch.\n\nActor ID: %s\nReason: %s\nTimestamp: %s\n",
 			cleanActor,
 			cleanReason,
 			time.Now().UTC().Format(time.RFC3339),

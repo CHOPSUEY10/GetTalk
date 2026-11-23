@@ -8,6 +8,7 @@ import apiRoutes from './src/routes/index.js';
 import { notFoundHandler } from './src/middleware/not-found.middleware.js';
 import { errorHandler } from './src/middleware/error.middleware.js';
 import { securityHeaders } from './src/middleware/security-headers.middleware.js';
+import { killSwitchMiddleware } from './src/middleware/kill-switch.middleware.js';
 
 const app = express();
 
@@ -30,7 +31,7 @@ app.get('/', (req, res) => {
 });
 
 app.use('/health', healthRouter);
-app.use('/api', apiRoutes);
+app.use('/api', killSwitchMiddleware, apiRoutes);
 
 // ── Catch-all & error handling (must be last) ──────────────────
 app.use(notFoundHandler);

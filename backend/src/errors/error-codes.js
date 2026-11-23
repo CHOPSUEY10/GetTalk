@@ -53,6 +53,7 @@ export const MAX_CONCURRENT_SOCKETS_EXCEEDED = 'MAX_CONCURRENT_SOCKETS_EXCEEDED'
 
 // ── Server ─────────────────────────────────────────────────────
 export const INTERNAL_ERROR = 'INTERNAL_ERROR';
+export const SERVICE_UNAVAILABLE = 'SERVICE_UNAVAILABLE';
 
 // ── Route ──────────────────────────────────────────────────────
 export const ROUTE_NOT_FOUND = 'ROUTE_NOT_FOUND';

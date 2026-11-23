@@ -55,6 +55,13 @@ class AppError extends Error {
   static internal(message = 'Internal server error', code = 'INTERNAL_ERROR') {
     return new AppError(message, 500, code);
   }
+
+  static serviceUnavailable(
+    message = 'GetTalk chat server is temporarily unavailable due to emergency security maintenance.',
+    code = 'SERVICE_UNAVAILABLE'
+  ) {
+    return new AppError(message, 503, code);
+  }
 }
 
 export default AppError;

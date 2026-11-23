@@ -150,6 +150,24 @@ describe('Centralized Error Handling — Unit & Security Tests', () => {
       assert.equal(err500.code, API_ERROR_CODES.SERVER_ERROR);
       assert.equal(err500.category, API_ERROR_CATEGORIES.SERVER_ERROR);
       assert.equal(err500.status, 500);
+
+      const err503 = normalizeApiError(null, {
+        status: 503,
+        endpoint: '/api/conversations',
+        method: 'GET',
+        data: {
+          error: {
+            code: 'SERVICE_UNAVAILABLE',
+            message: 'GetTalk chat server is temporarily unavailable due to emergency security maintenance.',
+          },
+        },
+      });
+      assert.equal(err503.code, API_ERROR_CODES.SERVICE_UNAVAILABLE);
+      assert.equal(err503.status, 503);
+      assert.equal(
+        getPageErrorMessage(err503),
+        'Server chat GetTalk sedang dinonaktifkan sementara untuk pemeliharaan keamanan darurat. Silakan coba lagi beberapa saat lagi.'
+      );
     });
 
     test('normalizes network disconnection and request timeout errors', () => {

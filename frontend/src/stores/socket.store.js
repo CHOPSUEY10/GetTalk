@@ -570,6 +570,16 @@ function createSocketStore() {
       return;
     }
 
+    if (rawCode === API_ERROR_CODES.SERVICE_UNAVAILABLE) {
+      if (socket.io?.opts) {
+        socket.io.opts.reconnection = false;
+      }
+      socket.disconnect();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('api:service-unavailable'));
+      }
+    }
+
     const normalized = handleApiError(err, {
       code: rawCode || API_ERROR_CODES.NETWORK_ERROR,
       endpoint: 'socket:connect',

@@ -14,6 +14,11 @@ import (
 	"github.com/gettalk/security/backend/internal/repository"
 )
 
+// CriticalNotifier dispatches asynchronous notifications when a critical alert is detected.
+type CriticalNotifier interface {
+	NotifyCriticalEventAsync(ev models.TelemetryEvent, description string) bool
+}
+
 // Engine implements the passive rule-based Intrusion Detection System (IDS).
 // It evaluates telemetry events and system metrics against configurable rules,
 // performs cross-layer correlation, deduplicates alerts, and preserves evidence.
@@ -21,7 +26,13 @@ type Engine struct {
 	cfg         config.DetectionConfig
 	repo        repository.Repository
 	broadcaster collector.StreamBroadcaster
+	notifier    CriticalNotifier
 	logger      *slog.Logger
+}
+
+// SetCriticalNotifier attaches an asynchronous critical event notifier (e.g., email + Redis cooldown).
+func (e *Engine) SetCriticalNotifier(n CriticalNotifier) {
+	e.notifier = n
 }
 
 // NewEngine creates a new passive IDS Detection Engine.
@@ -151,6 +162,16 @@ func (e *Engine) EvaluateCycle(ctx context.Context, now time.Time) ([]models.Sec
 					Timestamp: now,
 					Payload:   *saved,
 				})
+			}
+			if isNew && e.notifier != nil && strings.EqualFold(saved.Severity, models.SeverityCritical) {
+				e.notifier.NotifyCriticalEventAsync(models.TelemetryEvent{
+					ID:         saved.ID,
+					Source:     models.SourceSIEM,
+					EventType:  saved.RuleID,
+					SourceIP:   saved.SourceIP,
+					Severity:   saved.Severity,
+					OccurredAt: saved.LastSeen,
+				}, saved.Description)
 			}
 		}
 	}

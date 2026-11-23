@@ -78,6 +78,7 @@ export const API_ERROR_CODES = Object.freeze({
   KEY_REGISTRY_UNAVAILABLE: 'KEY_REGISTRY_UNAVAILABLE',
 
   // Server & fallback
+  SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
   SERVER_ERROR: 'SERVER_ERROR',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   UNKNOWN_ERROR: 'UNKNOWN_ERROR'
@@ -151,6 +152,7 @@ export function mapStatusToCode(status, fallbackCode = API_ERROR_CODES.UNKNOWN_E
   if (status === 422) return API_ERROR_CODES.VALIDATION_ERROR;
   if (status === 423) return API_ERROR_CODES.LOGIN_LOCKED;
   if (status === 429) return API_ERROR_CODES.TOO_MANY_REQUESTS;
+  if (status === 503) return API_ERROR_CODES.SERVICE_UNAVAILABLE;
   if (status >= 500) return API_ERROR_CODES.SERVER_ERROR;
   return fallbackCode;
 }
@@ -189,6 +191,8 @@ function defaultTechnicalMessage(code, status) {
     case API_ERROR_CODES.VALIDATION_ERROR:
     case API_ERROR_CODES.BAD_REQUEST:
       return 'Request validation failed';
+    case API_ERROR_CODES.SERVICE_UNAVAILABLE:
+      return 'Service temporarily unavailable due to emergency maintenance';
     case API_ERROR_CODES.SERVER_ERROR:
     case API_ERROR_CODES.INTERNAL_ERROR:
       return status ? `Server error (${status})` : 'Internal server error';
@@ -298,10 +302,13 @@ function resolveCanonicalApiCode(status, rawCode, data) {
     return API_ERROR_CODES.SERVER_ERROR;
   }
 
-  // For 500+ errors, only preserve explicit safe service-unavailable codes like KEY_REGISTRY_UNAVAILABLE
+  // For 500+ errors, only preserve explicit safe service-unavailable codes like KEY_REGISTRY_UNAVAILABLE or SERVICE_UNAVAILABLE
   if (typeof status === 'number' && status >= 500) {
     if (candidate === API_ERROR_CODES.KEY_REGISTRY_UNAVAILABLE) {
       return API_ERROR_CODES.KEY_REGISTRY_UNAVAILABLE;
+    }
+    if (candidate === API_ERROR_CODES.SERVICE_UNAVAILABLE || status === 503) {
+      return API_ERROR_CODES.SERVICE_UNAVAILABLE;
     }
     return API_ERROR_CODES.SERVER_ERROR;
   }

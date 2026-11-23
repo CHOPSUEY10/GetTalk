@@ -17,12 +17,12 @@
     try {
       await settingsStore.toggleKillSwitch(
         true,
-        "Re-enabled from security console banner"
+        "Chat server re-enabled from security console banner"
       );
-      uiStore.notify("SIEM Backend re-enabled successfully.", "success");
+      uiStore.notify("GetTalk Chat Server re-enabled successfully.", "success");
     } catch (err: any) {
       uiStore.notify(
-        err?.message || "Failed to re-enable SIEM Backend",
+        err?.message || "Failed to re-enable GetTalk Chat Server",
         "error"
       );
     }
@@ -133,9 +133,9 @@
               .killSwitch.enabled
               ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
               : 'bg-rose-500/15 text-rose-300 border-rose-500/40'}"
-            title="SIEM Backend Kill Switch State"
+            title="GetTalk Chat Server Kill Switch State"
           >
-            {$settingsStore.killSwitch.enabled ? "SIEM ON" : "KILL SWITCH"}
+            {$settingsStore.killSwitch.enabled ? "CHAT ON" : "CHAT KILLED"}
           </span>
         {/if}
       </div>
@@ -202,10 +202,10 @@
             </div>
             <div class="space-y-0.5">
               <div class="text-xs font-bold text-rose-200 uppercase tracking-wide">
-                SIEM Backend Kill Switch Engaged (503 Service Unavailable)
+                GetTalk Chat Server Kill Switch Engaged (503 Service Unavailable)
               </div>
               <p class="text-xs text-rose-300/90">
-                Main SIEM telemetry &amp; ingestion endpoints are currently halted.
+                GetTalk Chat Backend REST API &amp; Socket.IO traffic is currently halted while this SIEM Console remains active.
                 {#if $settingsStore.killSwitch?.reason}
                   Reason: <span class="font-mono">{$settingsStore.killSwitch.reason}</span>
                 {/if}
@@ -223,7 +223,7 @@
               >
                 {$settingsStore.togglingKillSwitch
                   ? "Re-enabling..."
-                  : "Re-enable SIEM Backend"}
+                  : "Re-enable Chat Server"}
               </button>
               {#if currentRoute !== "/settings"}
                 <button

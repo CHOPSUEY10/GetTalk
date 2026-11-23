@@ -106,6 +106,8 @@ func main() {
 
 	idsEngine := detection.NewEngine(cfg.Detection, repo, broker, logger)
 	sched := scheduler.NewScheduler(cfg.Detection, cfg.Retention, idsEngine, repo, logger)
+	telemetrySvc := service.NewTelemetryService(cfg, repo, colMgr, pm2Col, sched)
+	idsEngine.SetCriticalNotifier(telemetrySvc.NotificationService())
 
 	if *mode == "all" || *mode == "collector" {
 		if err := colMgr.Start(ctx); err != nil {
@@ -124,7 +126,6 @@ func main() {
 		return
 	}
 
-	telemetrySvc := service.NewTelemetryService(cfg, repo, colMgr, pm2Col, sched)
 	h := handler.NewHandler(cfg, authSvc, telemetrySvc, broker)
 	httpRouter := router.NewRouter(cfg, authSvc, h)
 

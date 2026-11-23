@@ -21,6 +21,7 @@ import (
 	"github.com/gettalk/security/backend/internal/collector/pm2"
 	"github.com/gettalk/security/backend/internal/config"
 	"github.com/gettalk/security/backend/internal/handler"
+	"github.com/gettalk/security/backend/internal/middleware"
 	"github.com/gettalk/security/backend/internal/models"
 	"github.com/gettalk/security/backend/internal/repository"
 	"github.com/gettalk/security/backend/internal/router"
@@ -405,8 +406,9 @@ func TestSIEMCriticalNotificationAndKillSwitchEndToEndFlow(t *testing.T) {
 		t.Fatalf("expected kill switch deactivation to send warning email (total 2), got %d", mockMailer.Count())
 	}
 
-	// 4. Verify SIEM endpoints immediately return 503 Service Unavailable while kill switch is OFF
-	for _, path := range []string{"/api/v1/events", "/api/v1/dashboard/overview", "/api/v1/alerts"} {
+	// 4. Verify SIEM dashboard routes remain 200 OK while Chat Server Kill Switch is OFF,
+	//    and any protected Chat Backend route guarded by KillSwitch middleware immediately returns 503.
+	for _, path := range []string{"/api/v1/events", "/api/v1/dashboard/overview", "/api/v1/alerts", "/api/v1/audit-logs"} {
 		req, _ := http.NewRequest(http.MethodGet, srv.URL+path, nil)
 		req.AddCookie(adminCookie)
 		resp, err := client.Do(req)
@@ -414,23 +416,23 @@ func TestSIEMCriticalNotificationAndKillSwitchEndToEndFlow(t *testing.T) {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusServiceUnavailable {
-			t.Fatalf("expected 503 Service Unavailable on GET %s when kill switch is OFF, got %d", path, resp.StatusCode)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected SIEM route GET %s to remain 200 OK while Chat Server kill switch is OFF, got %d", path, resp.StatusCode)
 		}
 	}
 
-	respIngestWhileOff := postJSON("/api/v1/events", map[string]interface{}{
-		"event_id":    "evt-crit-002",
-		"source_ip":   "198.51.100.100",
-		"severity":    "critical",
-		"description": "Event while backend disabled",
-	})
-	respIngestWhileOff.Body.Close()
-	if respIngestWhileOff.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 Service Unavailable on POST /api/v1/events when kill switch is OFF, got %d", respIngestWhileOff.StatusCode)
+	// Simulate target Chat Server route protected by KillSwitch reading the same Upstash Redis state
+	protectedChatRoute := middleware.KillSwitch(h.IsBackendEnabled)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	chatReqOff := httptest.NewRequest(http.MethodGet, "/api/conversations", nil)
+	chatRecOff := httptest.NewRecorder()
+	protectedChatRoute.ServeHTTP(chatRecOff, chatReqOff)
+	if chatRecOff.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 Service Unavailable on protected chat route when kill switch is OFF, got %d", chatRecOff.Code)
 	}
 
-	// 5. Turn ON backend kill switch via admin endpoint -> 200 OK, and verify SIEM endpoints recover
+	// 5. Turn ON chat server kill switch via admin endpoint -> 200 OK, and verify protected chat route recovers
 	respKillOn := postJSON("/api/v1/admin/kill-switch", map[string]interface{}{
 		"enabled": true,
 		"reason":  "System restored to normal operation",
@@ -440,15 +442,11 @@ func TestSIEMCriticalNotificationAndKillSwitchEndToEndFlow(t *testing.T) {
 		t.Fatalf("expected 200 OK when re-enabling kill switch, got %d", respKillOn.StatusCode)
 	}
 
-	reqEvents, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/events", nil)
-	reqEvents.AddCookie(adminCookie)
-	respEvents, err := client.Do(reqEvents)
-	if err != nil {
-		t.Fatal(err)
-	}
-	respEvents.Body.Close()
-	if respEvents.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 OK on GET /api/v1/events after kill switch re-enabled, got %d", respEvents.StatusCode)
+	chatReqOn := httptest.NewRequest(http.MethodGet, "/api/conversations", nil)
+	chatRecOn := httptest.NewRecorder()
+	protectedChatRoute.ServeHTTP(chatRecOn, chatReqOn)
+	if chatRecOn.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on protected chat route after kill switch re-enabled, got %d", chatRecOn.Code)
 	}
 }
 

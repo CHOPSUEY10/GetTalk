@@ -78,6 +78,9 @@ async function fetchClient(endpoint, options = {}) {
     if (response.status === 401 && !suppressUnauthorizedEvent && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('api:unauthorized'));
     }
+    if (response.status === 503 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('api:service-unavailable'));
+    }
 
     const isExpectedAnonymousSessionCheck =
       suppressUnauthorizedEvent && response.status === 401 && endpoint === '/api/auth/session';

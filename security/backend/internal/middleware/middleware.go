@@ -247,13 +247,13 @@ func RequireRoles(roles ...string) func(http.Handler) http.Handler {
 	}
 }
 
-// KillSwitch checks whether the SIEM backend is active (e.g., via Upstash Redis key "siem:backend:enabled").
-// When the switch is disabled (false), requests to main SIEM routes are rejected with 503 Service Unavailable.
+// KillSwitch checks whether the target backend is active (e.g., via Upstash Redis key "siem:backend:enabled").
+// When the switch is disabled (false), incoming requests are rejected with 503 Service Unavailable.
 func KillSwitch(isEnabled func(ctx context.Context) bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if isEnabled != nil && !isEnabled(r.Context()) {
-				WriteError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "SIEM backend is temporarily disabled by administrator kill switch")
+				WriteError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "GetTalk chat server backend is temporarily disabled by administrator kill switch")
 				return
 			}
 			next.ServeHTTP(w, r)

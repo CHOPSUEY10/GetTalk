@@ -53,7 +53,8 @@ func NewRouter(
 			priv.Post("/auth/mfa/setup", h.SetupMFA)
 			priv.Post("/auth/mfa/enable", h.EnableMFA)
 
-			// Separate Administrator Kill Switch endpoints (outside kill switch middleware so backend can be re-enabled)
+			// Separate Administrator Kill Switch control endpoints for the GetTalk Chat Server
+			// (stored in shared Upstash Redis; SIEM console itself remains active at all times)
 			priv.Group(func(killSwitchAdmin chi.Router) {
 				killSwitchAdmin.Use(middleware.RequireRoles(models.RoleAdmin))
 				killSwitchAdmin.Get("/admin/kill-switch", h.GetKillSwitch)
@@ -67,43 +68,38 @@ func NewRouter(
 				killSwitchAdmin.Put("/settings/kill-switch", h.UpdateKillSwitch)
 			})
 
-			// Main SIEM & Telemetry routes protected by the Backend Kill Switch middleware
-			priv.Group(func(siem chi.Router) {
-				siem.Use(middleware.KillSwitch(h.IsBackendEnabled))
+			// SIEM security event ingestion endpoints
+			priv.Post("/events", h.IngestEvent)
+			priv.Post("/siem/events", h.IngestEvent)
 
-				// SIEM security event ingestion endpoints
-				siem.Post("/events", h.IngestEvent)
-				siem.Post("/siem/events", h.IngestEvent)
+			// Read-only telemetry & monitoring routes (accessible to admin, analyst, viewer)
+			priv.Get("/dashboard/overview", h.DashboardOverview)
+			priv.Get("/dashboard/traffic", h.DashboardTraffic)
+			priv.Get("/network/events", h.NetworkEvents)
+			priv.Get("/network/statistics", h.NetworkStatistics)
+			priv.Get("/web/requests", h.WebRequests)
+			priv.Get("/web/statistics", h.WebStatistics)
+			priv.Get("/application/processes", h.ApplicationProcesses)
+			priv.Get("/application/metrics", h.ApplicationMetrics)
+			priv.Get("/events", h.Events)
+			priv.Get("/alerts", h.Alerts)
+			priv.Get("/rules", h.Rules)
+			priv.Get("/settings", h.GetSettings)
+			priv.Get("/stream", h.Stream)
 
-				// Read-only telemetry & monitoring routes (accessible to admin, analyst, viewer)
-				siem.Get("/dashboard/overview", h.DashboardOverview)
-				siem.Get("/dashboard/traffic", h.DashboardTraffic)
-				siem.Get("/network/events", h.NetworkEvents)
-				siem.Get("/network/statistics", h.NetworkStatistics)
-				siem.Get("/web/requests", h.WebRequests)
-				siem.Get("/web/statistics", h.WebStatistics)
-				siem.Get("/application/processes", h.ApplicationProcesses)
-				siem.Get("/application/metrics", h.ApplicationMetrics)
-				siem.Get("/events", h.Events)
-				siem.Get("/alerts", h.Alerts)
-				siem.Get("/rules", h.Rules)
-				siem.Get("/settings", h.GetSettings)
-				siem.Get("/stream", h.Stream)
+			// Analyst & Admin routes (alert lifecycle management & audit log viewing)
+			priv.Group(func(analyst chi.Router) {
+				analyst.Use(middleware.RequireRoles(models.RoleAdmin, models.RoleAnalyst))
+				analyst.Patch("/alerts/{id}", h.UpdateAlert)
+				analyst.Get("/audit-logs", h.AuditLogs)
+			})
 
-				// Analyst & Admin routes (alert lifecycle management & audit log viewing)
-				siem.Group(func(analyst chi.Router) {
-					analyst.Use(middleware.RequireRoles(models.RoleAdmin, models.RoleAnalyst))
-					analyst.Patch("/alerts/{id}", h.UpdateAlert)
-					analyst.Get("/audit-logs", h.AuditLogs)
-				})
-
-				// Administrator-only routes (IDS rule creation/modification & retention configuration)
-				siem.Group(func(admin chi.Router) {
-					admin.Use(middleware.RequireRoles(models.RoleAdmin))
-					admin.Post("/rules", h.CreateRule)
-					admin.Patch("/rules/{id}", h.UpdateRule)
-					admin.Patch("/settings/retention", h.UpdateRetentionSettings)
-				})
+			// Administrator-only routes (IDS rule creation/modification & retention configuration)
+			priv.Group(func(admin chi.Router) {
+				admin.Use(middleware.RequireRoles(models.RoleAdmin))
+				admin.Post("/rules", h.CreateRule)
+				admin.Patch("/rules/{id}", h.UpdateRule)
+				admin.Patch("/settings/retention", h.UpdateRetentionSettings)
 			})
 		})
 	})

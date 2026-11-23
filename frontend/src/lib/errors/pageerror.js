@@ -162,6 +162,8 @@ export const DEFAULT_USER_MESSAGES = Object.freeze({
     'Terlalu banyak permintaan dalam waktu singkat. Silakan tunggu beberapa saat lalu coba lagi.',
   [PAGE_ERROR_CODES.MAX_CONCURRENT_SOCKETS_EXCEEDED]:
     'Batas maksimum 3 sesi obrolan aktif bersamaan telah tercapai untuk akun ini. Tutup salah satu tab atau perangkat lain, lalu hubungkan ulang.',
+  [PAGE_ERROR_CODES.SERVICE_UNAVAILABLE]:
+    'Server chat GetTalk sedang dinonaktifkan sementara untuk pemeliharaan keamanan darurat. Silakan coba lagi beberapa saat lagi.',
   [PAGE_ERROR_CODES.SERVER_ERROR]:
     'Terjadi masalah pada server. Silakan coba lagi nanti.',
   [PAGE_ERROR_CODES.INTERNAL_ERROR]:

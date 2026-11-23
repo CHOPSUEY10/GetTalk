@@ -225,6 +225,21 @@ function validateEnvironment() {
   // Optional so the app still boots when Redis is down; the key registry
   // then fails safely with 503 (issue #11).
   const redisUrl = process.env.REDIS_URL?.trim() || 'redis://127.0.0.1:6379';
+  // Shared Upstash Redis REST credentials & Kill Switch state key (controlled by SIEM SecAdmin)
+  const upstashRedisRestUrl = stripOuterQuotes(
+    process.env.UPSTASH_REDIS_REST_URL || process.env.TELEMETRY_UPSTASH_REDIS_REST_URL
+  );
+  const upstashRedisRestToken = stripOuterQuotes(
+    process.env.UPSTASH_REDIS_REST_TOKEN || process.env.TELEMETRY_UPSTASH_REDIS_REST_TOKEN
+  );
+  const killSwitchRedisKey =
+    stripOuterQuotes(process.env.KILL_SWITCH_REDIS_KEY || process.env.TELEMETRY_KILL_SWITCH_KEY) ||
+    'siem:backend:enabled';
+  const rawKillSwitchCacheMs = process.env.KILL_SWITCH_CACHE_TTL_MS?.trim();
+  const killSwitchCacheTtlMs =
+    rawKillSwitchCacheMs !== undefined && rawKillSwitchCacheMs !== ''
+      ? Math.max(0, Number(rawKillSwitchCacheMs) || 0)
+      : 1000;
   // Local encrypted-attachment storage. Replace with object storage in
   // production if needed; the key is opaque and server-generated.
   const storageDir = resolve(backendRoot, process.env.STORAGE_DIR?.trim() || 'storage');
@@ -291,6 +306,10 @@ function validateEnvironment() {
     sessionSecret,
     mfaEncryptionKey,
     redisUrl,
+    upstashRedisRestUrl,
+    upstashRedisRestToken,
+    killSwitchRedisKey,
+    killSwitchCacheTtlMs,
     storageDir,
     storage,
     smtpHost,

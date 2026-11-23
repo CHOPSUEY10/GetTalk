@@ -44,14 +44,14 @@
         targetEnabled,
         killSwitchReason.trim() ||
           (targetEnabled
-            ? 'Re-enabled via Security Console Settings'
-            : 'Disabled via Security Console Emergency Kill Switch')
+            ? 'Chat server re-enabled via Security Console Settings'
+            : 'Chat server disabled via Security Console Emergency Kill Switch')
       );
       killSwitchReason = '';
       uiStore.notify(
         targetEnabled
-          ? 'SIEM Backend re-enabled and resumed normal operation.'
-          : 'SIEM Backend disabled via Kill Switch. Warning email dispatched to secadmin.',
+          ? 'GetTalk Chat Server re-enabled and resumed normal operation.'
+          : 'GetTalk Chat Server disabled via Kill Switch (503). Warning email dispatched to secadmin.',
         targetEnabled ? 'success' : 'info'
       );
     } catch (err: any) {
@@ -166,19 +166,19 @@
     </div>
   {/if}
 
-  <!-- Backend Kill Switch & SecAdmin Notification Control (Always accessible outside main SIEM 503 block) -->
+  <!-- Chat Server Kill Switch & SecAdmin Notification Control -->
   <div class="sec-card space-y-4 border {backendEnabled ? 'border-slate-800' : 'border-rose-500/50'}">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div class="space-y-1">
         <div class="flex items-center gap-2.5">
-          <h2 class="text-sm font-semibold text-white">Emergency SIEM Backend Kill Switch (Upstash Redis)</h2>
+          <h2 class="text-sm font-semibold text-white">Emergency Chat Server Kill Switch (Upstash Redis)</h2>
           <SeverityBadge level={backendEnabled ? 'healthy' : 'critical'} />
         </div>
         <p class="text-xs text-slate-400">
-          Controls main SIEM route availability via Upstash Redis key
+          Controls availability of the <strong>GetTalk Chat Server (<code class="font-mono text-slate-200">backend/</code>)</strong> via shared Upstash Redis key
           <code class="font-mono text-indigo-300">{$settingsStore.killSwitch?.key || 'siem:backend:enabled'}</code>.
-          When disabled, all main SIEM endpoints return <code class="font-mono text-rose-300">503 Service Unavailable</code>,
-          an audit log is recorded, and an immediate warning email is sent to <code class="font-mono text-slate-200">secadmin</code>.
+          When disabled, Chat Server REST API (<code class="font-mono text-rose-300">/api/*</code>) returns <code class="font-mono text-rose-300">503 Service Unavailable</code>
+          and Socket.IO connections are blocked, while this SIEM Console stays fully operational. Every change is logged and sends a warning email to <code class="font-mono text-slate-200">secadmin</code> when disabled.
         </p>
       </div>
 
@@ -188,7 +188,7 @@
             ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
             : 'bg-rose-500/15 text-rose-300 border-rose-500/40'}"
         >
-          {backendEnabled ? 'STATUS: ACTIVE (TRUE)' : 'STATUS: DISABLED (FALSE / 503)'}
+          {backendEnabled ? 'CHAT SERVER: ACTIVE (TRUE)' : 'CHAT SERVER: DISABLED (FALSE / 503)'}
         </span>
       </div>
     </div>
@@ -231,8 +231,8 @@
             maxlength="512"
             bind:value={killSwitchReason}
             placeholder={backendEnabled
-              ? 'e.g. Emergency containment during active incident'
-              : 'e.g. Incident resolved — restoring SIEM service'}
+              ? 'e.g. Emergency containment — halting GetTalk Chat Server during attack'
+              : 'e.g. Incident resolved — restoring GetTalk Chat Server'}
             class="sec-input w-full"
           />
         </div>
@@ -244,7 +244,7 @@
             on:click={() => handleToggleKillSwitch(false)}
             class="px-4 py-2 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white cursor-pointer disabled:opacity-50 shrink-0"
           >
-            {$settingsStore.togglingKillSwitch ? 'Disabling...' : 'Disable SIEM Backend (Kill Switch)'}
+            {$settingsStore.togglingKillSwitch ? 'Disabling...' : 'Disable Chat Server (Kill Switch)'}
           </button>
         {:else}
           <button
@@ -253,13 +253,13 @@
             on:click={() => handleToggleKillSwitch(true)}
             class="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50 shrink-0"
           >
-            {$settingsStore.togglingKillSwitch ? 'Re-enabling...' : 'Re-enable SIEM Backend'}
+            {$settingsStore.togglingKillSwitch ? 'Re-enabling...' : 'Re-enable Chat Server'}
           </button>
         {/if}
       </div>
     {:else}
       <p class="text-xs text-slate-400 italic">
-        Only administrators (<code class="font-mono">admin</code> role) can toggle the SIEM Backend Kill Switch.
+        Only administrators (<code class="font-mono">admin</code> role) can toggle the Chat Server Kill Switch.
       </p>
     {/if}
   </div>

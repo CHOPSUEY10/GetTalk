@@ -34,10 +34,6 @@
     authStore.setUnauthenticated();
   }
 
-  function handleKillSwitchActive() {
-    settingsStore.markKillSwitchDisabled();
-  }
-
   $: if ($authStore.authenticated) {
     streamStore.start();
     if ($authStore.user?.role === 'admin') {
@@ -51,7 +47,6 @@
     authStore.initialize();
     window.addEventListener('hashchange', handleHashChange);
     window.addEventListener('sec:unauthorized', handleUnauthorized);
-    window.addEventListener('sec:kill-switch-active', handleKillSwitchActive);
   });
 
   onDestroy(() => {
@@ -59,7 +54,6 @@
     if (typeof window !== 'undefined') {
       window.removeEventListener('hashchange', handleHashChange);
       window.removeEventListener('sec:unauthorized', handleUnauthorized);
-      window.removeEventListener('sec:kill-switch-active', handleKillSwitchActive);
     }
   });
 </script>
