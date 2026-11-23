@@ -13,12 +13,32 @@ import (
 
 // Config holds the complete validated configuration for the GetTalk Security backend.
 type Config struct {
-	Server     ServerConfig     `yaml:"server" json:"server"`
-	Database   DatabaseConfig   `yaml:"database" json:"-"`
-	Collectors CollectorsConfig `yaml:"collectors" json:"collectors"`
-	Detection  DetectionConfig  `yaml:"detection" json:"detection"`
-	Retention  RetentionConfig  `yaml:"retention" json:"retention"`
-	Security   SecurityConfig   `yaml:"security" json:"security"`
+	Server       ServerConfig       `yaml:"server" json:"server"`
+	Database     DatabaseConfig     `yaml:"database" json:"-"`
+	Redis        RedisConfig        `yaml:"redis" json:"-"`
+	Notification NotificationConfig `yaml:"notification" json:"-"`
+	Collectors   CollectorsConfig   `yaml:"collectors" json:"collectors"`
+	Detection    DetectionConfig    `yaml:"detection" json:"detection"`
+	Retention    RetentionConfig    `yaml:"retention" json:"retention"`
+	Security     SecurityConfig     `yaml:"security" json:"security"`
+}
+
+type RedisConfig struct {
+	RestURL            string `yaml:"-" json:"-"`
+	RestToken          string `yaml:"-" json:"-"`
+	KillSwitchKey      string `yaml:"kill_switch_key" json:"killSwitchKey"`
+	CooldownPrefix     string `yaml:"cooldown_prefix" json:"cooldownPrefix"`
+	CooldownTTLSeconds int    `yaml:"cooldown_ttl_seconds" json:"cooldownTtlSeconds"`
+}
+
+type NotificationConfig struct {
+	Enabled       bool   `yaml:"enabled" json:"enabled"`
+	SMTPHost      string `yaml:"-" json:"-"`
+	SMTPPort      int    `yaml:"smtp_port" json:"-"`
+	SMTPUser      string `yaml:"-" json:"-"`
+	SMTPPass      string `yaml:"-" json:"-"`
+	SMTPFrom      string `yaml:"-" json:"-"`
+	SecAdminEmail string `yaml:"-" json:"-"`
 }
 
 type ServerConfig struct {
@@ -111,6 +131,17 @@ func DefaultConfig() *Config {
 			RequestTimeoutSeconds: 15,
 			CORSAllowedOrigins:    []string{"http://localhost:5174", "http://localhost:5173"},
 			TrustedProxies:        []string{"127.0.0.1", "::1"},
+		},
+		Redis: RedisConfig{
+			KillSwitchKey:      "siem:backend:enabled",
+			CooldownPrefix:     "siem:alert:cooldown:",
+			CooldownTTLSeconds: 300,
+		},
+		Notification: NotificationConfig{
+			Enabled:       true,
+			SMTPPort:      587,
+			SMTPFrom:      "GetTalk SIEM <no-reply@gettalk.example>",
+			SecAdminEmail: "secadmin@gettalk.example",
 		},
 		Collectors: CollectorsConfig{
 			QueueSize:       2048,
@@ -249,9 +280,71 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := strings.TrimSpace(os.Getenv("TELEMETRY_BOOTSTRAP_ADMIN_EMAIL")); v != "" {
 		cfg.Security.BootstrapAdminEmail = v
+		cfg.Notification.SecAdminEmail = v
 	}
 	if v := os.Getenv("TELEMETRY_BOOTSTRAP_ADMIN_PASSWORD"); v != "" {
 		cfg.Security.BootstrapAdminPassword = v
+	}
+
+	// Upstash Redis configuration via environment variables
+	if v := strings.TrimSpace(os.Getenv("UPSTASH_REDIS_REST_URL")); v != "" {
+		cfg.Redis.RestURL = v
+	}
+	if v := strings.TrimSpace(os.Getenv("TELEMETRY_UPSTASH_REDIS_REST_URL")); v != "" {
+		cfg.Redis.RestURL = v
+	}
+	if v := strings.TrimSpace(os.Getenv("UPSTASH_REDIS_REST_TOKEN")); v != "" {
+		cfg.Redis.RestToken = v
+	}
+	if v := strings.TrimSpace(os.Getenv("TELEMETRY_UPSTASH_REDIS_REST_TOKEN")); v != "" {
+		cfg.Redis.RestToken = v
+	}
+	if v := strings.TrimSpace(os.Getenv("TELEMETRY_KILL_SWITCH_KEY")); v != "" {
+		cfg.Redis.KillSwitchKey = v
+	}
+	if v := strings.TrimSpace(os.Getenv("TELEMETRY_ALERT_COOLDOWN_SECONDS")); v != "" {
+		if sec, err := strconv.Atoi(v); err == nil && sec > 0 {
+			cfg.Redis.CooldownTTLSeconds = sec
+		}
+	}
+
+	// SMTP & SecAdmin email notification configuration via environment variables
+	if v := strings.TrimSpace(os.Getenv("SMTP_HOST")); v != "" {
+		cfg.Notification.SMTPHost = v
+	}
+	if v := strings.TrimSpace(os.Getenv("TELEMETRY_SMTP_HOST")); v != "" {
+		cfg.Notification.SMTPHost = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SMTP_PORT")); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p > 0 {
+			cfg.Notification.SMTPPort = p
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("TELEMETRY_SMTP_PORT")); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p > 0 {
+			cfg.Notification.SMTPPort = p
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("SMTP_USER")); v != "" {
+		cfg.Notification.SMTPUser = v
+	}
+	if v := strings.TrimSpace(os.Getenv("TELEMETRY_SMTP_USER")); v != "" {
+		cfg.Notification.SMTPUser = v
+	}
+	if v := os.Getenv("SMTP_PASS"); v != "" {
+		cfg.Notification.SMTPPass = v
+	}
+	if v := os.Getenv("TELEMETRY_SMTP_PASS"); v != "" {
+		cfg.Notification.SMTPPass = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SMTP_FROM")); v != "" {
+		cfg.Notification.SMTPFrom = v
+	}
+	if v := strings.TrimSpace(os.Getenv("TELEMETRY_SMTP_FROM")); v != "" {
+		cfg.Notification.SMTPFrom = v
+	}
+	if v := strings.TrimSpace(os.Getenv("TELEMETRY_SECADMIN_EMAIL")); v != "" {
+		cfg.Notification.SecAdminEmail = v
 	}
 }
 

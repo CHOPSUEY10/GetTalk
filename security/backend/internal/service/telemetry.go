@@ -29,6 +29,8 @@ type TelemetryService struct {
 	colMgr       *collector.Manager
 	pm2Collector *pm2.Collector
 	sched        *scheduler.Scheduler
+	redis        RedisClient
+	notifSvc     *NotificationService
 }
 
 // NewTelemetryService creates a new TelemetryService.
@@ -39,13 +41,248 @@ func NewTelemetryService(
 	pm2Collector *pm2.Collector,
 	sched *scheduler.Scheduler,
 ) *TelemetryService {
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	redisClient := NewRedisClient(cfg.Redis)
+	notifSvc := NewNotificationService(cfg.Notification, cfg.Redis, redisClient, nil, nil)
 	return &TelemetryService{
 		cfg:          cfg,
 		repo:         repo,
 		colMgr:       colMgr,
 		pm2Collector: pm2Collector,
 		sched:        sched,
+		redis:        redisClient,
+		notifSvc:     notifSvc,
 	}
+}
+
+// SetRedisClient replaces the RedisClient used for kill switch state and alert notification cooldowns.
+func (s *TelemetryService) SetRedisClient(r RedisClient) {
+	if r == nil {
+		return
+	}
+	s.redis = r
+	if s.notifSvc != nil {
+		s.notifSvc.redis = r
+	}
+}
+
+// SetEmailSender replaces the EmailSender used by the NotificationService.
+func (s *TelemetryService) SetEmailSender(sender EmailSender) {
+	if sender == nil {
+		return
+	}
+	if s.notifSvc != nil {
+		s.notifSvc.sender = sender
+	}
+}
+
+// SetNotificationService replaces the NotificationService instance.
+func (s *TelemetryService) SetNotificationService(n *NotificationService) {
+	s.notifSvc = n
+}
+
+// RedisClient returns the active RedisClient.
+func (s *TelemetryService) RedisClient() RedisClient {
+	return s.redis
+}
+
+// NotificationService returns the active NotificationService.
+func (s *TelemetryService) NotificationService() *NotificationService {
+	return s.notifSvc
+}
+
+func (s *TelemetryService) killSwitchKey() string {
+	if s.cfg != nil && strings.TrimSpace(s.cfg.Redis.KillSwitchKey) != "" {
+		return strings.TrimSpace(s.cfg.Redis.KillSwitchKey)
+	}
+	return "siem:backend:enabled"
+}
+
+// IsBackendEnabled checks Upstash Redis to determine if the SIEM backend kill switch is enabled.
+// Defaults to true unless explicitly set to "false" or "0" in Redis.
+func (s *TelemetryService) IsBackendEnabled(ctx context.Context) bool {
+	if s.redis == nil {
+		return true
+	}
+	val, err := s.redis.Get(ctx, s.killSwitchKey())
+	if err != nil {
+		return true
+	}
+	trimmed := strings.ToLower(strings.TrimSpace(val))
+	if trimmed == "false" || trimmed == "0" {
+		return false
+	}
+	return true
+}
+
+// GetKillSwitchStatus returns the current status of the SIEM backend kill switch.
+func (s *TelemetryService) GetKillSwitchStatus(ctx context.Context) models.KillSwitchStatus {
+	return models.KillSwitchStatus{
+		Enabled:   s.IsBackendEnabled(ctx),
+		Key:       s.killSwitchKey(),
+		UpdatedAt: time.Now().UTC(),
+	}
+}
+
+// SetKillSwitch updates the SIEM backend kill switch state in Upstash Redis, records an audit log,
+// and triggers an asynchronous email warning to secadmin when the backend is disabled.
+func (s *TelemetryService) SetKillSwitch(ctx context.Context, enabled bool, reason, actorID string) (*models.KillSwitchStatus, error) {
+	if ContainsHeaderInjection(reason, actorID) {
+		return nil, fmt.Errorf("%w: invalid control characters in reason", ErrValidation)
+	}
+	if len(reason) > 512 {
+		return nil, fmt.Errorf("%w: reason exceeds maximum length (512 chars)", ErrValidation)
+	}
+	if s.redis == nil {
+		return nil, ErrRedisUnavailable
+	}
+
+	valStr := "true"
+	action := "system.kill_switch_enabled"
+	if !enabled {
+		valStr = "false"
+		action = "system.kill_switch_disabled"
+	}
+
+	key := s.killSwitchKey()
+	if err := s.redis.Set(ctx, key, valStr, 0); err != nil {
+		return nil, ErrRedisUnavailable
+	}
+
+	cleanReason := strings.TrimSpace(reason)
+	if s.repo != nil {
+		_ = s.repo.CreateAuditLog(ctx, models.AuditLog{
+			ActorID:      actorID,
+			Action:       action,
+			ResourceType: "kill_switch",
+			ResourceID:   key,
+			Metadata: map[string]interface{}{
+				"enabled": enabled,
+				"reason":  cleanReason,
+			},
+		})
+	}
+
+	if !enabled && s.notifSvc != nil {
+		s.notifSvc.NotifyKillSwitchDeactivatedAsync(actorID, cleanReason)
+	}
+
+	return &models.KillSwitchStatus{
+		Enabled:   enabled,
+		Key:       key,
+		Reason:    cleanReason,
+		UpdatedBy: actorID,
+		UpdatedAt: time.Now().UTC(),
+	}, nil
+}
+
+// IngestSecurityEvent validates, stores, and processes an incoming SIEM security event.
+// If the event severity is "critical" (case-insensitive), it asynchronously sends an email notification
+// to secadmin with Upstash Redis SetNX cooldown protection.
+func (s *TelemetryService) IngestSecurityEvent(ctx context.Context, input models.IngestEventInput) (*models.TelemetryEvent, error) {
+	if ContainsHeaderInjection(
+		input.EventID,
+		input.Source,
+		input.EventType,
+		input.SourceIP,
+		input.DestinationIP,
+		input.Severity,
+		input.Description,
+	) {
+		return nil, fmt.Errorf("%w: invalid control characters detected", ErrValidation)
+	}
+	for k, v := range input.EventData {
+		if ContainsHeaderInjection(k) {
+			return nil, fmt.Errorf("%w: invalid control characters in event_data key", ErrValidation)
+		}
+		if strVal, ok := v.(string); ok && ContainsHeaderInjection(strVal) {
+			return nil, fmt.Errorf("%w: invalid control characters in event_data value", ErrValidation)
+		}
+	}
+
+	eventID := strings.TrimSpace(input.EventID)
+	rawSeverity := strings.TrimSpace(input.Severity)
+	description := strings.TrimSpace(input.Description)
+	sourceIP := strings.TrimSpace(input.SourceIP)
+	destIP := strings.TrimSpace(input.DestinationIP)
+	source := strings.ToLower(strings.TrimSpace(input.Source))
+	eventType := strings.TrimSpace(input.EventType)
+
+	if eventID == "" {
+		return nil, fmt.Errorf("%w: event_id is required", ErrValidation)
+	}
+	if len(eventID) > 128 {
+		return nil, fmt.Errorf("%w: event_id exceeds maximum length (128 chars)", ErrValidation)
+	}
+	if rawSeverity == "" {
+		return nil, fmt.Errorf("%w: severity is required", ErrValidation)
+	}
+	if description == "" {
+		return nil, fmt.Errorf("%w: description is required", ErrValidation)
+	}
+	if len(description) > 4096 {
+		return nil, fmt.Errorf("%w: description exceeds maximum length (4096 chars)", ErrValidation)
+	}
+
+	normalizedSeverity := strings.ToLower(rawSeverity)
+	if !models.ValidSeverities[normalizedSeverity] {
+		return nil, fmt.Errorf("%w: unsupported severity %q", ErrValidation, rawSeverity)
+	}
+
+	if sourceIP != "" && net.ParseIP(sourceIP) == nil {
+		return nil, fmt.Errorf("%w: invalid source_ip address", ErrValidation)
+	}
+	if destIP != "" && net.ParseIP(destIP) == nil {
+		return nil, fmt.Errorf("%w: invalid destination_ip address", ErrValidation)
+	}
+
+	if source == "" {
+		source = models.SourceSIEM
+	} else {
+		switch source {
+		case models.SourceFirewalld, models.SourceNginx, models.SourcePM2, models.SourceSystem, models.SourceSIEM:
+		default:
+			return nil, fmt.Errorf("%w: unsupported source %q", ErrValidation, source)
+		}
+	}
+
+	if eventType == "" {
+		eventType = "security_event"
+	}
+
+	evData := make(map[string]interface{})
+	for k, v := range input.EventData {
+		evData[k] = v
+	}
+	evData["description"] = description
+	evData["event_id"] = eventID
+
+	now := time.Now().UTC()
+	event := models.TelemetryEvent{
+		ID:            eventID,
+		Source:        source,
+		EventType:     eventType,
+		SourceIP:      sourceIP,
+		DestinationIP: destIP,
+		EventData:     evData,
+		Severity:      normalizedSeverity,
+		OccurredAt:    now,
+		CreatedAt:     now,
+	}
+
+	if s.repo != nil {
+		if err := s.repo.SaveEventsBatch(ctx, []models.TelemetryEvent{event}); err != nil {
+			return nil, err
+		}
+	}
+
+	if IsCriticalSeverity(rawSeverity) && s.notifSvc != nil {
+		s.notifSvc.NotifyCriticalEventAsync(event, description)
+	}
+
+	return &event, nil
 }
 
 func (s *TelemetryService) GetDashboardOverview(ctx context.Context, since time.Time) (*models.DashboardOverview, error) {
@@ -319,7 +556,7 @@ func (s *TelemetryService) UpdateRetentionSettings(ctx context.Context, ret conf
 func validateEventFilter(f *models.EventFilter) error {
 	if f.Source != "" {
 		switch f.Source {
-		case models.SourceFirewalld, models.SourceNginx, models.SourcePM2, models.SourceSystem:
+		case models.SourceFirewalld, models.SourceNginx, models.SourcePM2, models.SourceSystem, models.SourceSIEM:
 		default:
 			return fmt.Errorf("%w: invalid source filter %q", ErrValidation, f.Source)
 		}

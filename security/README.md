@@ -18,6 +18,15 @@ An independent, passive host-based infrastructure telemetry and intrusion detect
    - Evaluates `APP-001` (High CPU usage), `APP-002` (High memory usage), and `APP-003` (Repeated process restart).
 4. **Cross-Layer Correlation (`COR-001`):**
    - Correlates verified source IPs and concurrent anomalies across Firewalld, Nginx, and PM2.
+5. **SIEM Critical Event Email Notification (`internal/service/notification.go`):**
+   - Inspects incoming SIEM security events (`POST /api/v1/events` and `POST /api/v1/siem/events`) for `critical` severity (case-insensitive).
+   - Dispatches email alerts to `secadmin` asynchronously via goroutines so HTTP ingestion latency is unaffected.
+   - Enforces per-`source_ip` / per-`event_id` notification cooldowns using **Upstash Redis** (`SetNX` with configurable TTL, default `300s`) to prevent email flooding, with strict CRLF/header-injection validation.
+6. **Backend Kill Switch (`internal/middleware/middleware.go` & `internal/service/telemetry.go`):**
+   - Checks the active/inactive status of the SIEM backend in Upstash Redis (default key: `siem:backend:enabled`).
+   - When disabled (`false`), rejects requests to main SIEM routes with `503 Service Unavailable`.
+   - Provides a separate, strictly authenticated and RBAC/CSRF-protected administrator endpoint (`GET/POST/PATCH /api/v1/admin/kill-switch`) outside the kill switch middleware so the backend can be re-enabled at any time.
+   - Records every status toggle in the audit log (`system.kill_switch_disabled` / `system.kill_switch_enabled`) and sends an asynchronous warning email to `secadmin` whenever the backend is disabled.
 
 ## Directory Structure
 
@@ -42,7 +51,22 @@ go test -v ./...
 go run ./cmd/telemetry --mode=all --config=../configs/telemetry.yaml
 ```
 
-In development mode (when `TELEMETRY_DATABASE_URL` is not set), the backend runs with an in-memory repository and seeds a bootstrap administrator (`secadmin` / `SecAdmin!2026#GetTalk`).
+In development mode (when `TELEMETRY_DATABASE_URL` is not set), the backend runs with an in-memory repository and seeds a bootstrap administrator (`secadmin` / `SecAdmin!2026#GetTalk`). When `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are not set, the backend automatically uses an in-memory Redis store with TTL support for local development and testing.
+
+### Environment Variables (`security/backend/.env.example`)
+
+| Variable | Description | Default |
+|---|---|---|
+| `UPSTASH_REDIS_REST_URL` | Upstash Redis REST endpoint URL | *(in-memory fallback in dev/test)* |
+| `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST Bearer token | *(none)* |
+| `TELEMETRY_KILL_SWITCH_KEY` | Redis key storing backend kill switch state (`true`/`false`) | `siem:backend:enabled` |
+| `TELEMETRY_ALERT_COOLDOWN_SECONDS` | Cooldown TTL in seconds (`SetNX`) for critical event emails | `300` |
+| `TELEMETRY_SMTP_HOST` | SMTP server hostname for critical alerts & kill switch warnings | *(no-op in dev/test)* |
+| `TELEMETRY_SMTP_PORT` | SMTP server port | `587` |
+| `TELEMETRY_SMTP_USER` | SMTP authentication username | *(none)* |
+| `TELEMETRY_SMTP_PASS` | SMTP authentication password | *(none)* |
+| `TELEMETRY_SMTP_FROM` | Sender address for SIEM alert emails | `GetTalk SIEM <no-reply@gettalk.example>` |
+| `TELEMETRY_SECADMIN_EMAIL` | Recipient address for `secadmin` critical alerts | `secadmin@gettalk.example` |
 
 ### 2. Frontend
 

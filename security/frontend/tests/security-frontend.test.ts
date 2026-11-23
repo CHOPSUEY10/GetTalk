@@ -7,7 +7,10 @@ import {
 } from '../src/lib/errors/apierror.ts';
 import { sanitize, sanitizeString, sanitizeUrl } from '../src/lib/logger.ts';
 import {
+  hasHeaderInjection,
   isValidIPFilter,
+  validateIngestEventInput,
+  validateKillSwitchInput,
   validateRetentionInput,
   validateRuleInput,
 } from '../src/lib/validators.ts';
@@ -247,6 +250,88 @@ test('Application metrics time-series grouping creates dedicated charts per metr
   const bounds = resolveTimeRangeBounds('1h');
   assert.ok(bounds.from && bounds.to);
 });
+
+test('Kill Switch 503 Service Unavailable error mapping and SIEM event / header-injection validation', () => {
+  // 1. 503 maps to SERVICE_UNAVAILABLE rather than generic SERVER_ERROR
+  assert.equal(mapStatusToCode(503), API_ERROR_CODES.SERVICE_UNAVAILABLE);
+
+  const killSwitchErr = handleApiError(null, {
+    status: 503,
+    endpoint: 'http://localhost:4100/api/v1/events',
+    method: 'POST',
+    data: {
+      error: {
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'SIEM backend is temporarily disabled by administrator kill switch',
+      },
+    },
+    silent: true,
+  });
+  assert.equal(killSwitchErr.code, API_ERROR_CODES.SERVICE_UNAVAILABLE);
+  assert.equal(killSwitchErr.status, 503);
+  assert.ok(killSwitchErr.message.includes('kill switch'));
+
+  // 2. SMTP Header Injection (CRLF) & SIEM Event input validation
+  assert.equal(hasHeaderInjection('clean-event-001', 'normal description'), false);
+  assert.equal(hasHeaderInjection('evt-001\r\nBcc: evil@attacker.example'), true);
+  assert.equal(hasHeaderInjection('normal', 'line1\nSubject: Injected'), true);
+
+  assert.equal(
+    validateIngestEventInput({
+      event_id: 'evt-crit-001',
+      source: 'siem',
+      event_type: 'intrusion_detected',
+      source_ip: '198.51.100.99',
+      severity: 'critical',
+      description: 'Unauthorized root access detected',
+    }),
+    null
+  );
+
+  assert.notEqual(
+    validateIngestEventInput({
+      event_id: '',
+      severity: 'critical',
+      description: 'Missing event_id',
+    }),
+    null
+  );
+
+  assert.notEqual(
+    validateIngestEventInput({
+      event_id: 'evt-1\r\nBcc: attacker@evil.com',
+      severity: 'critical',
+      description: 'Header injection attempt in event_id',
+    }),
+    null
+  );
+
+  assert.notEqual(
+    validateIngestEventInput({
+      event_id: 'evt-2',
+      severity: 'critical',
+      description: 'Header injection\r\nSubject: Hacked',
+    }),
+    null
+  );
+
+  // 3. Kill Switch input validator
+  assert.equal(
+    validateKillSwitchInput({
+      enabled: false,
+      reason: 'Emergency incident response',
+    }),
+    null
+  );
+  assert.notEqual(
+    validateKillSwitchInput({
+      enabled: false,
+      reason: 'Invalid reason\r\nInjected-Header: true',
+    }),
+    null
+  );
+});
+
 
 
 

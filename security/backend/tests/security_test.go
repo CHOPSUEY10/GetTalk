@@ -249,3 +249,196 @@ func TestMFATOTPAndBruteForceLockout(t *testing.T) {
 	}
 }
 
+func TestKillSwitchAccessControlInjectionFloodingAndLeakagePrevention(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.DefaultConfig()
+	cfg.Server.Environment = "test"
+	cfg.Security.RateLimitRequestsPerMinute = 500
+	cfg.Security.AuthRateLimitPerMinute = 50
+	cfg.Redis.RestURL = "https://secret-upstash-endpoint.upstash.io"
+	cfg.Redis.RestToken = "UPSTASH_SUPER_SECRET_TOKEN_999"
+	cfg.Redis.CooldownTTLSeconds = 300
+	cfg.Notification.SMTPHost = "smtp.internal-secret.example"
+	cfg.Notification.SMTPUser = "smtp_secret_user"
+	cfg.Notification.SMTPPass = "SMTP_SUPER_SECRET_PASS_888"
+
+	repo := repository.NewMemoryRepository(nil)
+	broker := service.NewSSEBroker()
+	authSvc := service.NewAuthService(cfg.Security, repo)
+	_ = authSvc.EnsureBootstrapAdmin(ctx, "test")
+	_, _ = authSvc.CreateUser(ctx, "viewer_sec", "viewer@gettalk.example", "ViewerPass!123", models.RoleViewer)
+	_, _ = authSvc.CreateUser(ctx, "analyst_sec", "analyst@gettalk.example", "AnalystPass!123", models.RoleAnalyst)
+
+	mockRedis := service.NewMemoryRedisClient()
+	mockMailer := &mockEmailSender{}
+
+	telemetrySvc := service.NewTelemetryService(cfg, repo, nil, nil, nil)
+	telemetrySvc.SetRedisClient(mockRedis)
+	telemetrySvc.SetEmailSender(mockMailer)
+
+	h := handler.NewHandler(cfg, authSvc, telemetrySvc, broker)
+	srv := httptest.NewServer(router.NewRouter(cfg, authSvc, h))
+	defer srv.Close()
+
+	client := &http.Client{}
+	killSwitchBody, _ := json.Marshal(map[string]interface{}{"enabled": false, "reason": "Unauthorized attempt"})
+
+	// 1. Auth & Access Control on Admin Kill Switch Endpoint
+	// 1a. Unauthenticated request -> 401 Unauthorized
+	reqUnauth, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/admin/kill-switch", bytes.NewReader(killSwitchBody))
+	reqUnauth.Header.Set("Content-Type", "application/json")
+	respUnauth, err := client.Do(reqUnauth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	respUnauth.Body.Close()
+	if respUnauth.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized on unauthenticated kill-switch request, got %d", respUnauth.StatusCode)
+	}
+
+	// 1b. Invalid Bearer token -> 401 Unauthorized
+	reqBadBearer, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/admin/kill-switch", bytes.NewReader(killSwitchBody))
+	reqBadBearer.Header.Set("Content-Type", "application/json")
+	reqBadBearer.Header.Set("Authorization", "Bearer invalid-forged-token-12345")
+	respBadBearer, _ := client.Do(reqBadBearer)
+	respBadBearer.Body.Close()
+	if respBadBearer.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized on invalid Bearer token, got %d", respBadBearer.StatusCode)
+	}
+
+	// 1c. Viewer role -> 403 Forbidden
+	viewerCookie, viewerCSRF := loginTestAdmin(t, srv.URL, "viewer_sec", "ViewerPass!123")
+	reqViewer, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/admin/kill-switch", bytes.NewReader(killSwitchBody))
+	reqViewer.AddCookie(viewerCookie)
+	reqViewer.Header.Set("Content-Type", "application/json")
+	reqViewer.Header.Set("X-CSRF-Token", viewerCSRF)
+	respViewer, _ := client.Do(reqViewer)
+	respViewer.Body.Close()
+	if respViewer.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden when viewer accesses admin kill-switch, got %d", respViewer.StatusCode)
+	}
+
+	// 1d. Analyst role -> 403 Forbidden
+	analystCookie, analystCSRF := loginTestAdmin(t, srv.URL, "analyst_sec", "AnalystPass!123")
+	reqAnalyst, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/admin/kill-switch", bytes.NewReader(killSwitchBody))
+	reqAnalyst.AddCookie(analystCookie)
+	reqAnalyst.Header.Set("Content-Type", "application/json")
+	reqAnalyst.Header.Set("X-CSRF-Token", analystCSRF)
+	respAnalyst, _ := client.Do(reqAnalyst)
+	respAnalyst.Body.Close()
+	if respAnalyst.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden when analyst accesses admin kill-switch, got %d", respAnalyst.StatusCode)
+	}
+
+	// 1e. Admin without CSRF token -> 403 Forbidden
+	adminCookie, adminCSRF := loginTestAdmin(t, srv.URL, "secadmin", "SecAdmin!2026#GetTalk")
+	reqAdminNoCSRF, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/admin/kill-switch", bytes.NewReader(killSwitchBody))
+	reqAdminNoCSRF.AddCookie(adminCookie)
+	reqAdminNoCSRF.Header.Set("Content-Type", "application/json")
+	respAdminNoCSRF, _ := client.Do(reqAdminNoCSRF)
+	respAdminNoCSRF.Body.Close()
+	if respAdminNoCSRF.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden when admin omits CSRF token on kill-switch, got %d", respAdminNoCSRF.StatusCode)
+	}
+
+	// Verify backend is still enabled after all rejected attempts
+	if !telemetrySvc.IsBackendEnabled(ctx) {
+		t.Fatal("kill switch state must not change after unauthorized attempts")
+	}
+
+	// 2. Input Validation & SMTP Header Injection Prevention
+	badPayloads := []string{
+		`{"event_id": "broken-json", "severity": `,                                                                                     // Malformed JSON
+		`{}`,                                                                                                                           // Empty fields
+		`{"event_id": "", "severity": "critical", "description": ""}`,                                                                  // Empty required values
+		`{"event_id": "evt-1", "severity": "unknown_sev", "description": "test"}`,                                                      // Invalid severity
+		`{"event_id": "evt-1\r\nBcc: attacker@evil.example", "severity": "critical", "description": "Header injection in event_id"}`,   // CRLF in event_id
+		`{"event_id": "evt-2", "severity": "critical", "description": "Normal line\r\nSubject: Injected Subject\r\n\r\nInjected body"}`, // CRLF in description
+	}
+
+	for _, rawPayload := range badPayloads {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/events", strings.NewReader(rawPayload))
+		req.AddCookie(adminCookie)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", adminCSRF)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for invalid/injection payload %q, got %d", rawPayload, resp.StatusCode)
+		}
+	}
+
+	// Ensure no email was sent from any injection payload
+	telemetrySvc.NotificationService().WaitPending(time.Second)
+	if mockMailer.Count() != 0 {
+		t.Fatalf("expected 0 emails sent after invalid/injection payloads, got %d", mockMailer.Count())
+	}
+
+	// 3. Abuse / Flooding Prevention (Rapid Critical Events within Cooldown Window)
+	for i := 0; i < 10; i++ {
+		floodPayload, _ := json.Marshal(map[string]interface{}{
+			"event_id":    "evt-flood-100",
+			"source_ip":   "203.0.113.77",
+			"severity":    "critical",
+			"description": "Rapid brute-force critical flood event",
+		})
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/events", bytes.NewReader(floodPayload))
+		req.AddCookie(adminCookie)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", adminCSRF)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("expected 201 Created on critical event ingestion #%d, got %d", i+1, resp.StatusCode)
+		}
+	}
+
+	telemetrySvc.NotificationService().WaitPending(2 * time.Second)
+	if mockMailer.Count() != 1 {
+		t.Fatalf("expected email flooding prevention (cooldown) to allow only 1 email for 10 rapid critical events, got %d", mockMailer.Count())
+	}
+
+	// 4. Information Leakage Prevention (Error Responses & Settings Endpoints)
+	forbiddenSecrets := []string{
+		"UPSTASH_SUPER_SECRET_TOKEN_999",
+		"secret-upstash-endpoint.upstash.io",
+		"SMTP_SUPER_SECRET_PASS_888",
+		"smtp.internal-secret.example",
+		"smtp_secret_user",
+	}
+
+	// Check settings response and error response for any leaked credentials
+	reqSettings, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/settings", nil)
+	reqSettings.AddCookie(adminCookie)
+	respSettings, _ := client.Do(reqSettings)
+	settingsBytes, _ := io.ReadAll(respSettings.Body)
+	respSettings.Body.Close()
+
+	// Also simulate an unreachable Upstash Redis client error and inspect HTTP response
+	failingUpstash := service.NewUpstashRedisClient("http://127.0.0.1:1", "UPSTASH_SUPER_SECRET_TOKEN_999", &http.Client{Timeout: 50 * time.Millisecond})
+	telemetrySvc.SetRedisClient(failingUpstash)
+
+	validToggle, _ := json.Marshal(map[string]interface{}{"enabled": false, "reason": "Test error leakage"})
+	reqFailRedis, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/admin/kill-switch", bytes.NewReader(validToggle))
+	reqFailRedis.AddCookie(adminCookie)
+	reqFailRedis.Header.Set("Content-Type", "application/json")
+	reqFailRedis.Header.Set("X-CSRF-Token", adminCSRF)
+	respFailRedis, _ := client.Do(reqFailRedis)
+	errBytes, _ := io.ReadAll(respFailRedis.Body)
+	respFailRedis.Body.Close()
+
+	combinedOutput := string(settingsBytes) + "\n" + string(errBytes)
+	for _, secret := range forbiddenSecrets {
+		if strings.Contains(combinedOutput, secret) {
+			t.Fatalf("sensitive credential %q leaked in HTTP response: %s", secret, combinedOutput)
+		}
+	}
+}
+
+

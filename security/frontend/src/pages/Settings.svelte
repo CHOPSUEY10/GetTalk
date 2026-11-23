@@ -3,7 +3,10 @@
   import Icon from '../components/common/Icon.svelte';
   import SeverityBadge from '../components/common/SeverityBadge.svelte';
   import { generateQrCodeSvg } from '../lib/qrcode.ts';
-  import { validateRetentionInput } from '../lib/validators.ts';
+  import {
+    validateKillSwitchInput,
+    validateRetentionInput,
+  } from '../lib/validators.ts';
   import { authStore } from '../stores/auth.store.ts';
   import { settingsStore } from '../stores/settings.store.ts';
   import { uiStore } from '../stores/ui.store.ts';
@@ -14,6 +17,9 @@
   let cleanupHours = 6;
   let retentionError = '';
 
+  let killSwitchReason = '';
+  let killSwitchError = '';
+
   let mfaSecret = '';
   let mfaOtpUri = '';
   let mfaQrSvg = '';
@@ -21,6 +27,37 @@
   let copiedMfaSecret = false;
 
   $: isAdmin = $authStore.user?.role === 'admin';
+  $: backendEnabled = $settingsStore.killSwitch ? $settingsStore.killSwitch.enabled : true;
+
+  async function handleToggleKillSwitch(targetEnabled: boolean) {
+    killSwitchError = '';
+    const err = validateKillSwitchInput({
+      enabled: targetEnabled,
+      reason: killSwitchReason,
+    });
+    if (err) {
+      killSwitchError = err;
+      return;
+    }
+    try {
+      await settingsStore.toggleKillSwitch(
+        targetEnabled,
+        killSwitchReason.trim() ||
+          (targetEnabled
+            ? 'Re-enabled via Security Console Settings'
+            : 'Disabled via Security Console Emergency Kill Switch')
+      );
+      killSwitchReason = '';
+      uiStore.notify(
+        targetEnabled
+          ? 'SIEM Backend re-enabled and resumed normal operation.'
+          : 'SIEM Backend disabled via Kill Switch. Warning email dispatched to secadmin.',
+        targetEnabled ? 'success' : 'info'
+      );
+    } catch (err: any) {
+      killSwitchError = err?.message || 'Failed to update backend kill switch';
+    }
+  }
 
   $: if (mfaOtpUri) {
     try {
@@ -123,11 +160,109 @@
     </button>
   </div>
 
-  {#if $settingsStore.error || retentionError}
+  {#if $settingsStore.error || retentionError || killSwitchError}
     <div role="alert" class="px-4 py-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300">
-      {retentionError || $settingsStore.error}
+      {killSwitchError || retentionError || $settingsStore.error}
     </div>
   {/if}
+
+  <!-- Backend Kill Switch & SecAdmin Notification Control (Always accessible outside main SIEM 503 block) -->
+  <div class="sec-card space-y-4 border {backendEnabled ? 'border-slate-800' : 'border-rose-500/50'}">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div class="space-y-1">
+        <div class="flex items-center gap-2.5">
+          <h2 class="text-sm font-semibold text-white">Emergency SIEM Backend Kill Switch (Upstash Redis)</h2>
+          <SeverityBadge level={backendEnabled ? 'healthy' : 'critical'} />
+        </div>
+        <p class="text-xs text-slate-400">
+          Controls main SIEM route availability via Upstash Redis key
+          <code class="font-mono text-indigo-300">{$settingsStore.killSwitch?.key || 'siem:backend:enabled'}</code>.
+          When disabled, all main SIEM endpoints return <code class="font-mono text-rose-300">503 Service Unavailable</code>,
+          an audit log is recorded, and an immediate warning email is sent to <code class="font-mono text-slate-200">secadmin</code>.
+        </p>
+      </div>
+
+      <div class="text-right text-xs font-mono">
+        <span
+          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border {backendEnabled
+            ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+            : 'bg-rose-500/15 text-rose-300 border-rose-500/40'}"
+        >
+          {backendEnabled ? 'STATUS: ACTIVE (TRUE)' : 'STATUS: DISABLED (FALSE / 503)'}
+        </span>
+      </div>
+    </div>
+
+    {#if $settingsStore.killSwitch}
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+        <div>
+          <span class="text-slate-400 block">Redis State Key</span>
+          <span class="font-mono text-slate-200">{$settingsStore.killSwitch.key}</span>
+        </div>
+        <div>
+          <span class="text-slate-400 block">Last Updated</span>
+          <span class="font-mono text-slate-200">
+            {$settingsStore.killSwitch.updatedAt
+              ? new Date($settingsStore.killSwitch.updatedAt).toLocaleString()
+              : 'N/A'}
+          </span>
+        </div>
+        <div>
+          <span class="text-slate-400 block">Last Reason / Actor</span>
+          <span class="font-mono text-slate-200">
+            {$settingsStore.killSwitch.reason || 'Default active state'}
+            {#if $settingsStore.killSwitch.updatedBy}
+              ({$settingsStore.killSwitch.updatedBy})
+            {/if}
+          </span>
+        </div>
+      </div>
+    {/if}
+
+    {#if isAdmin}
+      <div class="flex flex-col sm:flex-row items-stretch sm:items-end gap-3 pt-1">
+        <div class="flex-1">
+          <label for="kill-switch-reason" class="block text-xs text-slate-300 mb-1">
+            Audit Log &amp; SecAdmin Notification Reason
+          </label>
+          <input
+            id="kill-switch-reason"
+            type="text"
+            maxlength="512"
+            bind:value={killSwitchReason}
+            placeholder={backendEnabled
+              ? 'e.g. Emergency containment during active incident'
+              : 'e.g. Incident resolved — restoring SIEM service'}
+            class="sec-input w-full"
+          />
+        </div>
+
+        {#if backendEnabled}
+          <button
+            type="button"
+            disabled={$settingsStore.togglingKillSwitch}
+            on:click={() => handleToggleKillSwitch(false)}
+            class="px-4 py-2 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white cursor-pointer disabled:opacity-50 shrink-0"
+          >
+            {$settingsStore.togglingKillSwitch ? 'Disabling...' : 'Disable SIEM Backend (Kill Switch)'}
+          </button>
+        {:else}
+          <button
+            type="button"
+            disabled={$settingsStore.togglingKillSwitch}
+            on:click={() => handleToggleKillSwitch(true)}
+            class="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50 shrink-0"
+          >
+            {$settingsStore.togglingKillSwitch ? 'Re-enabling...' : 'Re-enable SIEM Backend'}
+          </button>
+        {/if}
+      </div>
+    {:else}
+      <p class="text-xs text-slate-400 italic">
+        Only administrators (<code class="font-mono">admin</code> role) can toggle the SIEM Backend Kill Switch.
+      </p>
+    {/if}
+  </div>
 
   {#if $settingsStore.settings}
     {@const cfg = $settingsStore.settings}

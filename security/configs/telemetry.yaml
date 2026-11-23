@@ -67,3 +67,13 @@ security:
   max_failed_login_attempts: 5
   lockout_duration_minutes: 15
 
+redis:
+  kill_switch_key: "siem:backend:enabled"
+  cooldown_prefix: "siem:alert:cooldown:"
+  cooldown_ttl_seconds: 300
+
+notification:
+  enabled: true
+  smtp_port: 587
+
+

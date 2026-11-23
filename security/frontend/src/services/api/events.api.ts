@@ -1,4 +1,8 @@
-import type { PaginatedResult, TelemetryEvent } from '../../lib/types/telemetry.ts';
+import type {
+  IngestEventInput,
+  PaginatedResult,
+  TelemetryEvent,
+} from '../../lib/types/telemetry.ts';
 import api, { buildQueryString } from './client.ts';
 
 export async function fetchUnifiedEvents(params: {
@@ -15,4 +19,11 @@ export async function fetchUnifiedEvents(params: {
     `/api/v1/events${buildQueryString({ limit: 25, ...params })}`
   );
 }
+
+export async function ingestSecurityEvent(
+  payload: IngestEventInput
+): Promise<TelemetryEvent> {
+  return api.post<TelemetryEvent>('/api/v1/events', payload);
+}
+
 

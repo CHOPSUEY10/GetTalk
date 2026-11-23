@@ -1,5 +1,6 @@
 <script lang="ts">
   import { authStore } from "../../stores/auth.store.ts";
+  import { settingsStore } from "../../stores/settings.store.ts";
   import { streamStore } from "../../stores/stream.store.ts";
   import { uiStore } from "../../stores/ui.store.ts";
   import Icon from "../common/Icon.svelte";
@@ -7,6 +8,25 @@
 
   export let currentRoute = "/";
   export let navigate: (path: string) => void;
+
+  $: isAdmin = $authStore.user?.role === "admin";
+  $: killSwitchDisabled =
+    $settingsStore.killSwitch !== null && !$settingsStore.killSwitch.enabled;
+
+  async function handleQuickEnableBackend() {
+    try {
+      await settingsStore.toggleKillSwitch(
+        true,
+        "Re-enabled from security console banner"
+      );
+      uiStore.notify("SIEM Backend re-enabled successfully.", "success");
+    } catch (err: any) {
+      uiStore.notify(
+        err?.message || "Failed to re-enable SIEM Backend",
+        "error"
+      );
+    }
+  }
 
   const navItems = [
     { path: "/", label: "Overview", icon: "overview" },
@@ -64,7 +84,7 @@
               GetTalk Security
             </div>
             <div class="text-[11px] text-slate-400">
-              Telemetry & Passive IDS
+              Security Information and Event Management
             </div>
           </div>
         </div>
@@ -106,6 +126,18 @@
           ></span>
           {$streamStore.status}
         </span>
+
+        {#if $settingsStore.killSwitch}
+          <span
+            class="px-2 py-0.5 rounded text-[10px] font-mono uppercase border {$settingsStore
+              .killSwitch.enabled
+              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+              : 'bg-rose-500/15 text-rose-300 border-rose-500/40'}"
+            title="SIEM Backend Kill Switch State"
+          >
+            {$settingsStore.killSwitch.enabled ? "SIEM ON" : "KILL SWITCH"}
+          </span>
+        {/if}
       </div>
 
       {#if $authStore.user}
@@ -159,6 +191,54 @@
     {/if}
 
     <main class="flex-1 p-4 md:p-6 overflow-y-auto space-y-6">
+      {#if killSwitchDisabled}
+        <div
+          role="alert"
+          class="p-4 rounded-xl bg-rose-500/15 border border-rose-500/40 flex flex-wrap items-center justify-between gap-3"
+        >
+          <div class="flex items-start gap-3">
+            <div class="p-2 rounded-lg bg-rose-500/20 text-rose-300 shrink-0">
+              <Icon name="alerts" size="sm" />
+            </div>
+            <div class="space-y-0.5">
+              <div class="text-xs font-bold text-rose-200 uppercase tracking-wide">
+                SIEM Backend Kill Switch Engaged (503 Service Unavailable)
+              </div>
+              <p class="text-xs text-rose-300/90">
+                Main SIEM telemetry &amp; ingestion endpoints are currently halted.
+                {#if $settingsStore.killSwitch?.reason}
+                  Reason: <span class="font-mono">{$settingsStore.killSwitch.reason}</span>
+                {/if}
+              </p>
+            </div>
+          </div>
+
+          {#if isAdmin}
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={$settingsStore.togglingKillSwitch}
+                on:click={handleQuickEnableBackend}
+                class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50"
+              >
+                {$settingsStore.togglingKillSwitch
+                  ? "Re-enabling..."
+                  : "Re-enable SIEM Backend"}
+              </button>
+              {#if currentRoute !== "/settings"}
+                <button
+                  type="button"
+                  on:click={() => navigate("/settings")}
+                  class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer"
+                >
+                  Manage Switch
+                </button>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
+
       <slot />
     </main>
   </div>

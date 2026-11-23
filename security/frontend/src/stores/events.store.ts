@@ -1,11 +1,19 @@
 import { writable } from 'svelte/store';
-import type { PaginationMeta, TelemetryEvent } from '../lib/types/telemetry.ts';
-import { fetchUnifiedEvents } from '../services/api/events.api.ts';
+import type {
+  IngestEventInput,
+  PaginationMeta,
+  TelemetryEvent,
+} from '../lib/types/telemetry.ts';
+import {
+  fetchUnifiedEvents,
+  ingestSecurityEvent,
+} from '../services/api/events.api.ts';
 
 export interface EventsState {
   events: TelemetryEvent[];
   pagination: PaginationMeta;
   loading: boolean;
+  submitting: boolean;
   error: string | null;
 }
 
@@ -14,6 +22,7 @@ function createEventsStore() {
     events: [],
     pagination: { limit: 25, offset: 0, total: 0, hasMore: false },
     loading: false,
+    submitting: false,
     error: null,
   });
 
@@ -47,6 +56,32 @@ function createEventsStore() {
         }));
       }
     },
+    ingestEvent: async (payload: IngestEventInput) => {
+      update((s) => ({ ...s, submitting: true, error: null }));
+      try {
+        const created = await ingestSecurityEvent(payload);
+        update((s) => ({
+          ...s,
+          submitting: false,
+          events: [created, ...s.events.filter((x) => x.id !== created.id)].slice(
+            0,
+            s.pagination.limit || 25
+          ),
+          pagination: {
+            ...s.pagination,
+            total: s.pagination.total + 1,
+          },
+        }));
+        return created;
+      } catch (err: any) {
+        update((s) => ({
+          ...s,
+          submitting: false,
+          error: err?.message || 'Failed to ingest SIEM security event',
+        }));
+        throw err;
+      }
+    },
     prependRealtimeEvent: (ev: TelemetryEvent) => {
       update((s) => ({
         ...s,
@@ -58,4 +93,5 @@ function createEventsStore() {
 
 export const eventsStore = createEventsStore();
 export default eventsStore;
+
 

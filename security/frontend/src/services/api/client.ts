@@ -93,6 +93,9 @@ async function fetchClient<T = any>(endpoint: string, options: RequestOptions = 
     ) {
       window.dispatchEvent(new CustomEvent('sec:unauthorized'));
     }
+    if (response.status === 503 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('sec:kill-switch-active'));
+    }
 
     throw handleApiError(null, {
       endpoint,

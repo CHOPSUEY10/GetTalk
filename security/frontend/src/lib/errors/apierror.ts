@@ -14,6 +14,7 @@ export const API_ERROR_CODES = Object.freeze({
   RESOURCE_NOT_FOUND: 'RESOURCE_NOT_FOUND',
   CONFLICT: 'CONFLICT',
   TOO_MANY_REQUESTS: 'TOO_MANY_REQUESTS',
+  SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
   SERVER_ERROR: 'SERVER_ERROR',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   UNKNOWN_ERROR: 'UNKNOWN_ERROR',
@@ -40,6 +41,7 @@ export function mapStatusToCode(status: number | null | undefined): string {
   if (status === 409) return API_ERROR_CODES.CONFLICT;
   if (status === 423) return API_ERROR_CODES.LOGIN_LOCKED;
   if (status === 429) return API_ERROR_CODES.TOO_MANY_REQUESTS;
+  if (status === 503) return API_ERROR_CODES.SERVICE_UNAVAILABLE;
   if (status >= 500) return API_ERROR_CODES.SERVER_ERROR;
   return API_ERROR_CODES.UNKNOWN_ERROR;
 }
@@ -67,6 +69,8 @@ export function defaultUserSafeMessage(code: string, status?: number | null): st
       return 'Resource conflict: an item with that identifier already exists.';
     case API_ERROR_CODES.TOO_MANY_REQUESTS:
       return 'Rate limit exceeded (429 Too Many Requests). Please wait before retrying.';
+    case API_ERROR_CODES.SERVICE_UNAVAILABLE:
+      return 'SIEM backend is temporarily disabled by administrator kill switch (503 Service Unavailable).';
     case API_ERROR_CODES.VALIDATION_ERROR:
     case API_ERROR_CODES.BAD_REQUEST:
       return 'Request validation failed. Check your input parameters.';
@@ -115,9 +119,11 @@ export function handleApiError(
   const status = context.status ?? error?.status ?? null;
   const backendCode = context.code || context.data?.error?.code || error?.code;
   const resolvedCode =
-    status && status >= 500
-      ? API_ERROR_CODES.SERVER_ERROR
-      : backendCode || mapStatusToCode(status);
+    status === 503
+      ? API_ERROR_CODES.SERVICE_UNAVAILABLE
+      : status && status >= 500
+        ? API_ERROR_CODES.SERVER_ERROR
+        : backendCode || mapStatusToCode(status);
 
   const rawMsg =
     context.data?.error?.message ||
@@ -129,7 +135,7 @@ export function handleApiError(
   if (
     rawMsg &&
     typeof rawMsg === 'string' &&
-    (!status || status < 500) &&
+    (!status || status < 500 || status === 503) &&
     !hasInternalDetails(rawMsg)
   ) {
     safeMessage = sanitizeString(rawMsg.trim());

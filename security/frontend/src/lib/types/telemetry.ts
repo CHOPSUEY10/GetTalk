@@ -1,4 +1,4 @@
-export type TelemetrySource = 'firewalld' | 'nginx' | 'pm2' | 'system';
+export type TelemetrySource = 'firewalld' | 'nginx' | 'pm2' | 'system' | 'siem';
 
 export type SeverityLevel = 'info' | 'low' | 'medium' | 'high' | 'critical';
 
@@ -225,4 +225,24 @@ export interface StreamMessage {
   timestamp: string;
   payload?: any;
 }
+
+export interface KillSwitchStatus {
+  enabled: boolean;
+  key: string;
+  reason?: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface IngestEventInput {
+  event_id: string;
+  source?: TelemetrySource;
+  event_type?: string;
+  source_ip?: string;
+  destination_ip?: string;
+  severity: SeverityLevel;
+  description: string;
+  event_data?: Record<string, any>;
+}
+
 

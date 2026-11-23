@@ -311,3 +311,144 @@ func TestCollectorLifecycleAndSSEStreaming(t *testing.T) {
 		t.Fatal("expected SSE client to receive published security_alert event")
 	}
 }
+
+func TestSIEMCriticalNotificationAndKillSwitchEndToEndFlow(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Server.Environment = "test"
+	cfg.Security.RateLimitRequestsPerMinute = 500
+	cfg.Security.AuthRateLimitPerMinute = 50
+	cfg.Redis.CooldownTTLSeconds = 120
+
+	repo := repository.NewMemoryRepository(nil)
+	broker := service.NewSSEBroker()
+	authSvc := service.NewAuthService(cfg.Security, repo)
+	_ = authSvc.EnsureBootstrapAdmin(context.Background(), "test")
+
+	mockRedis := service.NewMemoryRedisClient()
+	mockMailer := &mockEmailSender{}
+
+	telemetrySvc := service.NewTelemetryService(cfg, repo, nil, nil, nil)
+	telemetrySvc.SetRedisClient(mockRedis)
+	telemetrySvc.SetEmailSender(mockMailer)
+
+	h := handler.NewHandler(cfg, authSvc, telemetrySvc, broker)
+	rt := router.NewRouter(cfg, authSvc, h)
+	srv := httptest.NewServer(rt)
+	defer srv.Close()
+
+	adminCookie, adminCSRF := loginTestAdmin(t, srv.URL, "secadmin", "SecAdmin!2026#GetTalk")
+	client := &http.Client{}
+
+	postJSON := func(path string, payload interface{}) *http.Response {
+		b, _ := json.Marshal(payload)
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+path, bytes.NewReader(b))
+		req.AddCookie(adminCookie)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", adminCSRF)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("POST %s failed: %v", path, err)
+		}
+		return resp
+	}
+
+	// 1. Send a non-critical SIEM event -> 201 Created, no email sent
+	respLow := postJSON("/api/v1/events", map[string]interface{}{
+		"event_id":    "evt-low-001",
+		"source_ip":   "198.51.100.40",
+		"severity":    "low",
+		"description": "Routine port connection attempt",
+	})
+	respLow.Body.Close()
+	if respLow.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created for low severity event, got %d", respLow.StatusCode)
+	}
+	telemetrySvc.NotificationService().WaitPending(2 * time.Second)
+	if mockMailer.Count() != 0 {
+		t.Fatalf("expected 0 emails for low severity event, got %d", mockMailer.Count())
+	}
+
+	// 2. Send a critical SIEM event -> 201 Created, cooldown stored in Redis, email sent to secadmin
+	respCrit := postJSON("/api/v1/events", map[string]interface{}{
+		"event_id":    "evt-crit-001",
+		"source_ip":   "198.51.100.99",
+		"severity":    "CRITICAL",
+		"description": "Active privilege escalation exploit detected",
+	})
+	respCrit.Body.Close()
+	if respCrit.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created for critical severity event, got %d", respCrit.StatusCode)
+	}
+	telemetrySvc.NotificationService().WaitPending(2 * time.Second)
+	if mockMailer.Count() != 1 {
+		t.Fatalf("expected 1 email for critical event, got %d", mockMailer.Count())
+	}
+
+	// Verify cooldown key exists in Redis
+	cooldownKey := telemetrySvc.NotificationService().CooldownKey("198.51.100.99", "evt-crit-001")
+	cdVal, err := mockRedis.Get(context.Background(), cooldownKey)
+	if err != nil || cdVal == "" {
+		t.Fatalf("expected cooldown key %s to be stored in Redis, got val=%q err=%v", cooldownKey, cdVal, err)
+	}
+
+	// 3. Turn OFF backend kill switch via admin endpoint -> 200 OK
+	respKillOff := postJSON("/api/v1/admin/kill-switch", map[string]interface{}{
+		"enabled": false,
+		"reason":  "Maintenance and emergency isolation",
+	})
+	respKillOff.Body.Close()
+	if respKillOff.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK when disabling kill switch, got %d", respKillOff.StatusCode)
+	}
+	telemetrySvc.NotificationService().WaitPending(2 * time.Second)
+	if mockMailer.Count() != 2 {
+		t.Fatalf("expected kill switch deactivation to send warning email (total 2), got %d", mockMailer.Count())
+	}
+
+	// 4. Verify SIEM endpoints immediately return 503 Service Unavailable while kill switch is OFF
+	for _, path := range []string{"/api/v1/events", "/api/v1/dashboard/overview", "/api/v1/alerts"} {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+		req.AddCookie(adminCookie)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("expected 503 Service Unavailable on GET %s when kill switch is OFF, got %d", path, resp.StatusCode)
+		}
+	}
+
+	respIngestWhileOff := postJSON("/api/v1/events", map[string]interface{}{
+		"event_id":    "evt-crit-002",
+		"source_ip":   "198.51.100.100",
+		"severity":    "critical",
+		"description": "Event while backend disabled",
+	})
+	respIngestWhileOff.Body.Close()
+	if respIngestWhileOff.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 Service Unavailable on POST /api/v1/events when kill switch is OFF, got %d", respIngestWhileOff.StatusCode)
+	}
+
+	// 5. Turn ON backend kill switch via admin endpoint -> 200 OK, and verify SIEM endpoints recover
+	respKillOn := postJSON("/api/v1/admin/kill-switch", map[string]interface{}{
+		"enabled": true,
+		"reason":  "System restored to normal operation",
+	})
+	respKillOn.Body.Close()
+	if respKillOn.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK when re-enabling kill switch, got %d", respKillOn.StatusCode)
+	}
+
+	reqEvents, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/events", nil)
+	reqEvents.AddCookie(adminCookie)
+	respEvents, err := client.Do(reqEvents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	respEvents.Body.Close()
+	if respEvents.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK on GET /api/v1/events after kill switch re-enabled, got %d", respEvents.StatusCode)
+	}
+}
+

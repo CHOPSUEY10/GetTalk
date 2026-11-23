@@ -10,6 +10,7 @@ const (
 	SourceNginx     = "nginx"
 	SourcePM2       = "pm2"
 	SourceSystem    = "system"
+	SourceSIEM      = "siem"
 )
 
 // Severity levels across telemetry events, rules, and alerts.
@@ -340,4 +341,26 @@ type StreamMessage struct {
 	Timestamp time.Time   `json:"timestamp"`
 	Payload   interface{} `json:"payload"`
 }
+
+// IngestEventInput represents an incoming SIEM security event payload.
+type IngestEventInput struct {
+	EventID       string                 `json:"event_id"`
+	Source        string                 `json:"source"`
+	EventType     string                 `json:"event_type"`
+	SourceIP      string                 `json:"source_ip,omitempty"`
+	DestinationIP string                 `json:"destination_ip,omitempty"`
+	Severity      string                 `json:"severity"`
+	Description   string                 `json:"description"`
+	EventData     map[string]interface{} `json:"event_data,omitempty"`
+}
+
+// KillSwitchStatus represents the active/inactive state of the SIEM backend kill switch.
+type KillSwitchStatus struct {
+	Enabled   bool      `json:"enabled"`
+	Key       string    `json:"key"`
+	Reason    string    `json:"reason,omitempty"`
+	UpdatedBy string    `json:"updatedBy,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
 

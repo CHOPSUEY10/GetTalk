@@ -1,7 +1,13 @@
 package tests
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,9 +16,49 @@ import (
 	"github.com/gettalk/security/backend/internal/collector/pm2"
 	"github.com/gettalk/security/backend/internal/config"
 	"github.com/gettalk/security/backend/internal/detection"
+	"github.com/gettalk/security/backend/internal/handler"
+	"github.com/gettalk/security/backend/internal/middleware"
 	"github.com/gettalk/security/backend/internal/models"
 	"github.com/gettalk/security/backend/internal/repository"
+	"github.com/gettalk/security/backend/internal/service"
 )
+
+type sentEmail struct {
+	To      string
+	Subject string
+	Body    string
+}
+
+type mockEmailSender struct {
+	mu     sync.Mutex
+	emails []sentEmail
+	err    error
+}
+
+func (m *mockEmailSender) SendEmail(_ context.Context, to, subject, body string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	m.emails = append(m.emails, sentEmail{To: to, Subject: subject, Body: body})
+	return nil
+}
+
+func (m *mockEmailSender) Count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.emails)
+}
+
+func (m *mockEmailSender) Last() sentEmail {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.emails) == 0 {
+		return sentEmail{}
+	}
+	return m.emails[len(m.emails)-1]
+}
 
 type testSink struct {
 	events  []models.TelemetryEvent
@@ -232,4 +278,165 @@ func TestIDSDetectionRulesThresholdCorrelationAndDeduplication(t *testing.T) {
 		t.Fatalf("expected alert deduplication to keep exactly 5 alerts, got %d", page.Total)
 	}
 }
+
+func TestSeverityFilterLogic(t *testing.T) {
+	cases := []struct {
+		severity       string
+		expectCritical bool
+	}{
+		{"low", false},
+		{"LOW", false},
+		{"medium", false},
+		{"Medium", false},
+		{"high", false},
+		{"HIGH", false},
+		{"info", false},
+		{"", false},
+		{"critical", true},
+		{"CRITICAL", true},
+		{"Critical", true},
+		{"  CrItIcAl  ", true},
+	}
+
+	for _, tc := range cases {
+		got := service.IsCriticalSeverity(tc.severity)
+		if got != tc.expectCritical {
+			t.Errorf("IsCriticalSeverity(%q) = %v; expected %v", tc.severity, got, tc.expectCritical)
+		}
+	}
+
+	// Verify NotificationService only triggers email for critical severity
+	mockRedis := service.NewMemoryRedisClient()
+	mockMailer := &mockEmailSender{}
+	notifSvc := service.NewNotificationService(
+		config.NotificationConfig{Enabled: true, SecAdminEmail: "secadmin@gettalk.example"},
+		config.RedisConfig{CooldownPrefix: "siem:alert:cooldown:", CooldownTTLSeconds: 60},
+		mockRedis,
+		mockMailer,
+		nil,
+	)
+
+	for _, sev := range []string{"low", "medium", "high", "CRITICAL"} {
+		ev := models.TelemetryEvent{
+			ID:         "evt-" + strings.ToLower(sev),
+			Source:     models.SourceSIEM,
+			EventType:  "test_event",
+			SourceIP:   "198.51.100.10",
+			Severity:   sev,
+			OccurredAt: time.Now().UTC(),
+		}
+		triggered := notifSvc.NotifyCriticalEventAsync(ev, "Unit test severity filter "+sev)
+		if strings.EqualFold(sev, "critical") && !triggered {
+			t.Fatalf("expected critical event to trigger notification")
+		}
+		if !strings.EqualFold(sev, "critical") && triggered {
+			t.Fatalf("expected non-critical severity %q NOT to trigger notification", sev)
+		}
+	}
+
+	notifSvc.WaitPending(2 * time.Second)
+	if mockMailer.Count() != 1 {
+		t.Fatalf("expected exactly 1 email sent for critical severity only, got %d", mockMailer.Count())
+	}
+}
+
+func TestKillSwitchMiddlewareLogic(t *testing.T) {
+	active := true
+	mw := middleware.KillSwitch(func(_ context.Context) bool {
+		return active
+	})
+
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	wrapped := mw(nextHandler)
+
+	// 1. When active (true), middleware allows request through (200 OK)
+	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/events", nil)
+	rec1 := httptest.NewRecorder()
+	wrapped.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK when kill switch is active, got %d", rec1.Code)
+	}
+
+	// 2. When inactive (false), middleware blocks request with 503 Service Unavailable
+	active = false
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/events", nil)
+	rec2 := httptest.NewRecorder()
+	wrapped.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 Service Unavailable when kill switch is inactive, got %d", rec2.Code)
+	}
+}
+
+func TestAdminKillSwitchHandlerWithMockRedisAndEmail(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.DefaultConfig()
+	repo := repository.NewMemoryRepository(nil)
+	authSvc := service.NewAuthService(cfg.Security, repo)
+	telemetrySvc := service.NewTelemetryService(cfg, repo, nil, nil, nil)
+
+	mockRedis := service.NewMemoryRedisClient()
+	mockMailer := &mockEmailSender{}
+	telemetrySvc.SetRedisClient(mockRedis)
+	telemetrySvc.SetEmailSender(mockMailer)
+
+	h := handler.NewHandler(cfg, authSvc, telemetrySvc, nil)
+
+	// 1. Disable backend via UpdateKillSwitch handler
+	disablePayload, _ := json.Marshal(map[string]interface{}{
+		"enabled": false,
+		"reason":  "Emergency containment during active incident",
+	})
+	reqDisable := httptest.NewRequest(http.MethodPost, "/api/v1/admin/kill-switch", bytes.NewReader(disablePayload))
+	recDisable := httptest.NewRecorder()
+	h.UpdateKillSwitch(recDisable, reqDisable)
+
+	if recDisable.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from UpdateKillSwitch, got %d: %s", recDisable.Code, recDisable.Body.String())
+	}
+
+	// Verify Redis state is "false"
+	val, err := mockRedis.Get(ctx, cfg.Redis.KillSwitchKey)
+	if err != nil || val != "false" {
+		t.Fatalf("expected Redis key %s to be 'false', got %q (err=%v)", cfg.Redis.KillSwitchKey, val, err)
+	}
+	if telemetrySvc.IsBackendEnabled(ctx) {
+		t.Fatal("expected IsBackendEnabled to return false after disabling kill switch")
+	}
+
+	// Wait for async warning email to secadmin
+	telemetrySvc.NotificationService().WaitPending(2 * time.Second)
+	if mockMailer.Count() != 1 {
+		t.Fatalf("expected 1 warning email sent to secadmin when backend disabled, got %d", mockMailer.Count())
+	}
+	lastMail := mockMailer.Last()
+	if lastMail.To != cfg.Notification.SecAdminEmail || !strings.Contains(lastMail.Subject, "WARNING") {
+		t.Fatalf("unexpected kill switch warning email: %+v", lastMail)
+	}
+
+	// 2. Re-enable backend via UpdateKillSwitch handler
+	enablePayload, _ := json.Marshal(map[string]interface{}{
+		"enabled": true,
+		"reason":  "Incident resolved",
+	})
+	reqEnable := httptest.NewRequest(http.MethodPost, "/api/v1/admin/kill-switch", bytes.NewReader(enablePayload))
+	recEnable := httptest.NewRecorder()
+	h.UpdateKillSwitch(recEnable, reqEnable)
+
+	if recEnable.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK when re-enabling kill switch, got %d", recEnable.Code)
+	}
+	if !telemetrySvc.IsBackendEnabled(ctx) {
+		t.Fatal("expected IsBackendEnabled to return true after re-enabling kill switch")
+	}
+
+	// Verify audit logs recorded both transitions
+	audits, err := repo.ListAuditLogs(ctx, models.EventFilter{Limit: 10})
+	if err != nil || audits.Total < 2 {
+		t.Fatalf("expected at least 2 audit logs for kill switch transitions, got %d (err=%v)", audits.Total, err)
+	}
+}
+
 

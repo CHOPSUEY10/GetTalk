@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,6 +71,8 @@ func handleServiceError(w http.ResponseWriter, err error) {
 		middleware.WriteError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "Requested resource not found")
 	case errors.Is(err, service.ErrResourceConflict):
 		middleware.WriteError(w, http.StatusConflict, "CONFLICT", "Resource already exists")
+	case errors.Is(err, service.ErrRedisUnavailable):
+		middleware.WriteError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "State store temporarily unavailable")
 	default:
 		// Never leak internal errors, SQL queries, or stack traces
 		middleware.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "An unexpected internal error occurred")
@@ -405,6 +408,123 @@ func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sendSuccess(w, http.StatusOK, page)
+}
+
+type ingestEventPayload struct {
+	ID            string                 `json:"id"`
+	EventID       string                 `json:"event_id"`
+	EventIDCamel  string                 `json:"eventId"`
+	Source        string                 `json:"source"`
+	EventType     string                 `json:"event_type"`
+	EventTypeCam  string                 `json:"eventType"`
+	SourceIP      string                 `json:"source_ip"`
+	SourceIPCam   string                 `json:"sourceIp"`
+	DestinationIP string                 `json:"destination_ip"`
+	DestIPCam     string                 `json:"destinationIp"`
+	Severity      string                 `json:"severity"`
+	Description   string                 `json:"description"`
+	EventData     map[string]interface{} `json:"event_data"`
+	EventDataCam  map[string]interface{} `json:"eventData"`
+}
+
+// IngestEvent handles incoming SIEM security events, stores them, broadcasts to SSE,
+// and triggers asynchronous email notification to secadmin for critical severity events.
+func (h *Handler) IngestEvent(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	var payload ingestEventPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		middleware.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON request body")
+		return
+	}
+
+	evID := firstNonEmpty(payload.EventID, payload.EventIDCamel, payload.ID)
+	evType := firstNonEmpty(payload.EventType, payload.EventTypeCam)
+	srcIP := firstNonEmpty(payload.SourceIP, payload.SourceIPCam)
+	dstIP := firstNonEmpty(payload.DestinationIP, payload.DestIPCam)
+	evData := payload.EventData
+	if len(evData) == 0 && len(payload.EventDataCam) > 0 {
+		evData = payload.EventDataCam
+	}
+
+	created, err := h.telemetrySvc.IngestSecurityEvent(r.Context(), models.IngestEventInput{
+		EventID:       evID,
+		Source:        payload.Source,
+		EventType:     evType,
+		SourceIP:      srcIP,
+		DestinationIP: dstIP,
+		Severity:      payload.Severity,
+		Description:   payload.Description,
+		EventData:     evData,
+	})
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
+
+	if h.broker != nil && created != nil {
+		h.broker.Publish(models.StreamMessage{
+			Type:      "telemetry_event",
+			Timestamp: created.OccurredAt,
+			Payload:   *created,
+		})
+	}
+
+	sendSuccess(w, http.StatusCreated, created)
+}
+
+// IsBackendEnabled returns whether the SIEM backend kill switch allows traffic.
+func (h *Handler) IsBackendEnabled(ctx context.Context) bool {
+	if h.telemetrySvc == nil {
+		return true
+	}
+	return h.telemetrySvc.IsBackendEnabled(ctx)
+}
+
+// GetKillSwitch returns the current status of the SIEM backend kill switch.
+func (h *Handler) GetKillSwitch(w http.ResponseWriter, r *http.Request) {
+	status := h.telemetrySvc.GetKillSwitchStatus(r.Context())
+	sendSuccess(w, http.StatusOK, status)
+}
+
+type killSwitchRequest struct {
+	Enabled *bool  `json:"enabled"`
+	Reason  string `json:"reason"`
+}
+
+// UpdateKillSwitch toggles the SIEM backend active/inactive kill switch in Upstash Redis (Admin only).
+func (h *Handler) UpdateKillSwitch(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	var req killSwitchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		middleware.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON request body")
+		return
+	}
+	if req.Enabled == nil {
+		middleware.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR", "enabled boolean field is required")
+		return
+	}
+
+	user := middleware.GetAdminUser(r.Context())
+	actorID := "system"
+	if user != nil {
+		actorID = user.ID
+	}
+
+	status, err := h.telemetrySvc.SetKillSwitch(r.Context(), *req.Enabled, req.Reason, actorID)
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
+	sendSuccess(w, http.StatusOK, status)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (h *Handler) Alerts(w http.ResponseWriter, r *http.Request) {

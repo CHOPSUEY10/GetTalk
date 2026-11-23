@@ -13,6 +13,7 @@
   import WebMonitoring from './pages/WebMonitoring.svelte';
   import { resolveHashRoute, type RoutePath } from './routes/routes.ts';
   import { authStore } from './stores/auth.store.ts';
+  import { settingsStore } from './stores/settings.store.ts';
   import { streamStore } from './stores/stream.store.ts';
 
   let currentRoute: RoutePath = resolveHashRoute();
@@ -33,8 +34,15 @@
     authStore.setUnauthenticated();
   }
 
+  function handleKillSwitchActive() {
+    settingsStore.markKillSwitchDisabled();
+  }
+
   $: if ($authStore.authenticated) {
     streamStore.start();
+    if ($authStore.user?.role === 'admin') {
+      settingsStore.loadKillSwitch();
+    }
   } else {
     streamStore.stop();
   }
@@ -43,6 +51,7 @@
     authStore.initialize();
     window.addEventListener('hashchange', handleHashChange);
     window.addEventListener('sec:unauthorized', handleUnauthorized);
+    window.addEventListener('sec:kill-switch-active', handleKillSwitchActive);
   });
 
   onDestroy(() => {
@@ -50,6 +59,7 @@
     if (typeof window !== 'undefined') {
       window.removeEventListener('hashchange', handleHashChange);
       window.removeEventListener('sec:unauthorized', handleUnauthorized);
+      window.removeEventListener('sec:kill-switch-active', handleKillSwitchActive);
     }
   });
 </script>
