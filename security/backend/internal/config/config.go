@@ -304,6 +304,8 @@ func loadDotEnvDefaults(envMode, yamlPath string) {
 	}
 
 	fileNames := []string{
+		".env.production.local",
+		".env.production",
 		fmt.Sprintf(".env.%s.local", mode),
 		fmt.Sprintf(".env.%s", mode),
 		".env.local",

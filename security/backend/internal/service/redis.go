@@ -31,7 +31,7 @@ type RedisClient interface {
 }
 
 // NewRedisClient creates an Upstash REST Redis client when configured, a standard TCP/TLS Redis client
-// when REDIS_URL is configured, or falls back to a local TCP Redis / in-memory Redis store.
+// when REDIS_URL (e.g. from backend/.env.production) is configured, or falls back to an in-memory Redis store.
 func NewRedisClient(cfg config.RedisConfig) RedisClient {
 	if strings.TrimSpace(cfg.RestURL) != "" && strings.TrimSpace(cfg.RestToken) != "" {
 		return NewUpstashRedisClient(cfg.RestURL, cfg.RestToken, nil)
@@ -39,10 +39,7 @@ func NewRedisClient(cfg config.RedisConfig) RedisClient {
 	if strings.TrimSpace(cfg.URL) != "" {
 		tcpClient, err := NewTCPRedisClient(cfg.URL)
 		if err == nil {
-			// If explicitly configured (or reachable), use the TCP/TLS Redis client so state is shared with Chat Server.
-			if !strings.HasPrefix(strings.TrimSpace(cfg.URL), "redis://127.0.0.1:6379") || tcpClient.Ping(context.Background()) == nil {
-				return tcpClient
-			}
+			return tcpClient
 		}
 	}
 	return NewMemoryRedisClient()

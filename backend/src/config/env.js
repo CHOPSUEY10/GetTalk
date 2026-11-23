@@ -15,6 +15,14 @@ const SMTP_ENV_KEYS = [
   'SMTP_FROM',
 ];
 
+const REDIS_ENV_KEYS = [
+  'REDIS_URL',
+  'UPSTASH_REDIS_REST_URL',
+  'UPSTASH_REDIS_REST_TOKEN',
+  'KILL_SWITCH_REDIS_KEY',
+  'KILL_SWITCH_CACHE_TTL_MS',
+];
+
 /**
  * Load variables from an env file into `process.env`.
  * Unlike default `dotenv.config()`, this also populates keys that currently
@@ -105,8 +113,8 @@ loadEnvFile(modeEnvPath);
 loadEnvFile(defaultLocalEnvPath);
 loadEnvFile(defaultEnvPath);
 
-// Ensure SMTP credentials are not missed if configured in `.env.production` or
-// `.env.development` while the other file still has blank template placeholders.
+// Ensure SMTP and Redis credentials are not missed if configured in `.env.production`
+// or `.env.development` while the other file still has blank template placeholders.
 if (!process.env.SMTP_USER?.trim() || !process.env.SMTP_PASS?.trim()) {
   for (const candidate of [
     resolve(backendRoot, '.env.production.local'),
@@ -117,6 +125,19 @@ if (!process.env.SMTP_USER?.trim() || !process.env.SMTP_PASS?.trim()) {
     defaultEnvPath,
   ]) {
     loadEnvFile(candidate, { onlyKeys: SMTP_ENV_KEYS });
+  }
+}
+
+if (!process.env.REDIS_URL?.trim()) {
+  for (const candidate of [
+    resolve(backendRoot, '.env.production.local'),
+    resolve(backendRoot, '.env.production'),
+    resolve(backendRoot, '.env.development.local'),
+    resolve(backendRoot, '.env.development'),
+    defaultLocalEnvPath,
+    defaultEnvPath,
+  ]) {
+    loadEnvFile(candidate, { onlyKeys: REDIS_ENV_KEYS });
   }
 }
 

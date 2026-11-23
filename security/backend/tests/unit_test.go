@@ -439,4 +439,23 @@ func TestAdminKillSwitchHandlerWithMockRedisAndEmail(t *testing.T) {
 	}
 }
 
+func TestConfigLoadsRedisURLFromBackendEnvProduction(t *testing.T) {
+	cfg, err := config.Load("../../configs/telemetry.yaml")
+	if err != nil {
+		t.Fatalf("config.Load failed: %v", err)
+	}
+	if strings.TrimSpace(cfg.Redis.URL) == "" {
+		t.Fatal("expected cfg.Redis.URL to be loaded from backend/.env.production")
+	}
+	if !strings.HasPrefix(cfg.Redis.URL, "redis://") && !strings.HasPrefix(cfg.Redis.URL, "rediss://") {
+		t.Fatalf("expected cfg.Redis.URL to have redis:// or rediss:// scheme")
+	}
+
+	redisClient := service.NewRedisClient(cfg.Redis)
+	if _, ok := redisClient.(*service.TCPRedisClient); !ok {
+		t.Fatalf("expected NewRedisClient to return *service.TCPRedisClient for REDIS_URL, got %T", redisClient)
+	}
+}
+
+
 
