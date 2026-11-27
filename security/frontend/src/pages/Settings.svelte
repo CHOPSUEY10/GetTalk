@@ -1,36 +1,38 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import Icon from '../components/common/Icon.svelte';
-  import SeverityBadge from '../components/common/SeverityBadge.svelte';
-  import { generateQrCodeSvg } from '../lib/qrcode.ts';
+  import { onMount } from "svelte";
+  import Icon from "../components/common/Icon.svelte";
+  import SeverityBadge from "../components/common/SeverityBadge.svelte";
+  import { generateQrCodeSvg } from "../lib/qrcode.ts";
   import {
     validateKillSwitchInput,
     validateRetentionInput,
-  } from '../lib/validators.ts';
-  import { authStore } from '../stores/auth.store.ts';
-  import { settingsStore } from '../stores/settings.store.ts';
-  import { uiStore } from '../stores/ui.store.ts';
+  } from "../lib/validators.ts";
+  import { authStore } from "../stores/auth.store.ts";
+  import { settingsStore } from "../stores/settings.store.ts";
+  import { uiStore } from "../stores/ui.store.ts";
 
   let eventsDays = 30;
   let metricsDays = 90;
   let alertsDays = 180;
   let cleanupHours = 6;
-  let retentionError = '';
+  let retentionError = "";
 
-  let killSwitchReason = '';
-  let killSwitchError = '';
+  let killSwitchReason = "";
+  let killSwitchError = "";
 
-  let mfaSecret = '';
-  let mfaOtpUri = '';
-  let mfaQrSvg = '';
-  let mfaCode = '';
+  let mfaSecret = "";
+  let mfaOtpUri = "";
+  let mfaQrSvg = "";
+  let mfaCode = "";
   let copiedMfaSecret = false;
 
-  $: isAdmin = $authStore.user?.role === 'admin';
-  $: backendEnabled = $settingsStore.killSwitch ? $settingsStore.killSwitch.enabled : true;
+  $: isAdmin = $authStore.user?.role === "admin";
+  $: backendEnabled = $settingsStore.killSwitch
+    ? $settingsStore.killSwitch.enabled
+    : true;
 
   async function handleToggleKillSwitch(targetEnabled: boolean) {
-    killSwitchError = '';
+    killSwitchError = "";
     const err = validateKillSwitchInput({
       enabled: targetEnabled,
       reason: killSwitchReason,
@@ -44,18 +46,18 @@
         targetEnabled,
         killSwitchReason.trim() ||
           (targetEnabled
-            ? 'Chat server re-enabled via Security Console Settings'
-            : 'Chat server disabled via Security Console Emergency Kill Switch')
+            ? "Chat server re-enabled via Security Console Settings"
+            : "Chat server disabled via Security Console Emergency Kill Switch"),
       );
-      killSwitchReason = '';
+      killSwitchReason = "";
       uiStore.notify(
         targetEnabled
-          ? 'GetTalk Chat Server re-enabled and resumed normal operation.'
-          : 'GetTalk Chat Server disabled via Kill Switch (503). Warning email dispatched to secadmin.',
-        targetEnabled ? 'success' : 'info'
+          ? "GetTalk Chat Server re-enabled and resumed normal operation."
+          : "GetTalk Chat Server disabled via Kill Switch (503). Warning email dispatched to secadmin.",
+        targetEnabled ? "success" : "info",
       );
     } catch (err: any) {
-      killSwitchError = err?.message || 'Failed to update backend kill switch';
+      killSwitchError = err?.message || "Failed to update backend kill switch";
     }
   }
 
@@ -63,13 +65,13 @@
     try {
       mfaQrSvg = generateQrCodeSvg(mfaOtpUri, {
         size: 196,
-        title: 'GetTalk Security TOTP MFA QR Code',
+        title: "GetTalk Security TOTP MFA QR Code",
       });
     } catch {
-      mfaQrSvg = '';
+      mfaQrSvg = "";
     }
   } else {
-    mfaQrSvg = '';
+    mfaQrSvg = "";
   }
 
   $: if ($settingsStore.settings) {
@@ -81,7 +83,7 @@
 
   async function handleSaveRetention(e: SubmitEvent) {
     e.preventDefault();
-    retentionError = '';
+    retentionError = "";
     const err = validateRetentionInput({
       telemetryEventsDays: Number(eventsDays),
       systemMetricsDays: Number(metricsDays),
@@ -98,9 +100,9 @@
         systemMetricsDays: Number(metricsDays),
         securityAlertsDays: Number(alertsDays),
       });
-      uiStore.notify('Retention policy updated successfully.', 'success');
+      uiStore.notify("Retention policy updated successfully.", "success");
     } catch (err: any) {
-      retentionError = err?.message || 'Failed to update retention policy';
+      retentionError = err?.message || "Failed to update retention policy";
     }
   }
 
@@ -110,7 +112,7 @@
       mfaSecret = res.secret;
       mfaOtpUri = res.otpauthUri;
     } catch (err: any) {
-      uiStore.notify(err?.message || 'Failed to initialize MFA setup', 'error');
+      uiStore.notify(err?.message || "Failed to initialize MFA setup", "error");
     }
   }
 
@@ -131,13 +133,13 @@
     e.preventDefault();
     try {
       await authStore.enableMfa(mfaCode.trim());
-      mfaSecret = '';
-      mfaOtpUri = '';
-      mfaQrSvg = '';
-      mfaCode = '';
-      uiStore.notify('Two-Factor Authentication (TOTP) enabled.', 'success');
+      mfaSecret = "";
+      mfaOtpUri = "";
+      mfaQrSvg = "";
+      mfaCode = "";
+      uiStore.notify("Two-Factor Authentication (TOTP) enabled.", "success");
     } catch (err: any) {
-      uiStore.notify(err?.message || 'Invalid MFA verification code', 'error');
+      uiStore.notify(err?.message || "Invalid MFA verification code", "error");
     }
   }
 
@@ -149,37 +151,47 @@
 <div class="space-y-6">
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
-      <h1 class="text-xl font-bold text-white">Telemetry Collector Health & System Settings</h1>
+      <h1 class="text-xl font-bold text-white">
+        Telemetry Collector Health & System Settings
+      </h1>
       <p class="text-xs text-slate-400">
-        Collector runtime diagnostics, collection intervals, data retention policies, and administrator MFA
+        Collector runtime diagnostics, collection intervals, data retention
+        policies, and administrator MFA
       </p>
     </div>
-    <button type="button" on:click={() => settingsStore.load()} class="sec-btn-secondary">
+    <button
+      type="button"
+      on:click={() => settingsStore.load()}
+      class="sec-btn-secondary"
+    >
       <Icon name="refresh" size="xs" />
       <span>Refresh</span>
     </button>
   </div>
 
   {#if $settingsStore.error || retentionError || killSwitchError}
-    <div role="alert" class="px-4 py-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300">
+    <div
+      role="alert"
+      class="px-4 py-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300"
+    >
       {killSwitchError || retentionError || $settingsStore.error}
     </div>
   {/if}
 
   <!-- Chat Server Kill Switch & SecAdmin Notification Control -->
-  <div class="sec-card space-y-4 border {backendEnabled ? 'border-slate-800' : 'border-rose-500/50'}">
+  <div
+    class="sec-card space-y-4 border {backendEnabled
+      ? 'border-slate-800'
+      : 'border-rose-500/50'}"
+  >
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div class="space-y-1">
         <div class="flex items-center gap-2.5">
-          <h2 class="text-sm font-semibold text-white">Emergency Chat Server Kill Switch (Upstash Redis)</h2>
-          <SeverityBadge level={backendEnabled ? 'healthy' : 'critical'} />
+          <h2 class="text-sm font-semibold text-white">
+            Emergency Chat Server Kill Switch
+          </h2>
+          <SeverityBadge level={backendEnabled ? "healthy" : "critical"} />
         </div>
-        <p class="text-xs text-slate-400">
-          Controls availability of the <strong>GetTalk Chat Server (<code class="font-mono text-slate-200">backend/</code>)</strong> via shared Upstash Redis key
-          <code class="font-mono text-indigo-300">{$settingsStore.killSwitch?.key || 'siem:backend:enabled'}</code>.
-          When disabled, Chat Server REST API (<code class="font-mono text-rose-300">/api/*</code>) returns <code class="font-mono text-rose-300">503 Service Unavailable</code>
-          and Socket.IO connections are blocked, while this SIEM Console stays fully operational. Every change is logged and sends a warning email to <code class="font-mono text-slate-200">secadmin</code> when disabled.
-        </p>
       </div>
 
       <div class="text-right text-xs font-mono">
@@ -188,29 +200,33 @@
             ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
             : 'bg-rose-500/15 text-rose-300 border-rose-500/40'}"
         >
-          {backendEnabled ? 'CHAT SERVER: ACTIVE (TRUE)' : 'CHAT SERVER: DISABLED (FALSE / 503)'}
+          {backendEnabled ? "CHAT SERVER: ACTIVE" : "CHAT SERVER: DISABLED"}
         </span>
       </div>
     </div>
 
     {#if $settingsStore.killSwitch}
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+      <div
+        class="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs"
+      >
         <div>
           <span class="text-slate-400 block">Redis State Key</span>
-          <span class="font-mono text-slate-200">{$settingsStore.killSwitch.key}</span>
+          <span class="font-mono text-slate-200"
+            >{$settingsStore.killSwitch.key}</span
+          >
         </div>
         <div>
           <span class="text-slate-400 block">Last Updated</span>
           <span class="font-mono text-slate-200">
             {$settingsStore.killSwitch.updatedAt
               ? new Date($settingsStore.killSwitch.updatedAt).toLocaleString()
-              : 'N/A'}
+              : "N/A"}
           </span>
         </div>
         <div>
           <span class="text-slate-400 block">Last Reason / Actor</span>
           <span class="font-mono text-slate-200">
-            {$settingsStore.killSwitch.reason || 'Default active state'}
+            {$settingsStore.killSwitch.reason || "Default active state"}
             {#if $settingsStore.killSwitch.updatedBy}
               ({$settingsStore.killSwitch.updatedBy})
             {/if}
@@ -220,9 +236,14 @@
     {/if}
 
     {#if isAdmin}
-      <div class="flex flex-col sm:flex-row items-stretch sm:items-end gap-3 pt-1">
+      <div
+        class="flex flex-col sm:flex-row items-stretch sm:items-end gap-3 pt-1"
+      >
         <div class="flex-1">
-          <label for="kill-switch-reason" class="block text-xs text-slate-300 mb-1">
+          <label
+            for="kill-switch-reason"
+            class="block text-xs text-slate-300 mb-1"
+          >
             Audit Log &amp; SecAdmin Notification Reason
           </label>
           <input
@@ -231,8 +252,8 @@
             maxlength="512"
             bind:value={killSwitchReason}
             placeholder={backendEnabled
-              ? 'e.g. Emergency containment — halting GetTalk Chat Server during attack'
-              : 'e.g. Incident resolved — restoring GetTalk Chat Server'}
+              ? "e.g. Emergency containment — halting GetTalk Chat Server during attack"
+              : "e.g. Incident resolved — restoring GetTalk Chat Server"}
             class="sec-input w-full"
           />
         </div>
@@ -244,7 +265,9 @@
             on:click={() => handleToggleKillSwitch(false)}
             class="px-4 py-2 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white cursor-pointer disabled:opacity-50 shrink-0"
           >
-            {$settingsStore.togglingKillSwitch ? 'Disabling...' : 'Disable Chat Server (Kill Switch)'}
+            {$settingsStore.togglingKillSwitch
+              ? "Disabling..."
+              : "Disable Chat Server"}
           </button>
         {:else}
           <button
@@ -253,13 +276,16 @@
             on:click={() => handleToggleKillSwitch(true)}
             class="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50 shrink-0"
           >
-            {$settingsStore.togglingKillSwitch ? 'Re-enabling...' : 'Re-enable Chat Server'}
+            {$settingsStore.togglingKillSwitch
+              ? "Re-enabling..."
+              : "Re-enable Chat Server"}
           </button>
         {/if}
       </div>
     {:else}
       <p class="text-xs text-slate-400 italic">
-        Only administrators (<code class="font-mono">admin</code> role) can toggle the Chat Server Kill Switch.
+        Only administrators (<code class="font-mono">admin</code> role) can toggle
+        the Chat Server Kill Switch.
       </p>
     {/if}
   </div>
@@ -268,26 +294,49 @@
     {@const cfg = $settingsStore.settings}
     <!-- Collector Health Cards -->
     <div class="sec-card space-y-4">
-      <h2 class="text-sm font-semibold text-white">Independent Telemetry Collectors</h2>
+      <h2 class="text-sm font-semibold text-white">
+        Independent Telemetry Collectors
+      </h2>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         {#each cfg.collectors as col (col.name)}
-          <div class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+          <div
+            class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2"
+          >
             <div class="flex items-center justify-between">
-              <span class="font-mono text-xs font-bold text-slate-200">{col.name}</span>
+              <span class="font-mono text-xs font-bold text-slate-200"
+                >{col.name}</span
+              >
               <SeverityBadge level={col.status} />
             </div>
             <div class="text-xs text-slate-400 space-y-1">
-              <div>Layer: <span class="font-mono text-slate-200 uppercase">{col.source}</span></div>
-              <div>Events Collected: <span class="font-mono text-slate-200">{col.eventsCollected.toLocaleString()}</span></div>
-              <div>Collection Errors: <span class="font-mono text-slate-200">{col.errorsCount}</span></div>
+              <div>
+                Layer: <span class="font-mono text-slate-200 uppercase"
+                  >{col.source}</span
+                >
+              </div>
+              <div>
+                Events Collected: <span class="font-mono text-slate-200"
+                  >{col.eventsCollected.toLocaleString()}</span
+                >
+              </div>
+              <div>
+                Collection Errors: <span class="font-mono text-slate-200"
+                  >{col.errorsCount}</span
+                >
+              </div>
               <div>
                 Last Activity:
                 <span class="font-mono text-slate-300">
-                  {col.lastCollection ? new Date(col.lastCollection).toLocaleTimeString() : 'Waiting'}
+                  {col.lastCollection
+                    ? new Date(col.lastCollection).toLocaleTimeString()
+                    : "Waiting"}
                 </span>
               </div>
               {#if col.lastError}
-                <div class="text-[11px] text-amber-400 truncate" title={col.lastError}>
+                <div
+                  class="text-[11px] text-amber-400 truncate"
+                  title={col.lastError}
+                >
                   Note: {col.lastError}
                 </div>
               {/if}
@@ -300,36 +349,50 @@
     <!-- Collection Intervals & Engine Mode -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <div class="sec-card space-y-3">
-        <h2 class="text-sm font-semibold text-white">Collection & Detection Engine Configuration</h2>
+        <h2 class="text-sm font-semibold text-white">
+          Collection & Detection Engine Configuration
+        </h2>
         <div class="space-y-2 text-xs">
           <div class="flex justify-between py-2 border-b border-slate-800">
             <span class="text-slate-400">IDS Execution Mode</span>
             <span class="font-mono text-emerald-400 font-semibold">
-              {cfg.passiveModeOnly ? 'Passive Detection Only (Enforced)' : 'Active'}
+              {cfg.passiveModeOnly
+                ? "Passive Detection Only (Enforced)"
+                : "Active"}
             </span>
           </div>
           <div class="flex justify-between py-2 border-b border-slate-800">
             <span class="text-slate-400">Firewalld Source</span>
-            <span class="font-mono text-slate-200">Journald Streaming (Event-Driven)</span>
+            <span class="font-mono text-slate-200"
+              >Journald Streaming (Event-Driven)</span
+            >
           </div>
           <div class="flex justify-between py-2 border-b border-slate-800">
             <span class="text-slate-400">Nginx Log Poll Interval</span>
-            <span class="font-mono text-slate-200">{cfg.nginxPollIntervalMs} ms (Incremental)</span>
+            <span class="font-mono text-slate-200"
+              >{cfg.nginxPollIntervalMs} ms (Incremental)</span
+            >
           </div>
           <div class="flex justify-between py-2 border-b border-slate-800">
             <span class="text-slate-400">PM2 Collection Interval</span>
-            <span class="font-mono text-slate-200">{cfg.pm2CollectionIntervalSec} seconds</span>
+            <span class="font-mono text-slate-200"
+              >{cfg.pm2CollectionIntervalSec} seconds</span
+            >
           </div>
           <div class="flex justify-between py-2">
             <span class="text-slate-400">IDS Rule Evaluation Interval</span>
-            <span class="font-mono text-slate-200">{cfg.idsEvaluationIntervalSec} seconds</span>
+            <span class="font-mono text-slate-200"
+              >{cfg.idsEvaluationIntervalSec} seconds</span
+            >
           </div>
         </div>
       </div>
 
       <!-- Configurable Retention Policy -->
       <div class="sec-card space-y-4">
-        <h2 class="text-sm font-semibold text-white">Configurable Data Retention Policy</h2>
+        <h2 class="text-sm font-semibold text-white">
+          Configurable Data Retention Policy
+        </h2>
         <form on:submit={handleSaveRetention} class="space-y-3">
           <div>
             <label for="ret-events" class="block text-xs text-slate-300 mb-1">
@@ -376,7 +439,7 @@
               disabled={$settingsStore.saving}
               class="sec-btn-primary"
             >
-              {$settingsStore.saving ? 'Saving...' : 'Update Retention Policy'}
+              {$settingsStore.saving ? "Saving..." : "Update Retention Policy"}
             </button>
           {/if}
         </form>
@@ -387,22 +450,33 @@
     <div class="sec-card space-y-3">
       <div class="flex items-center justify-between">
         <div>
-          <h2 class="text-sm font-semibold text-white">Administrator Multi-Factor Authentication (TOTP)</h2>
+          <h2 class="text-sm font-semibold text-white">
+            Administrator Multi-Factor Authentication (TOTP)
+          </h2>
           <p class="text-xs text-slate-400">
-            Protect administrator console access with RFC 6238 6-digit authenticator verification
+            Protect administrator console access with RFC 6238 6-digit
+            authenticator verification
           </p>
         </div>
-        <SeverityBadge level={$authStore.user?.mfaEnabled ? 'healthy' : 'low'} />
+        <SeverityBadge
+          level={$authStore.user?.mfaEnabled ? "healthy" : "low"}
+        />
       </div>
 
       {#if !$authStore.user?.mfaEnabled}
         {#if !mfaSecret}
-          <button type="button" on:click={handleStartMfaSetup} class="sec-btn-secondary">
+          <button
+            type="button"
+            on:click={handleStartMfaSetup}
+            class="sec-btn-secondary"
+          >
             Generate TOTP MFA Secret
           </button>
         {:else}
           <form on:submit={handleEnableMfa} class="space-y-4 max-w-xl pt-2">
-            <div class="flex flex-col sm:flex-row items-center sm:items-start gap-5 p-4 rounded-xl bg-slate-950 border border-slate-800">
+            <div
+              class="flex flex-col sm:flex-row items-center sm:items-start gap-5 p-4 rounded-xl bg-slate-950 border border-slate-800"
+            >
               <div
                 class="w-[212px] h-[212px] p-2 rounded-xl bg-white border border-slate-700 flex items-center justify-center shrink-0"
                 data-testid="sec-mfa-qr-container"
@@ -410,39 +484,51 @@
                 {#if mfaQrSvg}
                   {@html mfaQrSvg}
                 {:else}
-                  <span class="text-xs text-slate-400">QR Code Unavailable</span>
+                  <span class="text-xs text-slate-400">QR Code Unavailable</span
+                  >
                 {/if}
               </div>
 
               <div class="flex-1 min-w-0 space-y-3 text-xs">
                 <div>
-                  <p class="font-semibold text-white">1. Scan QR Code with Authenticator App</p>
+                  <p class="font-semibold text-white">
+                    1. Scan QR Code with Authenticator App
+                  </p>
                   <p class="text-slate-400 mt-0.5">
-                    Open Google Authenticator, Authy, 1Password, or Microsoft Authenticator and scan this QR code.
+                    Open Google Authenticator, Authy, 1Password, or Microsoft
+                    Authenticator and scan this QR code.
                   </p>
                 </div>
 
                 <div class="space-y-1.5">
                   <div class="flex items-center justify-between gap-2">
-                    <span class="text-slate-300 font-medium">Manual Setup Secret Key:</span>
+                    <span class="text-slate-300 font-medium"
+                      >Manual Setup Secret Key:</span
+                    >
                     <button
                       type="button"
                       on:click={handleCopyMfaSecret}
                       class="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 cursor-pointer"
                     >
-                      {copiedMfaSecret ? '✓ Copied' : 'Copy Secret'}
+                      {copiedMfaSecret ? "✓ Copied" : "Copy Secret"}
                     </button>
                   </div>
-                  <code class="block select-all break-all font-mono text-indigo-300 bg-slate-900 border border-slate-800 px-2.5 py-1.5 rounded-lg">
+                  <code
+                    class="block select-all break-all font-mono text-indigo-300 bg-slate-900 border border-slate-800 px-2.5 py-1.5 rounded-lg"
+                  >
                     {mfaSecret}
                   </code>
                 </div>
 
                 <details class="text-[11px] text-slate-500">
-                  <summary class="cursor-pointer hover:text-slate-400 select-none">
+                  <summary
+                    class="cursor-pointer hover:text-slate-400 select-none"
+                  >
                     Show raw otpauth:// URI
                   </summary>
-                  <div class="mt-1.5 p-2 rounded-lg bg-slate-900/80 border border-slate-800 break-all font-mono text-slate-400 select-all">
+                  <div
+                    class="mt-1.5 p-2 rounded-lg bg-slate-900/80 border border-slate-800 break-all font-mono text-slate-400 select-all"
+                  >
                     {mfaOtpUri}
                   </div>
                 </details>
@@ -450,7 +536,10 @@
             </div>
 
             <div class="space-y-1.5">
-              <label for="sec-mfa-verify-code" class="block text-xs text-slate-300 font-medium">
+              <label
+                for="sec-mfa-verify-code"
+                class="block text-xs text-slate-300 font-medium"
+              >
                 2. Enter 6-Digit Authenticator Verification Code
               </label>
               <div class="flex flex-wrap items-center gap-2">
@@ -464,14 +553,16 @@
                   required
                   class="sec-input font-mono tracking-widest w-40"
                 />
-                <button type="submit" class="sec-btn-primary">Verify & Enable MFA</button>
+                <button type="submit" class="sec-btn-primary"
+                  >Verify & Enable MFA</button
+                >
                 <button
                   type="button"
                   on:click={() => {
-                    mfaSecret = '';
-                    mfaOtpUri = '';
-                    mfaQrSvg = '';
-                    mfaCode = '';
+                    mfaSecret = "";
+                    mfaOtpUri = "";
+                    mfaQrSvg = "";
+                    mfaCode = "";
                   }}
                   class="sec-btn-secondary"
                 >
@@ -482,9 +573,10 @@
           </form>
         {/if}
       {:else}
-        <p class="text-xs text-emerald-400">TOTP Multi-Factor Authentication is active for your account.</p>
+        <p class="text-xs text-emerald-400">
+          TOTP Multi-Factor Authentication is active for your account.
+        </p>
       {/if}
     </div>
   {/if}
 </div>
-
