@@ -11,7 +11,7 @@ Group=gettalk-sec-api
 SupplementaryGroups=systemd-journal adm nginx
 WorkingDirectory=/opt/gettalk/security/backend
 EnvironmentFile=/etc/gettalk-security/api.env
-Environment="PM2_HOME=/root/.pm2"
+Environment="PM2_HOME=/home/dev/.pm2"
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin"
 ExecStart=/opt/gettalk/security/backend/bin/gettalk-telemetry --mode=all --config=/opt/gettalk/security/configs/telemetry.yaml
 Restart=on-failure
